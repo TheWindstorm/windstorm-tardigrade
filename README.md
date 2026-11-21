@@ -163,6 +163,10 @@ Proven:
   agent ran 166 seconds after boot and both test sessions came back as themselves. On that Mac the `claude` command
   supplies the login token, and each session's login was checked. The reboot before it, on 0.1.2, brought back
   none of them; 0.1.3 and 0.1.4 are the fixes.
+- **`trust on` through a real reboot** of that laptop, version 0.1.6: four sessions, one of them in the home folder.
+  All four came back. The one in the home folder was asked "do you trust this folder?", Tardigrade answered Yes
+  five seconds later and logged it, and the session loaded. It answered nothing else: all four then stopped at the
+  account's "limit reached" question and waited.
 - **Opening windows** on that laptop's real desktop: three hidden sessions, three windows.
 - **Acting on the opening message**: one real session on Linux, Claude Code 2.1.330. It was recorded, ended and
   brought back, and it read its notes and answered.
@@ -179,7 +183,6 @@ Not yet proven:
 - **With nobody logged in at all.** The boot service started before any remote login, but that laptop also logs into
   its desktop by itself, so lingering alone was not isolated.
 - **A Mac with FileVault on, or one that does not log in by itself**: setup says what will happen; no such Mac was rebooted. Opening windows on a Mac.
-- **`trust on` on a real machine**: proven with the stand-in so far.
 - **Herdr** tab re-attach.
 - Sessions pinned to different accounts by a token: proven with the stand-in only.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.

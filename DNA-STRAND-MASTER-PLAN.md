@@ -164,6 +164,9 @@ test has a codon here.
   before any remote login. The record survived the reset. The first record after each boot waited for the revive
   to finish (G1.3). A second restore tool brought back a fourth session at the same second; with
   `skip_tmux_sockets` neither touched the other's (G1.7). This proves G5.1 on Linux.
+- Same laptop, a fourth reboot on 0.1.6 with `trust on`: four sessions back, the one in the home folder asked the
+  trust question and answered Yes by Tardigrade 5 seconds after its start, logged, then loaded; "0 still not
+  loaded". The usage-limit question that followed was left alone (G2.12, G2.13).
 - Same laptop: `open` on its real desktop opened three windows, and the census then showed no hidden session (G4.1).
 - 2026-11-21, an Intel Mac, macOS 13, auto-login on, FileVault off, Claude Code 2.1.330, **one real reboot** on
   0.1.3: the launchd agent ran 166 seconds after boot and brought back two sessions with the same ids and names.
@@ -183,7 +186,6 @@ test has a codon here.
   census counted them as waiting (G3.4).
 - **Nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
 - **macOS with FileVault on, or without auto-login.** Setup says what will happen (G5.3); no such Mac was rebooted. `open` was not run on a Mac.
-- **The trust answer (G2.12) on a real machine.** Proven with the stand-in only until a real reboot is run with it on.
 - **Herdr** (G4.2). The logic comes from the fleet kit, where it is also not yet proven through a reboot.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.
