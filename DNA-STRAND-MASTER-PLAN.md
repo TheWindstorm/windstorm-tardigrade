@@ -1,6 +1,6 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.1 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.1.
+Plan version 1.2 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.2.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -99,6 +99,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 |---|---|---|
 | G3.1 | `census` lists three groups: running with a window, running with no window open (hidden), and on the record but not running (down). | `test_G3_1_census_names_hidden_and_down_sessions` |
 | G3.2 | `census` changes nothing: it starts nothing and writes nothing to the record. | `test_G3_2_census_changes_nothing` |
+| G3.4 | `census` counts the sessions that are stopped at a question or a dialog, and says so in its first lines. | `test_G3_4_census_counts_sessions_that_wait_for_an_answer` |
 | G3.3 | On a shared machine, other users' Claude processes are counted by program name only. Their arguments, environment and files are never read. | Not verified by a test (see below). |
 
 ### G4 Windows and tabs
@@ -133,24 +134,35 @@ These hold across every gene. A change that breaks one is a plan change first.
 The link between this plan and the tests is itself tested: every proof named here is a real test, and every codon
 test has a codon here.
 
-## Proven once by hand, not by a test
+## Proven by hand on real machines, not by a test
 
+- 2026-11-21, an Ubuntu 24.04 laptop, Claude Code 2.1.323, **two real reboots** (one clean, one a sudden reset with
+  no shutdown). Setup said "boot service: enabled, record timer: active, lingering is on". Three sessions (permission
+  checks on; permission checks off; one in a plain terminal window) came back both times with the same ids, names
+  and folders: all up 2 min 48 s and 2 min 47 s after boot. The boot service started 88 to 90 seconds after boot,
+  before any remote login. The record survived the reset. The first record after each boot waited for the revive
+  to finish (G1.3). A second restore tool brought back a fourth session at the same second; with
+  `skip_tmux_sockets` neither touched the other's (G1.7). This proves G5.1 on Linux.
+- Same laptop: `open` on its real desktop opened three windows, and the census then showed no hidden session (G4.1).
 - 2026-11-21, Linux, Claude Code 2.1.330, a real session: started in tmux, recorded, ended, then brought back with
-  `revive --only`. It came back with the same session id, name, folder and model, its earlier messages on screen, and
-  it acted on the note.
+  `revive --only`. Same session id, name, folder and model, its earlier messages on screen, and it acted on the
+  note (G2.2).
 - 2026-11-21, a shared Linux machine with 98 sessions: `census` took a quarter of a second, found 98 running and 2
   hidden, and its 98 session ids matched a separate tool's list, 98 of 98.
 
 ## Not verified
 
-- **A real reboot.** The boot service has not yet been through one. Until it has, treat G5.1 as proven on paper only.
+- **A session acting on the note after a real reboot.** On the test laptop the account was at its usage limit, so
+  each revived session stopped at Claude Code's "limit reached" question. Tardigrade answered nothing (INV2) and the
+  census counted them as waiting (G3.4).
+- **Nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
 - **macOS.** The LaunchAgent and the FileVault notice (G5.3) are written and not yet run on a Mac.
 - **Herdr** (G4.2). The logic comes from the fleet kit, where it is also not yet proven through a reboot.
-- **Opening windows** (G4.1) on a real desktop: only the printed line is tested.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.
 - **Sessions pinned to different accounts by a token.** G2.8 can tell that a variable is set, not that it holds the
   same token. Such sessions should be started by hand.
+- **G5.3 and G5.4** have no test. G5.3 was read on one Linux machine ("lingering is on").
 - **Windows.** Not supported.
 
 ## Not goals

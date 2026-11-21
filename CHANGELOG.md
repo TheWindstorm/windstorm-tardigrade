@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2 (2026-11-21)
+Built from DNA Strand Master Plan 1.2. The release that went through real reboots.
+
+- **Proven on a real machine**: two reboots of an Ubuntu laptop, one a sudden reset with no shutdown. Every test
+  session came back both times. Details in the README under Tested.
+- **census** counts the sessions that are stopped at a question or a dialog: "Waiting for you: N" (G3.4).
+- **open** detaches the windows it opens, so it returns at once, and gives each window the session's name.
+
 ## 0.1.1 (2026-11-21)
 Built from DNA Strand Master Plan 1.1.
 

@@ -349,6 +349,14 @@ class Census(Base):
         self.assertEqual(fread(p), before)
         self.assertEqual(len(self.launches()), n)
 
+    def test_G3_4_census_counts_sessions_that_wait_for_an_answer(self):
+        self.start_lane("alpha", "Alpha Lane", extra_env={"FAKE_STATUS": "waiting"})
+        self.start_lane("beta", "Beta Lane")
+        rc, out = self.tg("census", "--json")
+        self.assertEqual(json.loads(out)["waiting"], 1)
+        rc, text = self.tg("census")
+        self.assertIn("Waiting for you: 1", text)
+
 
 class Setup(Base):
     def test_G5_1_the_boot_service_revives_once_and_outlives_itself(self):

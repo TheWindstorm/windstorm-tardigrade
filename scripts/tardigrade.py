@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -861,6 +861,7 @@ def census_data():
     return {
         "at": int(time.time()), "uptime_s": int(uptime_s()), "running": len(mine), "with_window": len(shown),
         "hidden": len(hidden), "down": len(down), "other_users": others, "helpers": helpers,
+        "waiting": len([r for r in mine if r["status"] == "waiting"]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "sessions": {"hidden": hidden, "with_window": shown, "down": down},
@@ -887,6 +888,8 @@ def census():
     print(f"Windstorm Tardigrade census, {time.strftime('%Y-%m-%d %H:%M %Z')} (machine up {ago(d['uptime_s'])})")
     print(f"Running: {d['running']}   with a window: {d['with_window']}   "
           f"hidden (no window open): {d['hidden']}   down: {d['down']}")
+    if d["waiting"]:
+        print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {'yes, by itself' if d['auto_revive'] else 'NO (run setup)'}   Last record: {rec}")
     lr = d["last_revive"]
@@ -941,10 +944,16 @@ def open_windows():
             continue
         if MAC:
             run(["osascript", "-e", f'tell application "Terminal" to do script "{line}"'], timeout=15)
-        elif os.path.basename(term) == "gnome-terminal":
-            subprocess.Popen([term, "--title", display(r), "--"] + att, start_new_session=True)
         else:
-            subprocess.Popen([term, "-e"] + att, start_new_session=True)
+            base = os.path.basename(term)
+            if base == "gnome-terminal":
+                argv = [term, "--title", display(r), "--"] + att
+            elif base in ("xterm", "x-terminal-emulator"):
+                argv = [term, "-T", display(r), "-e"] + att
+            else:
+                argv = [term, "-e"] + att
+            subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"opened a window for {display(r)}")
         time.sleep(0.5)
     if not desk:

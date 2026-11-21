@@ -11,9 +11,9 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.0, a pilot.** The bring-back path is proven by tests and by one real session on Linux. It has **not
-> yet been through a real reboot**, and it has not yet run on a Mac. See [Tested](#tested) for exactly what is
-> proven and what is not.
+> **Status: 0.1.2, a pilot.** It has been through two real reboots of a Linux laptop, one of them a sudden reset
+> with no shutdown, and brought every test session back both times. It has not yet run on a Mac. See
+> [Tested](#tested) for exactly what is proven and what is not.
 
 ## Install
 
@@ -139,20 +139,35 @@ The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 
 Proven:
 
-- 26 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never a second copy, once
-  per boot, a clean environment, the census, and the rules under Safety.
-- One real session, Linux, Claude Code 2.1.330, 2026-11-21: recorded, ended, brought back. Same session id, name,
-  folder and model; its earlier messages on screen; it acted on the opening message.
+- **Two real reboots**, 2026-11-21, an Ubuntu 24.04 laptop, Claude Code 2.1.323: one clean restart and one sudden
+  reset with no shutdown. Three sessions were running: one with permission checks on, one with them off, and one in
+  a plain terminal window. Both times all three came back as the same sessions, with their names and folders, in
+  under three minutes, with nothing typed by anyone. After the reset the record on disk was intact. A second tool
+  restored a fourth session on the same machine in the same second, and neither touched the other's
+  (`skip_tmux_sockets`).
+- **Opening windows** on that laptop's real desktop: three hidden sessions, three windows.
+- **Acting on the opening message**: one real session on Linux, Claude Code 2.1.330. It was recorded, ended and
+  brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
+- 27 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+  a second copy, once per boot, a clean environment, the census, and the rules under Safety.
 
 Not yet proven:
 
-- **A real reboot.** The boot service is written and unit-tested as text; it has not yet been through one.
+- **A session acting on the opening message after a real reboot.** On the test laptop the account had reached its
+  usage limit, so each revived session stopped at Claude Code's own "limit reached" question and waited there. The
+  census showed all of them as "waiting for you". That is the right behaviour, and it is not the same proof.
+- **With nobody logged in at all.** The boot service started before any remote login, but that laptop also logs into
+  its desktop by itself, so lingering alone was not isolated.
 - **macOS**: the launchd agents and the FileVault notice.
-- **Herdr** tab re-attach, and **opening windows** on a real desktop.
+- **Herdr** tab re-attach.
 - Sessions pinned to different accounts by a token: start those by hand.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.
+
+Two things the real machine taught us: Claude Code asks "do you trust this folder?" for a new folder even when
+permission checks are off, and a session on an account at its limit comes back to a question. Tardigrade answers
+neither. It leaves them for you and counts them.
 
 The plan this is built from, with each claim and its proof, is
 [DNA-STRAND-MASTER-PLAN.md](DNA-STRAND-MASTER-PLAN.md).

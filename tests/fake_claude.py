@@ -30,7 +30,7 @@ os.makedirs(d, exist_ok=True)
 now = int(time.time() * 1000)
 json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": names.get(sid, ""),
            "kind": os.environ.get("FAKE_KIND", "interactive"), "entrypoint": "cli", "startedAt": now,
-           "status": "idle", "updatedAt": now}, open(os.path.join(d, f"{os.getpid()}.json"), "w"))
+           "status": os.environ.get("FAKE_STATUS", "idle"), "updatedAt": now}, open(os.path.join(d, f"{os.getpid()}.json"), "w"))
 with open(os.path.join(home, "launches.jsonl"), "a") as f:
     f.write(json.dumps({"pid": os.getpid(), "sid": sid, "argv": a, "cwd": os.getcwd(),
                         "child": "CLAUDE_CODE_CHILD_SESSION" in os.environ,
