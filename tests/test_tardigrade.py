@@ -200,6 +200,14 @@ class Record(Base):
         log = fread(self.state("tardigrade.log"))
         self.assertNotIn("sk-secret-value-123", log)
 
+    def test_G1_7_sessions_on_a_skipped_tmux_socket_are_left_to_the_other_tool(self):
+        self.start_lane("alpha", "Alpha Lane")
+        self.cfg({"skip_tmux_sockets": ["default"]})
+        self.tg("record", "--force")
+        self.assertEqual(self.table()["lanes"], [])
+        rc, out = self.tg("census", "--json")
+        self.assertEqual(json.loads(out)["running"], 1)     # still counted: the census shows everything
+
 
 class Revive(Base):
     def recorded_then_rebooted(self, **kw):

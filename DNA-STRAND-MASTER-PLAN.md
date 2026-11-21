@@ -1,6 +1,6 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.0 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.0.
+Plan version 1.1 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.1.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -76,6 +76,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G1.4 | When no session is live, the previous record is kept. | `test_G1_4_record_never_replaces_the_record_with_an_empty_list` |
 | G1.5 | A recorded session that is no longer live moves to the "down" list with the time, and the record before each write is kept as `lanes.json.prev`. | `test_G1_5_a_session_that_went_down_moves_to_the_down_list` |
 | G1.6 | A token or key is never written to the record or the log. Only the name of the variable that held it is kept. | `test_G1_6_a_token_is_never_written_down` |
+| G1.7 | Sessions on a tmux socket named in `skip_tmux_sockets` are not recorded, so a second tool that already brings them back stays the only one that does. The census still counts them. | `test_G1_7_sessions_on_a_skipped_tmux_socket_are_left_to_the_other_tool` |
 
 ### G2 Revive: bring each one back as itself
 

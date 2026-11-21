@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -59,6 +59,7 @@ CFG = {
     "herdr_tabs": True,       # re-attach Herdr tabs after a revive
     "attach_wait_min": 30,    # wait this long for the Herdr server after boot
     "down_keep_days": 14,     # how long a session that went down stays on the "down" list
+    "skip_tmux_sockets": [],  # tmux socket names to leave alone, when another tool brings those sessions back
 }
 
 WAKE_NOTE = (
@@ -549,9 +550,12 @@ def record():
     if "--no-herdr" not in ARGS and CFG["herdr"] and CFG["herdr_tabs"] and herdr_up():
         labels = herdr_labels()
     rows, used = [], set()
+    skip = set(CFG.get("skip_tmux_sockets") or [])
     for r in mine:
         if not r["restorable"]:
             continue
+        if r["host"] == "tmux" and os.path.basename(r["tmux_socket"]) in skip:
+            continue           # another tool brings these back: one restorer per session
         o = old_by.get(r["session_id"], {})
         tab, ws = (labels[0].get((r["tmux_socket"], r["tmux_session"])) or labels[1].get(r["pid"])
                    or (o.get("herdr_tab", ""), o.get("herdr_workspace", "")))

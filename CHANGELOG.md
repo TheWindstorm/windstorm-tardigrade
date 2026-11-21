@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 (2026-11-21)
+Built from DNA Strand Master Plan 1.1.
+
+- **`skip_tmux_sockets`** (G1.7): name the tmux sockets another tool already restores, and Tardigrade leaves those
+  sessions to it. Two restorers for one session is how a session gets started twice.
+- **setup tells the truth**: after enabling, it asks systemd (or launchd) whether the boot service is on, and says
+  "NOT set up" when it is not.
+- The skill file says what to do when it was installed without the script.
+
 ## 0.1.0 (2026-11-21)
 The pilot release. Built from DNA Strand Master Plan 1.0.
 

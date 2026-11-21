@@ -130,6 +130,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
 | `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
 | `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. |
+| `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
 
 The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 `~/.local/state/windstorm-tardigrade/tardigrade.log`.
@@ -138,7 +139,7 @@ The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 
 Proven:
 
-- 25 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never a second copy, once
+- 26 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never a second copy, once
   per boot, a clean environment, the census, and the rules under Safety.
 - One real session, Linux, Claude Code 2.1.330, 2026-11-21: recorded, ended, brought back. Same session id, name,
   folder and model; its earlier messages on screen; it acted on the opening message.

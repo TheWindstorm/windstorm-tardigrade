@@ -14,6 +14,9 @@ The whole tool is one script: `scripts/tardigrade.py`, two levels above this ski
 names, folders and counts, never message text. Run it with `python3 -I`. After setup, the installed copy is
 `~/.local/share/windstorm-tardigrade/tardigrade.py`.
 
+If neither file exists, this skill was installed without its plugin. Get the script with
+`git clone https://github.com/TheWindstorm/windstorm-tardigrade` and run `scripts/tardigrade.py` from that folder.
+
 ## Commands
 
 | The person wants | Run |
