@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.2, a pilot.** It has been through two real reboots of a Linux laptop, one of them a sudden reset
+> **Status: 0.1.3, a pilot.** It has been through two real reboots of a Linux laptop, one of them a sudden reset
 > with no shutdown, and brought every test session back both times. It has not yet run on a Mac. See
 > [Tested](#tested) for exactly what is proven and what is not.
 
@@ -111,8 +111,10 @@ Setup tells you this for your machine. It never changes it for you.
   `"wake": "idle"`.
 - It never ends a session, never types into one, and never answers a dialog for you. If a revived session stops at a
   question, it waits there for you.
-- It never stores a token or a key. A session that was started with its own login token is listed as "needs you"
-  unless your shell sets the same variable.
+- It never stores a token or a key. For a login token it keeps the variable's name and an 8-digit one-way
+  fingerprint, and uses it to check that a session came back on the same login. Where sessions on one machine use
+  different logins, a session with a token comes back silent, and if its login changed it is listed as "needs you"
+  with nothing run on the wrong account.
 - On a shared machine it counts other users' Claude processes and reads nothing of theirs.
 - Python standard library only. No network. It prints names, folders and counts, never message text.
 - The record is never overwritten by a machine that is still starting, and never by an empty list.
@@ -150,7 +152,7 @@ Proven:
   brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
-- 27 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+- 28 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
   a second copy, once per boot, a clean environment, the census, and the rules under Safety.
 
 Not yet proven:
@@ -162,7 +164,7 @@ Not yet proven:
   its desktop by itself, so lingering alone was not isolated.
 - **macOS**: the launchd agents and the FileVault notice.
 - **Herdr** tab re-attach.
-- Sessions pinned to different accounts by a token: start those by hand.
+- Sessions pinned to different accounts by a token: proven with the stand-in only.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.
 
 Two things the real machine taught us: Claude Code asks "do you trust this folder?" for a new folder even when

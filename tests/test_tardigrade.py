@@ -196,7 +196,9 @@ class Record(Base):
         self.tg("record", "--force")
         text = fread(os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
         self.assertNotIn("sk-secret-value-123", text)
-        self.assertEqual(self.table()["lanes"][0]["token_keys"], ["CLAUDE_CODE_OAUTH_TOKEN"])
+        row = self.table()["lanes"][0]
+        self.assertEqual(row["token_keys"], ["CLAUDE_CODE_OAUTH_TOKEN"])
+        self.assertRegex(row["token_print"], r"^[0-9a-f]{8}$")      # a fingerprint, not the token
         log = fread(self.state("tardigrade.log"))
         self.assertNotIn("sk-secret-value-123", log)
 
@@ -288,17 +290,33 @@ class Revive(Base):
         self.assertFalse(new["child"])
         self.assertEqual(new["claude_env"], [])
 
-    def test_G2_8_a_session_started_with_a_token_is_left_for_the_person(self):
-        self.recorded_then_rebooted()
-        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
-        t = jload(p)
-        t["lanes"][0]["token_keys"] = ["CLAUDE_CODE_OAUTH_TOKEN"]
-        jdump(t, p)
+    def test_G2_8_a_machine_wide_login_token_comes_back_and_is_checked(self):
+        # every session has the same token, and the person's shell supplies it again: an ordinary revive
+        with open(os.path.join(self.home, ".bashrc"), "w") as f:
+            f.write("export CLAUDE_CODE_OAUTH_TOKEN=tok-abc\n")
+        self.start_lane("alpha", "Alpha Lane", extra_env={"CLAUDE_CODE_OAUTH_TOKEN": "tok-abc"})
+        self.tg("record", "--force")
+        self.reboot()
         n = len(self.launches())
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
-        self.assertIn("needs you", out)
-        self.assertEqual(jload(self.state("last-revive.json"))["needs_you"], ["Alpha Lane"])
-        self.assertEqual(len(self.launches()), n)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertIn("this machine restarted", new["argv"][-1])
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["needs_you"]), (["Alpha Lane"], []), out)
+
+    def test_G2_11_a_pinned_session_comes_back_silent_and_a_changed_login_is_reported(self):
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane", extra_env={"CLAUDE_CODE_OAUTH_TOKEN": "tok-pinned"})
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = {x["sid"]: x["argv"] for x in self.wait_launches(n + 2)[n:]}
+        self.assertIn("this machine restarted", new[a][-1])      # the ordinary session gets the note
+        self.assertEqual(new[b][-1], b)                           # the pinned one is started silent
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["needs_you"]), (["Alpha Lane"], ["Beta Lane"]), out)
+        self.assertIn("different login", out)
 
     def test_G2_9_two_revives_at_once_do_not_both_run(self):
         self.recorded_then_rebooted()
@@ -399,7 +417,7 @@ class Invariants(unittest.TestCase):
     def test_INV6_standard_library_only_and_no_network(self):
         import re
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
-        self.assertLessEqual(mods, {"glob", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime"})
+        self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime"})
 
 
 class Strand(unittest.TestCase):

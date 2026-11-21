@@ -59,8 +59,9 @@ that way and takes one turn by itself to read the wake-up message. Say this when
 (`bypass` in the line). For silent returns, the person sets `"wake": "idle"` in
 `~/.config/windstorm-tardigrade/config.json`.
 
-Lines that start with `needs you` name sessions Tardigrade will not start: they were launched with a login token in
-their environment and the person's shell does not set it. The person starts those their usual way.
+Lines that start with `needs you` name sessions that came back on a different login than they had before. This
+happens only where sessions on one machine are pinned to different accounts. Such a session is idle and nothing
+ran in it. The person closes it and starts it their usual way.
 
 ## What it never does
 

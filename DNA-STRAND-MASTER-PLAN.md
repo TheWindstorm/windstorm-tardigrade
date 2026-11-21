@@ -1,6 +1,6 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.2 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.2.
+Plan version 1.3 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.3.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -63,6 +63,10 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
   So: setup says plainly who has to log in (G5.3).
 - Timers and watchers inside a session do not survive, and a session that is not told keeps waiting for them.
   So: the note (G2.2).
+- On a Mac reached over ssh, the `claude` command is often a wrapper that supplies a login token, because the
+  keychain is not available there. Plan 1.2 refused to start any session that carried a token unless the shell
+  set it, and on such a Mac that meant it started nothing (2026-11-21, a real reboot: 0 of 2). So: start through
+  the person's own shell and command, then check the login (G2.8, G2.11).
 
 ## Genes and codons
 
@@ -75,7 +79,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G1.3 | While the machine is still starting, and (once setup has run) until this boot's revive has finished, `record` writes nothing. | `test_G1_3_record_waits_while_the_machine_is_still_starting` |
 | G1.4 | When no session is live, the previous record is kept. | `test_G1_4_record_never_replaces_the_record_with_an_empty_list` |
 | G1.5 | A recorded session that is no longer live moves to the "down" list with the time, and the record before each write is kept as `lanes.json.prev`. | `test_G1_5_a_session_that_went_down_moves_to_the_down_list` |
-| G1.6 | A token or key is never written to the record or the log. Only the name of the variable that held it is kept. | `test_G1_6_a_token_is_never_written_down` |
+| G1.6 | A token or key is never written to the record or the log. What is kept is the name of the variable that held it and an 8-digit one-way fingerprint (SHA-256, cut short), enough to tell whether a session came back on the same login. | `test_G1_6_a_token_is_never_written_down` |
 | G1.7 | Sessions on a tmux socket named in `skip_tmux_sockets` are not recorded, so a second tool that already brings them back stays the only one that does. The census still counts them. | `test_G1_7_sessions_on_a_skipped_tmux_socket_are_left_to_the_other_tool` |
 
 ### G2 Revive: bring each one back as itself
@@ -89,9 +93,10 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G2.5 | `revive --boot` acts only on a machine that has just started, and only once per boot. | `test_G2_5_boot_revive_runs_once_per_boot_and_only_after_a_boot` |
 | G2.6 | `--dry-run` says what would start and starts nothing. | `test_G2_6_dry_run_starts_nothing` |
 | G2.7 | A revived session gets a clean environment: nothing of the calling session's `CLAUDE*` variables reaches it. | `test_G2_7_a_revived_session_gets_a_clean_environment` |
-| G2.8 | A session that was started with a token in its environment is started only when the person's shell sets that variable too. Otherwise it is listed as "needs you". | `test_G2_8_a_session_started_with_a_token_is_left_for_the_person` |
+| G2.8 | Where every session carries the same login token (a machine whose `claude` command or shell supplies it), sessions are brought back as usual, and each one's login is checked against its fingerprint after the start. | `test_G2_8_a_machine_wide_login_token_comes_back_and_is_checked` |
 | G2.9 | Two revives never run at the same time. | `test_G2_9_two_revives_at_once_do_not_both_run` |
 | G2.10 | `revive --only NAME` brings back that one session and no other. | `test_G2_10_only_brings_back_just_that_one` |
+| G2.11 | Where sessions on one machine have different logins, a session with a token comes back silent, with no opening message, and its login is checked. If the login changed it is listed as "needs you", idle, with nothing run on the wrong account. | `test_G2_11_a_pinned_session_comes_back_silent_and_a_changed_login_is_reported` |
 
 ### G3 Census: say what is running and what is not
 
@@ -126,7 +131,7 @@ These hold across every gene. A change that breaks one is a plan change first.
 |---|---|
 | INV1 It never ends a Claude session and never ends a tmux session. The one thing it replaces is the leftover shell in a tmux session it made itself, in the same run, when the first start failed. | `test_INV1_it_never_ends_a_session` |
 | INV2 It never types into a session and never answers a dialog. The note in G2.2 is given to `claude` as its opening message, not typed. | `test_INV2_it_never_types_into_a_session_or_answers_a_dialog` |
-| INV3 It never stores a secret. | G1.6 |
+| INV3 It never stores a secret. A login token leaves only a variable name and an 8-digit fingerprint. | G1.6 |
 | INV4 Never a second copy of a session. | G2.4, G2.9 |
 | INV5 It reads only this user's processes. | G3.3 |
 | INV6 Python standard library only, and no network. | `test_INV6_standard_library_only_and_no_network` |
@@ -160,8 +165,8 @@ test has a codon here.
 - **Herdr** (G4.2). The logic comes from the fleet kit, where it is also not yet proven through a reboot.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.
-- **Sessions pinned to different accounts by a token.** G2.8 can tell that a variable is set, not that it holds the
-  same token. Such sessions should be started by hand.
+- **Sessions pinned to different accounts by a token** (G2.11) are proven with the stand-in only, not on a real
+  machine with two accounts.
 - **G5.3 and G5.4** have no test. G5.3 was read on one Linux machine ("lingering is on").
 - **Windows.** Not supported.
 

@@ -14,7 +14,8 @@ Rules it keeps:
     model, effort and permission mode. Its name and its whole conversation come back with it.
   * Never a second copy. A session id that any live process on this machine holds is never started.
   * It never ends a session, never types into one, never answers a dialog for you, and never stores
-    a token or a key.
+    a token or a key. For a login token it keeps the variable's name and an 8-digit one-way fingerprint,
+    so it can tell whether a session came back on the same login.
   * The record is never overwritten by a half-started machine, and never by an empty list.
   * Other users' sessions on a shared machine are counted, never read.
 
@@ -22,6 +23,7 @@ Standard library only. Record: ~/.config/windstorm-tardigrade/lanes.json
 Log: ~/.local/state/windstorm-tardigrade/tardigrade.log
 """
 import glob
+import hashlib
 import json
 import os
 import re
@@ -32,7 +34,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -187,8 +189,11 @@ def argv_of(pid):
 
 
 def env_facts(pid):
-    """Three facts from a process's environment. No value is kept except one folder path."""
-    facts = {"child": False, "token_keys": [], "config_dir": ""}
+    """Facts from a process's environment. No value is kept except one folder path. A login token is
+    reduced, in memory, to 8 hex digits of its SHA-256: enough to tell "same login or not", useless for
+    getting the token back."""
+    facts = {"child": False, "token_keys": [], "config_dir": "", "token_print": ""}
+    tok = []
     if MAC:
         pairs = run(["ps", "eww", "-o", "command=", "-p", str(pid)])[1].split()
     else:
@@ -205,9 +210,12 @@ def env_facts(pid):
             facts["child"] = True
         elif k in TOKEN_KEYS and v:
             facts["token_keys"].append(k)
+            tok.append(kv)
         elif k == "CLAUDE_CONFIG_DIR" and v:
             facts["config_dir"] = v
     facts["token_keys"].sort()
+    if tok:
+        facts["token_print"] = hashlib.sha256(("tardigrade:" + "\n".join(sorted(tok))).encode()).hexdigest()[:8]
     return facts
 
 
@@ -434,7 +442,7 @@ def live(with_launch=True):
         row = {
             "pid": pid, "session_id": sid, "name": (sj.get("name") or "").strip(),
             "cwd": sj.get("cwd") or HOME, "host": kind, "config_dir": ef["config_dir"],
-            "token_keys": ef["token_keys"], "entrypoint": sj.get("entrypoint", "cli"),
+            "token_keys": ef["token_keys"], "token_print": ef["token_print"], "entrypoint": sj.get("entrypoint", "cli"),
             "status": sj.get("status", ""), "updated_at": int((sj.get("updatedAt") or 0) / 1000),
             "tmux_socket": "", "tmux_session": "", "attached": 0, "herdr_tab": "", "herdr_workspace": "",
         }
@@ -572,7 +580,8 @@ def record():
             "name": r["name"], "session_id": r["session_id"], "cwd": r["cwd"], "model": r["model"],
             "effort": r["effort"], "mode": r["mode"], "add_dirs": r["add_dirs"], "host": r["host"],
             "tmux_socket": sock, "tmux_session": name, "herdr_tab": tab, "herdr_workspace": ws,
-            "config_dir": r["config_dir"], "token_keys": r["token_keys"], "last_seen": int(time.time()),
+            "config_dir": r["config_dir"], "token_keys": r["token_keys"], "token_print": r["token_print"],
+            "last_seen": int(time.time()),
         })
     if not rows and old["lanes"]:
         log(f"record: 0 live sessions; kept the previous record ({len(old['lanes'])} sessions)")
@@ -633,12 +642,14 @@ def clean_env():
     return e
 
 
-def shell_has(key):
-    """Does the shell a revived session starts in set this variable? Only yes or no is read."""
-    sh = CFG["shell"]
-    argv = ["env", "-i"] + [f"{k}={v}" for k, v in clean_env().items()]
-    argv += [sh, f"-{'l' if sh == 'zsh' else ''}ic", f'[ -n "${{{key}:-}}" ] && echo TARDIGRADE_YES']
-    return "TARDIGRADE_YES" in run(argv, timeout=20)[1]
+def login_print(r):
+    """the recorded login fingerprint: "" for none, "unknown" for a record made before fingerprints"""
+    return r.get("token_print") or ("unknown" if r.get("token_keys") else "")
+
+
+def same_login(r, pid):
+    want = login_print(r)
+    return want == "unknown" or env_facts(pid)["token_print"] == want
 
 
 def start_lane(r, note, created):
@@ -709,7 +720,11 @@ def _revive(boot):
     held = running_sids()
     note = WAKE_NOTE.format(when=time.strftime("%Y-%m-%d %H:%M %Z")) if CFG["wake"] == "note" else ""
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": []}
-    have_key = {}
+    # More than one login on this machine (some sessions with a token, some without, or two tokens) means
+    # sessions are pinned to accounts. A pinned session comes back silent, and its login is checked before
+    # anything can run on the wrong account.
+    mixed = len({login_print(x) for x in read_table()["lanes"]}) > 1
+    quiet = set()
     for r in rows:
         nm = display(r)
         if r["session_id"] in held:
@@ -720,18 +735,10 @@ def _revive(boot):
             log(f"skip  {nm}: a tmux session named {r['tmux_session']} already exists")
             report["skipped"].append(nm)
             continue
-        missing = []
-        for k in r.get("token_keys") or []:
-            if k not in have_key:
-                have_key[k] = shell_has(k)
-            if not have_key[k]:
-                missing.append(k)
-        if missing:
-            log(f"needs you  {nm}: it was started with {', '.join(missing)} set, and your shell does not set it. "
-                "Tardigrade never stores tokens; start this one your usual way.")
-            report["needs_you"].append(nm)
-            continue
-        log(f"start {nm} ({r['session_id'][:8]}, {r['mode']}, {r.get('model') or 'default model'}) in {r['cwd']}")
+        if mixed and login_print(r):
+            quiet.add(r["session_id"])
+        log(f"start {nm} ({r['session_id'][:8]}, {r['mode']}, {r.get('model') or 'default model'}) in {r['cwd']}"
+            + ("  [pinned login: comes back silent, then its login is checked]" if r["session_id"] in quiet else ""))
         todo.append(r)
     if DRY:
         return 0
@@ -755,11 +762,18 @@ def _revive(boot):
                     report["skipped"].append(nm)
                 del pending[sid]
                 continue
-            if start_lane(r, note, created):
+            if start_lane(r, "" if sid in quiet else note, created):
                 time.sleep(float(CFG["settle_s"]))
-                if came_up(r):
-                    log(f"  {nm}: up")
-                    report["started"].append(nm)
+                pid = came_up(r)
+                if pid:
+                    if same_login(r, pid):
+                        log(f"  {nm}: up" + (" (silent; same login as before)" if sid in quiet else ""))
+                        report["started"].append(nm)
+                    else:
+                        log(f"needs you  {nm}: it came back on a different login than it had before. "
+                            + ("It is idle and nothing ran. " if sid in quiet else "")
+                            + "Close it and start it your usual way.")
+                        report["needs_you"].append(nm)
                     del pending[sid]
                     time.sleep(float(CFG["stagger_s"]))
                     continue
@@ -1092,10 +1106,14 @@ def who_logs_in():
     out = []
     if MAC:
         fv = run(["fdesetup", "status"], timeout=10)[1]
-        out.append("This Mac starts Tardigrade when you log in.")
+        auto = run(["defaults", "read", "/Library/Preferences/com.apple.loginwindow", "autoLoginUser"], timeout=10)
         if "FileVault is On" in fv:
-            out.append("FileVault is on: after a restart the Mac waits at the unlock screen, and NOTHING comes back "
+            out.append("FileVault is on: after a restart this Mac waits at its unlock screen, and NOTHING comes back "
                        "until a person types the password there.")
+        elif auto[0] == 0 and auto[1].strip():
+            out.append("This Mac logs in by itself after a restart, so sessions come back with nobody there.")
+        else:
+            out.append("After a restart, sessions come back when someone logs in to this Mac.")
     else:
         user = os.environ.get("USER") or os.path.basename(HOME)
         linger = run(["loginctl", "show-user", user, "-p", "Linger", "--value"], timeout=10)[1].strip()

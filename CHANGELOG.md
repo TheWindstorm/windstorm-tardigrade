@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3 (2026-11-21)
+Built from DNA Strand Master Plan 1.3. Found by a real reboot of a Mac.
+
+- **Machines where the `claude` command supplies the login token** (common on a Mac reached over ssh): 0.1.2
+  refused to start any session that carried a token, so on such a machine it brought back nothing. Now sessions start
+  through your own shell and command as before, and each one's login is checked afterwards against an 8-digit
+  one-way fingerprint (G2.8).
+- **Sessions pinned to different accounts** come back silent and are checked before anything can run on the wrong
+  account (G2.11).
+- **setup on a Mac** says whether the Mac logs in by itself after a restart.
+
 ## 0.1.2 (2026-11-21)
 Built from DNA Strand Master Plan 1.2. The release that went through real reboots.
 
