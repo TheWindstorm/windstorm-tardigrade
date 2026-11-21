@@ -11,8 +11,9 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.3, a pilot.** It has been through two real reboots of a Linux laptop, one of them a sudden reset
-> with no shutdown, and brought every test session back both times. It has not yet run on a Mac. See
+> **Status: 0.1.4, a pilot.** It has been through real reboots of a Linux laptop (one of them a sudden reset with
+> no shutdown) and of a Mac, and brought every test session back. Its first Mac reboot brought back none, which is
+> how two faults were found and fixed. See
 > [Tested](#tested) for exactly what is proven and what is not.
 
 ## Install
@@ -147,12 +148,17 @@ Proven:
   under three minutes, with nothing typed by anyone. After the reset the record on disk was intact. A second tool
   restored a fourth session on the same machine in the same second, and neither touched the other's
   (`skip_tmux_sockets`).
+- **A third reboot** of that laptop on the released version after a plugin update: three of three again.
+- **One real reboot of a Mac** (Intel, macOS 13, logs in by itself, FileVault off), version 0.1.3: the launchd
+  agent ran 166 seconds after boot and both test sessions came back as themselves. On that Mac the `claude` command
+  supplies the login token, and each session's login was checked. The reboot before it, on 0.1.2, brought back
+  none of them; 0.1.3 and 0.1.4 are the fixes.
 - **Opening windows** on that laptop's real desktop: three hidden sessions, three windows.
 - **Acting on the opening message**: one real session on Linux, Claude Code 2.1.330. It was recorded, ended and
   brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
-- 28 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+- 29 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
   a second copy, once per boot, a clean environment, the census, and the rules under Safety.
 
 Not yet proven:
@@ -162,12 +168,15 @@ Not yet proven:
   census showed all of them as "waiting for you". That is the right behaviour, and it is not the same proof.
 - **With nobody logged in at all.** The boot service started before any remote login, but that laptop also logs into
   its desktop by itself, so lingering alone was not isolated.
-- **macOS**: the launchd agents and the FileVault notice.
+- **A Mac with FileVault on, or one that does not log in by itself**: setup says what will happen; no such Mac was rebooted. Opening windows on a Mac.
 - **Herdr** tab re-attach.
 - Sessions pinned to different accounts by a token: proven with the stand-in only.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.
 
-Two things the real machine taught us: Claude Code asks "do you trust this folder?" for a new folder even when
+On a slow machine Claude Code can take a couple of minutes to load a session after boot. During that time the
+census shows it as "starting".
+
+Two more things the real machines taught us: Claude Code asks "do you trust this folder?" for a new folder even when
 permission checks are off, and a session on an account at its limit comes back to a question. Tardigrade answers
 neither. It leaves them for you and counts them.
 

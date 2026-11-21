@@ -210,6 +210,23 @@ class Record(Base):
         rc, out = self.tg("census", "--json")
         self.assertEqual(json.loads(out)["running"], 1)     # still counted: the census shows everything
 
+    def test_G1_8_a_session_that_is_still_starting_is_not_taken_for_down(self):
+        self.start_lane("alpha", "Alpha Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        with open(os.path.join(self.home, "slow"), "w") as f:
+            f.write("60")                      # Claude Code takes a minute to load on this "machine"
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        rc, out = self.tg("census", "--json")
+        d = json.loads(out)
+        self.assertEqual((d["running"], d["down"]), (1, 0), out)
+        self.assertEqual((d["sessions"]["hidden"][0]["name"], d["sessions"]["hidden"][0]["status"]), ("Alpha Lane", "starting"))
+        self.tg("record", TARDIGRADE_FAKE_UPTIME_S=100)      # the timer fires while it is still loading
+        t = self.table()
+        self.assertEqual(([r["name"] for r in t["lanes"]], t["down"]), (["Alpha Lane"], []))
+
 
 class Revive(Base):
     def recorded_then_rebooted(self, **kw):

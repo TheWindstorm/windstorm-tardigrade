@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -423,6 +423,8 @@ def live(with_launch=True):
     """(my live sessions, number of other users' Claude processes, number of helper sessions)"""
     P, PN = procs(), panes()
     me, mine, others, helpers = os.getuid(), [], 0, 0
+    table = read_json(TABLE, {})
+    known = {r["session_id"]: r for r in (table.get("down", []) + table.get("lanes", []))} if isinstance(table, dict) else {}
     for pid, (_, uid, comm) in sorted(P.items()):
         if not is_claude(comm):
             continue
@@ -432,8 +434,19 @@ def live(with_launch=True):
         ef = env_facts(pid)
         sj = session_json(pid, ef["config_dir"])
         sid = sj.get("sessionId")
+        starting = False
         if not sid:
-            continue           # not a session: a version check, a helper process
+            # No session file yet. A process started with --resume for a session on our record is one that
+            # Claude Code is still loading (on a slow machine just after boot this takes minutes): it is
+            # running, not down. Anything else without a session file is not a session of ours.
+            m = re.search(r"--resume[ =]([0-9a-f-]{36})", " ".join(argv_of(pid)))
+            if not m or m.group(1) not in known:
+                continue
+            sid, starting = m.group(1), True
+        if starting or not sj.get("status"):
+            k = known.get(sid, {})     # until it has loaded, its name and folder are the recorded ones
+            sj = dict(sj, name=k.get("name") or sj.get("name") or "", cwd=sj.get("cwd") or k.get("cwd") or HOME,
+                      status="starting", sessionId=sid)
         kind, detail = where(pid, P, PN)
         interactive = sj.get("kind", "interactive") == "interactive"
         if ef["child"] or not interactive:

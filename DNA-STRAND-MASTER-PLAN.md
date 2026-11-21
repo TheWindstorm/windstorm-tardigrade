@@ -1,6 +1,6 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.3 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.3.
+Plan version 1.4 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.4.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -63,6 +63,10 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
   So: setup says plainly who has to log in (G5.3).
 - Timers and watchers inside a session do not survive, and a session that is not told keeps waiting for them.
   So: the note (G2.2).
+- On a slow machine just after boot, Claude Code can take minutes to load a session. For that time the process
+  exists and its session file does not. Plan 1.3 called such a session "down", and a record taken in that window
+  would have dropped it (2026-11-21, a real Mac). So: a recorded session that is still loading counts as running
+  (G1.8).
 - On a Mac reached over ssh, the `claude` command is often a wrapper that supplies a login token, because the
   keychain is not available there. Plan 1.2 refused to start any session that carried a token unless the shell
   set it, and on such a Mac that meant it started nothing (2026-11-21, a real reboot: 0 of 2). So: start through
@@ -80,6 +84,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G1.4 | When no session is live, the previous record is kept. | `test_G1_4_record_never_replaces_the_record_with_an_empty_list` |
 | G1.5 | A recorded session that is no longer live moves to the "down" list with the time, and the record before each write is kept as `lanes.json.prev`. | `test_G1_5_a_session_that_went_down_moves_to_the_down_list` |
 | G1.6 | A token or key is never written to the record or the log. What is kept is the name of the variable that held it and an 8-digit one-way fingerprint (SHA-256, cut short), enough to tell whether a session came back on the same login. | `test_G1_6_a_token_is_never_written_down` |
+| G1.8 | A recorded session whose process is there but which Claude Code has not finished loading counts as running. The census shows it as "starting" and `record` keeps it. | `test_G1_8_a_session_that_is_still_starting_is_not_taken_for_down` |
 | G1.7 | Sessions on a tmux socket named in `skip_tmux_sockets` are not recorded, so a second tool that already brings them back stays the only one that does. The census still counts them. | `test_G1_7_sessions_on_a_skipped_tmux_socket_are_left_to_the_other_tool` |
 
 ### G2 Revive: bring each one back as itself
@@ -149,6 +154,11 @@ test has a codon here.
   to finish (G1.3). A second restore tool brought back a fourth session at the same second; with
   `skip_tmux_sockets` neither touched the other's (G1.7). This proves G5.1 on Linux.
 - Same laptop: `open` on its real desktop opened three windows, and the census then showed no hidden session (G4.1).
+- 2026-11-21, an Intel Mac, macOS 13, auto-login on, FileVault off, Claude Code 2.1.330, **one real reboot** on
+  0.1.3: the launchd agent ran 166 seconds after boot and brought back two sessions with the same ids and names.
+  On that Mac the `claude` command supplies the login token, and the login check passed (G2.8). The sessions
+  needed about two more minutes to finish loading. The reboot before it, on 0.1.2, brought back 0 of 2: the
+  reason for plan 1.3. This proves G5.1 on macOS for a Mac that logs in by itself.
 - 2026-11-21, Linux, Claude Code 2.1.330, a real session: started in tmux, recorded, ended, then brought back with
   `revive --only`. Same session id, name, folder and model, its earlier messages on screen, and it acted on the
   note (G2.2).
@@ -161,7 +171,7 @@ test has a codon here.
   each revived session stopped at Claude Code's "limit reached" question. Tardigrade answered nothing (INV2) and the
   census counted them as waiting (G3.4).
 - **Nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
-- **macOS.** The LaunchAgent and the FileVault notice (G5.3) are written and not yet run on a Mac.
+- **macOS with FileVault on, or without auto-login.** Setup says what will happen (G5.3); no such Mac was rebooted. `open` was not run on a Mac.
 - **Herdr** (G4.2). The logic comes from the fleet kit, where it is also not yet proven through a reboot.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.

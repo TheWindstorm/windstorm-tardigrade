@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4 (2026-11-21)
+Built from DNA Strand Master Plan 1.4. Also found by the Mac.
+
+- **A session that is still loading is running, not down** (G1.8). On a slow machine just after boot Claude Code
+  can take minutes to load a session. 0.1.3 called it "down" for that time, and a record taken then would have
+  dropped it from the list. The census now shows it as "starting" and the record keeps it.
+- README and plan say what the Mac reboot proved.
+
 ## 0.1.3 (2026-11-21)
 Built from DNA Strand Master Plan 1.3. Found by a real reboot of a Mac.
 
