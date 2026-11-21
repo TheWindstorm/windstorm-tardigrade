@@ -29,8 +29,37 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
     f.write(json.dumps({"pid": os.getpid(), "sid": sid, "argv": a, "cwd": os.getcwd(),
                         "child": "CLAUDE_CODE_CHILD_SESSION" in os.environ,
                         "claude_env": sorted(k for k in os.environ if k.startswith("CLAUDE"))}) + "\n")
-if os.path.exists(os.path.join(home, "trustprompt")):    # stop at the folder question, as Claude Code does
-    print("Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder", flush=True)
+if os.path.exists(os.path.join(home, "trustprompt")):
+    # Stop at the folder question, as Claude Code does: cursor on "No, exit"; Down moves it; Enter confirms.
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    tty.setraw(fd)
+    cur, buf = 0, b""
+
+    def draw():
+        rows = (" ❯ No, exit\r\n   Yes, I trust this folder\r\n" if cur == 0
+                else "   No, exit\r\n ❯ Yes, I trust this folder\r\n")
+        sys.stdout.write("\x1b[2J\x1b[HQuick safety check: Is this a project you created or one you trust?\r\n" + rows)
+        sys.stdout.flush()
+
+    draw()
+    while True:
+        ch = os.read(fd, 16)
+        if not ch:
+            break
+        buf += ch
+        if b"\x1b[B" in buf or b"\x1bOB" in buf:
+            cur, buf = 1 - cur, b""
+            draw()
+        if b"\r" in buf or b"\n" in buf:
+            termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+            if cur == 0:
+                sys.exit(0)             # "No, exit"
+            break
+    sys.stdout.write("\x1b[2J\x1b[Hloaded\r\n")
+    sys.stdout.flush()
 try:    # a file named "slow" in HOME makes this stand-in take that many seconds to "load", like a slow machine
     time.sleep(float(open(os.path.join(home, "slow")).read()))
 except (OSError, ValueError):

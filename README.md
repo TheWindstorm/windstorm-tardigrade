@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.5, a pilot.** It has been through real reboots of a Linux laptop (one of them a sudden reset with
+> **Status: 0.1.6, a pilot.** It has been through real reboots of a Linux laptop (one of them a sudden reset with
 > no shutdown) and of a Mac, and brought every test session back. Its first Mac reboot brought back none, which is
 > how two faults were found and fixed. See
 > [Tested](#tested) for exactly what is proven and what is not.
@@ -49,6 +49,7 @@ update the plugin.
 | `tardigrade open` | Opens a terminal window for each hidden session. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
+| `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
 | `tardigrade uninstall` | Switches it off. Running sessions and your record are not touched. |
 
 In Claude Code you can say these in plain words. In a terminal, each is
@@ -89,8 +90,10 @@ so the session checks its notes and starts again what is still needed. That mess
 bring sessions back silent instead, put `"wake": "idle"` in `~/.config/windstorm-tardigrade/config.json`.
 
 **The trust question:** Claude Code asks "do you trust this folder?" on every start of a session whose folder is
-your home folder. Tardigrade does not answer for you. The census marks such a session `trust?` until you open its
-window and answer.
+your home folder. By default Tardigrade does not answer for you: the census marks such a session `trust?` until you
+open its window and answer. If you would rather have it answered, say `tardigrade trust on`. Then, for a session
+Tardigrade brings back, in the folder that session was already running in, it answers Yes. It answers no other
+question, and it writes each answer in its log.
 
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
@@ -115,7 +118,8 @@ Setup tells you this for your machine. It never changes it for you.
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use
   `"wake": "idle"`.
 - It never ends a session, never types into one, and never answers a dialog for you. If a revived session stops at a
-  question, it waits there for you.
+  question, it waits there for you. The one exception is yours to switch on: `trust on` (above). It is two keys,
+  sent only when the screen shows the cursor on "Yes, I trust".
 - It never stores a token or a key. For a login token it keeps the variable's name and an 8-digit one-way
   fingerprint, and uses it to check that a session came back on the same login. Where sessions on one machine use
   different logins, a session with a token comes back silent, and if its login changed it is listed as "needs you"
@@ -137,6 +141,8 @@ Setup tells you this for your machine. It never changes it for you.
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
 | `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
 | `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. |
+| `answer_trust` | `false` | Set by `trust on` / `trust off`. Answer "trust this folder?" for a revived session's own folder. |
+| `trust_wait_min` | `15` | After a boot, keep looking for that question this long. A slow machine asks late. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
 
 The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
@@ -162,7 +168,7 @@ Proven:
   brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
-- 30 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+- 33 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
   a second copy, once per boot, a clean environment, the census, and the rules under Safety.
 
 Not yet proven:
@@ -173,6 +179,7 @@ Not yet proven:
 - **With nobody logged in at all.** The boot service started before any remote login, but that laptop also logs into
   its desktop by itself, so lingering alone was not isolated.
 - **A Mac with FileVault on, or one that does not log in by itself**: setup says what will happen; no such Mac was rebooted. Opening windows on a Mac.
+- **`trust on` on a real machine**: proven with the stand-in so far.
 - **Herdr** tab re-attach.
 - Sessions pinned to different accounts by a token: proven with the stand-in only.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.

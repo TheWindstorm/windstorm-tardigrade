@@ -4,6 +4,8 @@
   record              write down every live session (a timer runs this every 5 minutes)
   revive [--boot]     start every recorded session that is not running (runs once after boot)
   revive --only NAME  bring back just that one
+  trust on|off        opt in (or out): after a restart, answer Claude Code's "trust this folder?"
+                      for a session's own folder. Off unless you switch it on.
   census [--json]     what is running, what runs with no window open, what is down
   open                open a terminal window for each hidden session
   setup / uninstall   install or remove the boot service and the record timer
@@ -13,7 +15,8 @@ Rules it keeps:
   * A session comes back as itself: `claude --resume <its own id>` in its own folder, with its own
     model, effort and permission mode. Its name and its whole conversation come back with it.
   * Never a second copy. A session id that any live process on this machine holds is never started.
-  * It never ends a session, never types into one, never answers a dialog for you, and never stores
+  * It never ends a session, never types into one, never answers a dialog for you (one exception,
+    only if you switch it on: `trust on`), and never stores
     a token or a key. For a login token it keeps the variable's name and an 8-digit one-way fingerprint,
     so it can tell whether a session came back on the same login.
   * The record is never overwritten by a half-started machine, and never by an empty list.
@@ -34,7 +37,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -62,6 +65,8 @@ CFG = {
     "attach_wait_min": 30,    # wait this long for the Herdr server after boot
     "down_keep_days": 14,     # how long a session that went down stays on the "down" list
     "skip_tmux_sockets": [],  # tmux socket names to leave alone, when another tool brings those sessions back
+    "answer_trust": False,    # opt-in (`trust on`): answer "trust this folder?" for a revived session's own folder
+    "trust_wait_min": 15,     # after a boot, keep looking for that question this long (slow machines ask late)
 }
 
 WAKE_NOTE = (
@@ -699,6 +704,53 @@ def came_up(r):
     return c if c and alive(c) else None
 
 
+YES_LINE = re.compile(r"❯\s*(\d\.\s*)?Yes, I trust")
+
+
+def answer_trust(r):
+    """Only when the person has switched it on (`trust on`), and only for a session this run started, in
+    the folder it was recorded in: if its pane shows Claude Code's "trust this folder?" question, choose
+    Yes. These are the only keys Tardigrade ever sends, and Enter is sent only with the cursor on Yes."""
+    sock, target = r["tmux_socket"], f"={r['tmux_session']}:"
+    screen = tmux(sock, "capture-pane", "-p", "-t", target, timeout=6)[1]
+    if "trust this folder" not in screen:
+        return False
+    if not YES_LINE.search(screen):
+        tmux(sock, "send-keys", "-t", target, "Down")
+        time.sleep(1)
+        screen = tmux(sock, "capture-pane", "-p", "-t", target, timeout=6)[1]
+    if not YES_LINE.search(screen):
+        log(f"  {display(r)}: the trust question is open, but the cursor is not on Yes; left for you")
+        return False
+    tmux(sock, "send-keys", "-t", target, "Enter")
+    log(f"  {display(r)}: answered Yes to \"trust this folder?\" for its own folder {r['cwd']} (you switched this on)")
+    return True
+
+
+def loaded(r):
+    pid = came_up(r)
+    return bool(pid and session_json(pid, r.get("config_dir", "")).get("sessionId"))
+
+
+def trust_sweep(rows, minutes):
+    """Keep looking at the sessions this run started until each has loaded or the time is up. A slow
+    machine can take minutes to draw the question, so one look right after the start is not enough."""
+    answered, waiting, end = [], list(rows), time.time() + minutes * 60
+    while waiting:
+        still = []
+        for r in waiting:
+            if not came_up(r) or loaded(r):
+                continue
+            if answer_trust(r):
+                answered.append(display(r))
+            still.append(r)
+        waiting = still
+        if not waiting or time.time() >= end:
+            break
+        time.sleep(1 if TESTING else 10)
+    return answered, [display(r) for r in waiting]
+
+
 def revive():
     os.makedirs(STATE, exist_ok=True)
     boot = "--boot" in ARGS
@@ -761,7 +813,7 @@ def _revive(boot):
         todo.append(r)
     if DRY:
         return 0
-    created = set()
+    created, came = set(), []
     pending = {r["session_id"]: [r, 0] for r in todo}
     deadline = time.time() + float(CFG["retry_min"]) * 60
     while pending:
@@ -770,12 +822,14 @@ def _revive(boot):
             if n and came_up(r):
                 log(f"  {nm}: up (came up late)")
                 report["started"].append(nm)
+                came.append(r)
                 del pending[sid]
                 continue
             if sid in running_sids():
                 if n and came_up(r):
                     log(f"  {nm}: up (came up late)")
                     report["started"].append(nm)
+                    came.append(r)
                 else:
                     log(f"  {nm}: something else started it meanwhile; left alone")
                     report["skipped"].append(nm)
@@ -785,6 +839,7 @@ def _revive(boot):
                 time.sleep(float(CFG["settle_s"]))
                 pid = came_up(r)
                 if pid:
+                    came.append(r)
                     if same_login(r, pid):
                         log(f"  {nm}: up" + (" (silent; same login as before)" if sid in quiet else ""))
                         report["started"].append(nm)
@@ -812,6 +867,13 @@ def _revive(boot):
             f.write(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
     log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
         f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
+    if CFG["answer_trust"] and came:
+        wait = float(CFG["trust_wait_min"]) if boot else min(float(CFG["trust_wait_min"]), 3)
+        report["trust_answered"], report["not_loaded"] = trust_sweep(came, wait)
+        write_json(os.path.join(STATE, "last-revive.json"), report)
+        if report["trust_answered"] or report["not_loaded"]:
+            log(f"trust: answered for {len(report['trust_answered'])} session(s); "
+                f"{len(report['not_loaded'])} still not loaded: {', '.join(report['not_loaded']) or '-'}")
     notify(f"{len(report['started'])} session(s) brought back, {len(report['failed']) + len(report['needs_you'])} need you")
     attach_tabs(rows)
     return 0
@@ -953,7 +1015,8 @@ def census():
         print(f"Helper sessions started by other sessions: {d['helpers']} (not brought back after a reboot).")
     if d["trust"]:
         print(f"\ntrust? = Claude Code asks whether to trust that session's folder, and the session has not loaded yet "
-              f"({d['trust']}). A session in your home folder is asked on every start. Open its window and answer.")
+              f"({d['trust']}). A session in your home folder is asked on every start. Open its window and answer, "
+              f"or have it answered after a restart: tardigrade trust on")
     if d["hidden"]:
         print("\nTo open a window for each hidden one: tardigrade open")
     return 0
@@ -1178,7 +1241,26 @@ def uninstall():
     return 0
 
 
-COMMANDS = {"record": record, "revive": revive, "census": census, "status": census, "open": open_windows,
+def trust_cmd():
+    arg = (ARGS or [""])[0]
+    if arg == "on":
+        save_cfg_key("answer_trust", True)
+    elif arg == "off":
+        save_cfg_key("answer_trust", False)
+    elif arg:
+        print("say: trust on, or trust off")
+        return 2
+    if CFG["answer_trust"]:
+        print("Trust answering is ON. When Tardigrade brings a session back and Claude Code asks \"do you trust this "
+              "folder?\" for the folder that session was already running in, Tardigrade answers Yes for you. It answers "
+              "no other question. Switch it off with: trust off")
+    else:
+        print("Trust answering is OFF. Tardigrade answers no question. A session that is asked \"do you trust this "
+              "folder?\" waits there until you answer; the census marks it trust?. Switch it on with: trust on")
+    return 0
+
+
+COMMANDS = {"trust": trust_cmd, "record": record, "revive": revive, "census": census, "status": census, "open": open_windows,
             "setup": setup, "uninstall": uninstall}
 
 if __name__ == "__main__":

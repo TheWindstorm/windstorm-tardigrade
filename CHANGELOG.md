@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6 (2026-11-21)
+Built from DNA Strand Master Plan 1.6.
+
+- **`trust on` / `trust off`** (G2.12, G2.13, G5.5): an opt-in. With it on, when a session Tardigrade brings back is
+  asked "do you trust this folder?" for the folder it was already running in, Tardigrade answers Yes and logs it. It
+  keeps looking for the question for up to 15 minutes after a boot, because a slow machine asks late. Off by default:
+  without it Tardigrade still answers nothing.
+
 ## 0.1.5 (2026-11-21)
 Built from DNA Strand Master Plan 1.5.
 

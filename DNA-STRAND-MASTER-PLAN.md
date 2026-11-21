@@ -1,6 +1,6 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.5 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.5.
+Plan version 1.6 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.6.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -63,6 +63,9 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
   So: setup says plainly who has to log in (G5.3).
 - Timers and watchers inside a session do not survive, and a session that is not told keeps waiting for them.
   So: the note (G2.2).
+- The person who asked for this skill decided (2026-11-21): answering the trust question is allowed as a setting a
+  person switches on, never as a default. Saying yes to a folder is the person's call; switching the setting on is
+  how they make that call once, for folders their sessions were already running in (G2.12).
 - Claude Code asks "trust this folder?" on every start of a session whose folder is the home folder. A restore
   tool that waits a fixed time for that question can miss it on a slow start and report the session as fine
   (2026-11-21, a real Mac: one session parked there, logged OK). Tardigrade never answers it (INV2). So: the
@@ -106,6 +109,8 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G2.9 | Two revives never run at the same time. | `test_G2_9_two_revives_at_once_do_not_both_run` |
 | G2.10 | `revive --only NAME` brings back that one session and no other. | `test_G2_10_only_brings_back_just_that_one` |
 | G2.11 | Where sessions on one machine have different logins, a session with a token comes back silent, with no opening message, and its login is checked. If the login changed it is listed as "needs you", idle, with nothing run on the wrong account. | `test_G2_11_a_pinned_session_comes_back_silent_and_a_changed_login_is_reported` |
+| G2.12 | Opt-in, off by default (`trust on`): when a session this run brought back is asked "trust this folder?" for the folder it was recorded in, Tardigrade answers Yes, and says so in the log. It keeps looking for the question for up to 15 minutes after a boot, because a slow machine asks late. | `test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder` |
+| G2.13 | The answer is two keys, Down and Enter, sent from one function. Enter is sent only when the screen shows the cursor on "Yes, I trust". No other key is ever sent to any session. | `test_G2_13_enter_is_sent_only_with_the_cursor_on_yes` |
 
 ### G3 Census: say what is running and what is not
 
@@ -131,6 +136,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G5.1 | `setup` installs a boot service that runs `revive --boot` 45 seconds after start and leaves the tmux server running after it ends, and a timer that records every 5 minutes. | `test_G5_1_the_boot_service_revives_once_and_outlives_itself` |
 | G5.2 | `setup --dry-run` installs nothing. | `test_G5_2_setup_dry_run_installs_nothing` |
 | G5.3 | `setup` says who has to log in after a restart: on Linux whether lingering is on, on a Mac whether FileVault is on. It never changes either. | Not verified by a test. |
+| G5.5 | `trust on` and `trust off` write the setting, and each says in plain words what Tardigrade will and will not answer. With no word it says which it is. | `test_G5_5_trust_on_and_off_write_the_setting_and_say_what_it_means` |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
 ## Invariants
@@ -140,7 +146,7 @@ These hold across every gene. A change that breaks one is a plan change first.
 | Invariant | Proof |
 |---|---|
 | INV1 It never ends a Claude session and never ends a tmux session. The one thing it replaces is the leftover shell in a tmux session it made itself, in the same run, when the first start failed. | `test_INV1_it_never_ends_a_session` |
-| INV2 It never types into a session and never answers a dialog. The note in G2.2 is given to `claude` as its opening message, not typed. | `test_INV2_it_never_types_into_a_session_or_answers_a_dialog` |
+| INV2 It never types into a session and never answers a dialog. The note in G2.2 is given to `claude` as its opening message, not typed. One exception, which only the person can switch on: the trust answer (G2.12, G2.13). | `test_INV2_it_never_types_into_a_session_or_answers_a_dialog` |
 | INV3 It never stores a secret. A login token leaves only a variable name and an 8-digit fingerprint. | G1.6 |
 | INV4 Never a second copy of a session. | G2.4, G2.9 |
 | INV5 It reads only this user's processes. | G3.3 |
@@ -177,6 +183,7 @@ test has a codon here.
   census counted them as waiting (G3.4).
 - **Nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
 - **macOS with FileVault on, or without auto-login.** Setup says what will happen (G5.3); no such Mac was rebooted. `open` was not run on a Mac.
+- **The trust answer (G2.12) on a real machine.** Proven with the stand-in only until a real reboot is run with it on.
 - **Herdr** (G4.2). The logic comes from the fleet kit, where it is also not yet proven through a reboot.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.

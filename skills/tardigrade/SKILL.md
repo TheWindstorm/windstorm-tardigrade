@@ -26,6 +26,7 @@ If neither file exists, this skill was installed without its plugin. Get the scr
 | Windows for the hidden ones | `open` |
 | Bring back what is down | `revive --dry-run`, show it, then `revive` |
 | Bring back one | `revive --only "Name"` |
+| Have the trust question answered after a restart | `trust on` (see below) |
 | Switch it off | `uninstall` |
 
 ## Setup
@@ -63,10 +64,21 @@ Lines that start with `needs you` name sessions that came back on a different lo
 happens only where sessions on one machine are pinned to different accounts. Such a session is idle and nothing
 ran in it. The person closes it and starts it their usual way.
 
+## The trust question
+
+Claude Code asks "do you trust this folder?" on every start of a session whose folder is the home folder. After a
+restart such a session waits at that question, and the census marks it `trust?`.
+
+`trust on` makes Tardigrade answer Yes for a session it brings back, in the folder that session was already running
+in. Run `trust on` only when the person asks for it in their own words. Before you run it, tell them what it does in
+one sentence, as above. Never switch it on because it would be convenient. `trust off` undoes it, and `trust` alone
+says which it is.
+
 ## What it never does
 
 - It never starts a second copy of a running session.
-- It never ends a session, never types into one, and never answers a dialog.
+- It never ends a session, never types into one, and never answers a dialog, except the trust question after the
+  person has said `trust on`.
 - It never stores a token or a key, and never reads another user's processes.
 - It does not bring back timers, watchers or background commands. It tells the revived session they are gone.
 

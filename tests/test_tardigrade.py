@@ -357,6 +357,34 @@ class Revive(Base):
         rc, out = self.tg("revive", "--only", "No Such Lane")
         self.assertEqual(rc, 1)
 
+    def test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder(self):
+        rc, out = self.tg("trust", "on")
+        self.assertIn("Trust answering is ON", out)
+        self.start_lane("alpha", "Alpha Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        with open(os.path.join(self.home, "trustprompt"), "w") as f:
+            f.write("1")
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        self.assertIn('answered Yes to "trust this folder?" for its own folder ' + self.work, out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["trust_answered"], rep["not_loaded"]), (["Alpha Lane"], []), out)
+        rc, cj = self.tg("census", "--json")
+        d = json.loads(cj)
+        self.assertEqual((d["running"], d["trust"], d["sessions"]["hidden"][0]["status"]), (1, 0, "idle"), cj)
+
+    def test_G2_13_enter_is_sent_only_with_the_cursor_on_yes(self):
+        src = fread(SCRIPT)
+        body = src[src.index("def answer_trust(r):"):src.index("def loaded(r):")]
+        self.assertEqual(src.count("send-keys"), 2)                 # Down and Enter, nowhere else in the script
+        self.assertEqual(body.count("send-keys"), 2)
+        enter = body.index('"Enter"')
+        self.assertLess(body.rindex("if not YES_LINE.search(screen):", 0, enter), enter)   # checked just before
+        self.assertIn('if CFG["answer_trust"] and came:', src)      # reached only through the opt-in
+        self.assertEqual(src.count("answer_trust(r)"), 2)           # its definition and one call, in the sweep
+
 
 class Census(Base):
     def test_G3_1_census_names_hidden_and_down_sessions(self):
@@ -409,6 +437,7 @@ class Census(Base):
         self.assertEqual(d["sessions"]["hidden"][0]["status"], "trust?")
         rc, text = self.tg("census")
         self.assertIn("asks whether to trust", text)
+        self.assertNotIn("answered Yes", fread(self.state("tardigrade.log")))     # off unless switched on
 
 
 class Setup(Base):
@@ -425,6 +454,16 @@ class Setup(Base):
         self.assertIn("would copy", out)
         self.assertFalse(os.path.exists(os.path.join(self.home, ".config", "systemd")))
         self.assertFalse(os.path.exists(os.path.join(self.home, ".local", "share", "windstorm-tardigrade")))
+
+    def test_G5_5_trust_on_and_off_write_the_setting_and_say_what_it_means(self):
+        rc, out = self.tg("trust")
+        self.assertIn("Trust answering is OFF", out)                # off unless switched on
+        rc, out = self.tg("trust", "on")
+        self.assertIn("answers Yes for you", out)
+        self.assertTrue(jload(os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json"))["answer_trust"])
+        rc, out = self.tg("trust", "off")
+        self.assertIn("Trust answering is OFF", out)
+        self.assertFalse(jload(os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json"))["answer_trust"])
 
 
 class Windows(Base):
@@ -446,8 +485,11 @@ class Invariants(unittest.TestCase):
         self.assertEqual(set(re.findall(r"os\.kill\(([^)]*)\)", self.src)), {"pid, 0"})   # only "is it alive?"
 
     def test_INV2_it_never_types_into_a_session_or_answers_a_dialog(self):
-        self.assertNotIn("send-keys", self.src)
+        # the one exception is the opt-in trust answer (G2.12, G2.13): two keys, in one function
+        body = self.src[self.src.index("def answer_trust(r):"):self.src.index("def loaded(r):")]
+        self.assertEqual(self.src.replace(body, "").count("send-keys"), 0)
         self.assertNotIn("send-text", self.src)
+        self.assertIn('"answer_trust": False,', self.src)           # off by default
 
     def test_INV6_standard_library_only_and_no_network(self):
         import re
