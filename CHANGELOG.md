@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5 (2026-11-21)
+Built from DNA Strand Master Plan 1.5.
+
+- **census marks a session parked at "trust this folder?"** as `trust?` and counts it as waiting (G3.5). Claude Code
+  asks this on every start of a session in your home folder; such a session has not loaded and would otherwise look
+  as if it were only slow.
+
 ## 0.1.4 (2026-11-21)
 Built from DNA Strand Master Plan 1.4. Also found by the Mac.
 

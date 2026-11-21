@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.4, a pilot.** It has been through real reboots of a Linux laptop (one of them a sudden reset with
+> **Status: 0.1.5, a pilot.** It has been through real reboots of a Linux laptop (one of them a sudden reset with
 > no shutdown) and of a Mac, and brought every test session back. Its first Mac reboot brought back none, which is
 > how two faults were found and fixed. See
 > [Tested](#tested) for exactly what is proven and what is not.
@@ -88,6 +88,10 @@ Tardigrade cannot restart those. Instead it tells each revived session, in one o
 so the session checks its notes and starts again what is still needed. That message costs one turn per session. To
 bring sessions back silent instead, put `"wake": "idle"` in `~/.config/windstorm-tardigrade/config.json`.
 
+**The trust question:** Claude Code asks "do you trust this folder?" on every start of a session whose folder is
+your home folder. Tardigrade does not answer for you. The census marks such a session `trust?` until you open its
+window and answer.
+
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
 (socket `tardigrade`) with no window, and `tardigrade open` shows it.
@@ -158,7 +162,7 @@ Proven:
   brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
-- 29 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+- 30 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
   a second copy, once per boot, a clean environment, the census, and the rules under Safety.
 
 Not yet proven:

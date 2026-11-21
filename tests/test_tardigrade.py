@@ -392,6 +392,24 @@ class Census(Base):
         rc, text = self.tg("census")
         self.assertIn("Waiting for you: 1", text)
 
+    def test_G3_5_census_names_a_session_parked_at_the_trust_question(self):
+        self.start_lane("alpha", "Alpha Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        for name, text in (("slow", "60"), ("trustprompt", "1")):
+            with open(os.path.join(self.home, name), "w") as f:
+                f.write(text)
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        time.sleep(1.5)
+        rc, out = self.tg("census", "--json")
+        d = json.loads(out)
+        self.assertEqual((d["running"], d["waiting"], d["trust"], d["down"]), (1, 1, 1, 0), out)
+        self.assertEqual(d["sessions"]["hidden"][0]["status"], "trust?")
+        rc, text = self.tg("census")
+        self.assertIn("asks whether to trust", text)
+
 
 class Setup(Base):
     def test_G5_1_the_boot_service_revives_once_and_outlives_itself(self):

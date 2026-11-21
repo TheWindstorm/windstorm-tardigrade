@@ -29,6 +29,8 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
     f.write(json.dumps({"pid": os.getpid(), "sid": sid, "argv": a, "cwd": os.getcwd(),
                         "child": "CLAUDE_CODE_CHILD_SESSION" in os.environ,
                         "claude_env": sorted(k for k in os.environ if k.startswith("CLAUDE"))}) + "\n")
+if os.path.exists(os.path.join(home, "trustprompt")):    # stop at the folder question, as Claude Code does
+    print("Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder", flush=True)
 try:    # a file named "slow" in HOME makes this stand-in take that many seconds to "load", like a slow machine
     time.sleep(float(open(os.path.join(home, "slow")).read()))
 except (OSError, ValueError):

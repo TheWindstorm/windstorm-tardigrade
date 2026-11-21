@@ -1,6 +1,6 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.4 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.4.
+Plan version 1.5 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.5.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -63,6 +63,10 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
   So: setup says plainly who has to log in (G5.3).
 - Timers and watchers inside a session do not survive, and a session that is not told keeps waiting for them.
   So: the note (G2.2).
+- Claude Code asks "trust this folder?" on every start of a session whose folder is the home folder. A restore
+  tool that waits a fixed time for that question can miss it on a slow start and report the session as fine
+  (2026-11-21, a real Mac: one session parked there, logged OK). Tardigrade never answers it (INV2). So: the
+  census names it (G3.5).
 - On a slow machine just after boot, Claude Code can take minutes to load a session. For that time the process
   exists and its session file does not. Plan 1.3 called such a session "down", and a record taken in that window
   would have dropped it (2026-11-21, a real Mac). So: a recorded session that is still loading counts as running
@@ -110,6 +114,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G3.1 | `census` lists three groups: running with a window, running with no window open (hidden), and on the record but not running (down). | `test_G3_1_census_names_hidden_and_down_sessions` |
 | G3.2 | `census` changes nothing: it starts nothing and writes nothing to the record. | `test_G3_2_census_changes_nothing` |
 | G3.4 | `census` counts the sessions that are stopped at a question or a dialog, and says so in its first lines. | `test_G3_4_census_counts_sessions_that_wait_for_an_answer` |
+| G3.5 | A recorded session that has stopped at Claude Code's "trust this folder?" question is shown as `trust?` and counted as waiting. Tardigrade reads the pane to find this out and keeps nothing from it. | `test_G3_5_census_names_a_session_parked_at_the_trust_question` |
 | G3.3 | On a shared machine, other users' Claude processes are counted by program name only. Their arguments, environment and files are never read. | Not verified by a test (see below). |
 
 ### G4 Windows and tabs

@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -461,6 +461,12 @@ def live(with_launch=True):
         }
         if kind == "tmux":
             row["tmux_socket"], row["tmux_session"], row["attached"] = detail
+            if row["status"] == "starting":
+                # Has Claude Code stopped at its own "trust this folder?" question? Read the pane to find out.
+                # Nothing from the pane is kept or printed.
+                screen = tmux(detail[0], "capture-pane", "-p", "-t", f"={detail[1]}:", timeout=6)[1]
+                if "trust this folder" in screen:
+                    row["status"] = "trust?"
         row["window"] = (kind in ("terminal", "ide", "ssh", "herdr")) or (kind == "tmux" and row["attached"] > 0)
         # a session with no terminal of any kind that the CLI did not start is some program's own: not ours to revive
         row["restorable"] = kind != "none" or row["entrypoint"] == "cli"
@@ -888,7 +894,8 @@ def census_data():
     return {
         "at": int(time.time()), "uptime_s": int(uptime_s()), "running": len(mine), "with_window": len(shown),
         "hidden": len(hidden), "down": len(down), "other_users": others, "helpers": helpers,
-        "waiting": len([r for r in mine if r["status"] == "waiting"]),
+        "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
+        "trust": len([r for r in mine if r["status"] == "trust?"]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "sessions": {"hidden": hidden, "with_window": shown, "down": down},
@@ -944,6 +951,9 @@ def census():
         print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; not read.")
     if d["helpers"]:
         print(f"Helper sessions started by other sessions: {d['helpers']} (not brought back after a reboot).")
+    if d["trust"]:
+        print(f"\ntrust? = Claude Code asks whether to trust that session's folder, and the session has not loaded yet "
+              f"({d['trust']}). A session in your home folder is asked on every start. Open its window and answer.")
     if d["hidden"]:
         print("\nTo open a window for each hidden one: tardigrade open")
     return 0
