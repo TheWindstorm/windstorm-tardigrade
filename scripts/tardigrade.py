@@ -1003,6 +1003,12 @@ def plist(label, py, script, verb, extra):
 """
 
 
+def user_env():
+    rt = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    return dict(os.environ, XDG_RUNTIME_DIR=rt,
+                DBUS_SESSION_BUS_ADDRESS=os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={rt}/bus")
+
+
 def setup():
     py = sys.executable or shutil.which("python3") or "/usr/bin/python3"
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
@@ -1036,19 +1042,26 @@ def setup():
             with open(p, "w") as f:
                 f.write(plist(label, py, script + arg, verb, extra))
             run(["launchctl", "bootout", f"gui/{uid}/{label}"])
-            run(["launchctl", "bootstrap", f"gui/{uid}", p])
+            if run(["launchctl", "bootstrap", f"gui/{uid}", p])[0] != 0:
+                print(f"NOT set up: launchd did not take {label}. Nothing comes back by itself yet.")
+                return 1
     else:
         ud = os.path.join(HOME, ".config", "systemd", "user")
         os.makedirs(ud, exist_ok=True)
         for name, text in units(py, script).items():
             with open(os.path.join(ud, name), "w") as f:
                 f.write(text)
-        env = dict(os.environ, XDG_RUNTIME_DIR=os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-        rc = run(["systemctl", "--user", "daemon-reload"], env=env)[0]
+        env = user_env()
+        run(["systemctl", "--user", "daemon-reload"], env=env)
         run(["systemctl", "--user", "enable", "windstorm-tardigrade-revive.service"], env=env)
         run(["systemctl", "--user", "enable", "--now", "windstorm-tardigrade-record.timer"], env=env)
-        if rc != 0:
-            print("systemd's user services did not answer. The files are written; log out and in, then run setup again.")
+        svc = run(["systemctl", "--user", "is-enabled", "windstorm-tardigrade-revive.service"], env=env)[1].strip()
+        tim = run(["systemctl", "--user", "is-active", "windstorm-tardigrade-record.timer"], env=env)[1].strip()
+        print(f"boot service: {svc or 'no answer'}   record timer: {tim or 'no answer'}")
+        if svc != "enabled" or tim != "active":
+            print("NOT set up: systemd's user services did not take the units. The files are written in "
+                  "~/.config/systemd/user/. Log out and in, then run setup again. Nothing comes back by itself yet.")
+            return 1
     save_cfg_key("auto_revive", True)
     # this boot counts as revived: the sessions running now are the ones to remember
     with open(marker(), "w") as f:
@@ -1093,7 +1106,7 @@ def uninstall():
             except OSError:
                 pass
     else:
-        env = dict(os.environ, XDG_RUNTIME_DIR=os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+        env = user_env()
         run(["systemctl", "--user", "disable", "--now", "windstorm-tardigrade-record.timer"], env=env)
         run(["systemctl", "--user", "disable", "windstorm-tardigrade-revive.service"], env=env)
         for name in units("", ""):
