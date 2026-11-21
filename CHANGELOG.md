@@ -1,0 +1,15 @@
+# Changelog
+
+## 0.1.0 (2026-11-21)
+The pilot release. Built from DNA Strand Master Plan 1.0.
+
+- **record**: every 5 minutes, writes down each live Claude Code session of yours: id, name, folder, model, effort,
+  permission mode and where it lives. Never during a boot, never an empty list, never a token.
+- **revive**: after a boot, starts each recorded session that is not running, as itself, inside tmux, 3 seconds
+  apart, never a second copy, and tells it what happened. `--dry-run` and `--only NAME`.
+- **census**: what is running, what runs with no window open, what is down. Other users' sessions are counted, not read.
+- **open**: a terminal window for each hidden session.
+- **setup / uninstall**: a boot service and a record timer for your own user (systemd or launchd). Setup says who
+  has to log in after a restart.
+
+Proven by 25 tests on Linux and one real session. Not yet proven through a real reboot, and not yet run on macOS.

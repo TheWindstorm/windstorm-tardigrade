@@ -1,0 +1,15 @@
+{
+  "name": "windstorm-tardigrade",
+  "description": "Windstorm Tardigrade, a Claude Code plugin by The Windstorm.",
+  "owner": {
+    "name": "The Windstorm",
+    "url": "https://github.com/TheWindstorm"
+  },
+  "plugins": [
+    {
+      "name": "windstorm-tardigrade",
+      "source": "./",
+      "description": "Windstorm Tardigrade: Claude Code sessions come back after a reboot or crash, as themselves, and one command lists what is running, hidden or down."
+    }
+  ]
+}

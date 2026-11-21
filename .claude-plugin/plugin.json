@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "windstorm-tardigrade",
+  "version": "0.1.0",
+  "description": "Windstorm Tardigrade: your Claude Code sessions come back after a reboot or crash, as themselves (same conversation, name, folder, model and permission mode), never a second copy, and one command lists what is running, what runs with no window open, and what is down.",
+  "author": {
+    "name": "The Windstorm",
+    "url": "https://github.com/TheWindstorm"
+  },
+  "homepage": "https://github.com/TheWindstorm/windstorm-tardigrade",
+  "repository": "https://github.com/TheWindstorm/windstorm-tardigrade",
+  "license": "Apache-2.0",
+  "keywords": [
+    "sessions",
+    "reboot",
+    "restore",
+    "resurrect",
+    "resume",
+    "tmux",
+    "crash",
+    "background"
+  ]
+}
