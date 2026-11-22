@@ -86,7 +86,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G2_35_only_refuses_a_name_that_two_sessions_carry",
    "proven": "",
    "issue": 7,
    "moved_why": "",

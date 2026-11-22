@@ -522,6 +522,25 @@ class Revive(Base):
         rc, out = self.tg("revive", "--only", "No Such Lane")
         self.assertEqual(rc, 1)
 
+    def test_G2_35_only_refuses_a_name_that_two_sessions_carry(self):
+        a = self.start_lane("alpha", "Alpha Lane")
+        c = self.start_lane("alpha-copy", "Alpha Lane")      # a copy started by hand, under the same name
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--only", "Alpha Lane")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("2 sessions on the record match", out)
+        self.assertIn(a, out)
+        self.assertIn(c, out)
+        time.sleep(3)
+        self.assertEqual(len(self.launches()), n, "it started something")
+        rc, out = self.tg("revive", "--only", c)              # the id says which one
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 1)
+        time.sleep(2)
+        self.assertEqual([x["sid"] for x in self.launches()[n:]], [c])
+
     def test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder(self):
         rc, out = self.tg("trust", "on")
         self.assertIn("Trust answering is ON", out)

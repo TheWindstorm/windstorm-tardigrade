@@ -1172,6 +1172,16 @@ def _revive(boot):
         if not rows:
             log(f"revive --only: no session on the record is named {want!r}")
             return 1
+        if len(rows) > 1:
+            # A name is not an identity: a copy started by hand carries the real session's name. Guessing
+            # which one was meant is how a session its owner had just closed got started again.
+            held = running_sids()
+            log(f"revive --only: {len(rows)} sessions on the record match {want!r}; started nothing. "
+                "Give the session id of the one you mean:")
+            for r in rows:
+                log(f"  {r['session_id']}  {display(r)}  tmux {r['tmux_session']}  "
+                    f"{'running' if r['session_id'] in held else 'not running'}  {r['cwd']}")
+            return 1
     log(f"=== revive v{VERSION} (boot={boot}, dry-run={DRY}) uptime={int(uptime_s())} s, {len(rows)} to look at")
     held = running_sids()
     note = WAKE_NOTE.format(when=time.strftime("%Y-%m-%d %H:%M %Z")) if CFG["wake"] == "note" else ""
