@@ -635,7 +635,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G2_48_a_limit_reply_holds_the_note_only_while_its_reset_is_ahead",
-   "proven": "",
+   "proven": "2026-11-22, a Linux test machine (Veron test spot, Claude Code 2.1.280) on candidate f7eaf20: a test session's own conversation ending on Claude Code's real reply \"You've hit your weekly limit · resets 12pm (America/New_York)\", written 6:19 AM ET that day, was revived at 4:40 PM: \"reset at 2026-11-22 12:00 EST; the wake-up note is typed\", and Claude answered it. A copy with ONE timestamp edited (the limit reply's, to 4:36 PM, so its reset was the next noon) was held: \"its conversation last ended on a usage or limit reply … not typed\".",
    "issue": 48,
    "moved_why": "",
    "moved_by_person": ""
