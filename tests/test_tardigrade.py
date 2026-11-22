@@ -541,6 +541,61 @@ class Revive(Base):
         time.sleep(2)
         self.assertEqual([x["sid"] for x in self.launches()[n:]], [c])
 
+    def test_G2_36_an_exit_that_only_the_prompt_history_has_still_counts(self):
+        # seen on real machines with Claude Code 2.1.330: /exit was typed, Claude ended, and its conversation has no
+        # /exit line at all. The prompt history has it. Alpha's last prompt is /exit, after the record saw it:
+        # ended. Beta typed /exit and then more (a resume): not ended. Gamma's /exit is older than the record.
+        a, b, c = (self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma"))
+        self.tg("record", "--force")
+        seen = self.table()["lanes"][0]["last_seen"]
+        private = "PRIVATE-WORDS-7f3 my bank pin"           # what a person typed: it must reach nothing of ours
+        other = str(uuid.uuid4())                           # a session not on the record
+        hist = [(a, "fix the tests " + private, seen - 50), (a, "/exit", seen + 2), (b, "/exit", seen + 1),
+                (b, "go on " + private, seen + 3), (c, "/exit", seen - 100), (a, "/exit now", seen - 300),
+                (other, "/exit", seen + 5), (other, private, seen + 6)]
+        hp = os.path.join(self.home, ".claude", "history.jsonl")
+        with open(hp, "w") as f:
+            for sid, words, t in hist:
+                f.write(json.dumps({"display": words, "pastedContents": {"1": private}, "timestamp": int(t * 1000),
+                                    "project": self.work, "sessionId": sid}) + "\n")
+            f.write("not json " + private + "\n" + json.dumps({"display": "/exit", "timestamp": int((seen + 9) * 1000)}) + "\n")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        time.sleep(2)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([b, c]), out)
+        self.assertIn("skip  Alpha Lane: its owner ended it with /exit", out)
+        outs = [out]
+        for cmd in (("census",), ("record",), ("report",), ("census", "--json")):
+            outs.append(self.tg(*cmd)[1])
+        self.assertIn("ended by its owner (/exit)", outs[1])
+        st = os.path.join(self.home, ".local", "state", "windstorm-tardigrade")
+        files = [os.path.join(dp, f) for d in (st, os.path.join(self.home, ".config", "windstorm-tardigrade"))
+                 for dp, _, fs in os.walk(d) for f in fs]
+        for text in outs + [fread(f) for f in files]:
+            self.assertNotIn("PRIVATE-WORDS", text)
+            self.assertNotIn("bank pin", text)
+        # a history that cannot be used: nobody is taken as ended by it, and the log says the check was not made
+        with open(hp, "w") as f:
+            f.write("{this is not what Claude Code writes}\n")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        self.assertIn("could not be used: it does not look as expected", out)
+        import importlib.util                           # and nobody is taken as ended by it: one too many is the safe side
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.HOME, tg.STATE = self.home, st
+        tg.LOG = os.path.join(st, "tardigrade.log")
+        self.assertEqual(tg.exited_at({"session_id": a, "last_seen": seen}), 0)
+        os.remove(hp)
+        self.reboot()
+        rc, out = self.tg("revive")
+        self.assertIn("could not be used: it cannot be read", out)
+
     def conversation(self, sid, last_command_at):
         """a conversation whose last entry is /exit, then what Claude Code writes after it"""
         d = os.path.join(self.home, ".claude", "projects", "-work")
@@ -1030,7 +1085,8 @@ class Revive(Base):
 
     def test_G2_34_several_starts_at_once_each_decided_alone(self):
         import re
-        self.cfg({"settle_s": 3, "starts_at_once": 3, "load_max": 50, "load_wait_s": 0})
+        # the starts are timed here, not the notes (which wait one at a time per login, G2.45)
+        self.cfg({"settle_s": 3, "starts_at_once": 3, "load_max": 50, "load_wait_s": 0, "wake": "idle"})
         ids = [self.start_lane(f"lane{i}", f"Lane {i}") for i in range(6)]
         self.tg("record", "--force")
         self.reboot()
@@ -1446,6 +1502,11 @@ class Census(Base):
             if run.poll() is None:
                 run.kill()
         self.assertNotIn("A RESTORE IS RUNNING", self.tg("census")[1])        # and not once it is over
+        # with all back while the watch still runs, it does not speak of "others" on their way (seen on a real Mac)
+        src = fread(SCRIPT)
+        i = src.index("A RESTORE IS RUNNING")
+        self.assertIn('if pr["back"] < pr["total"] else', src[i:i + 400])
+        self.assertIn("All are back; it is still watching them load", src[i:i + 600])
         notes = fread(os.path.join(self.home, "notes.log")).splitlines()
         self.assertEqual(len(notes), 2, out)
         self.assertTrue(notes[0].startswith("Bringing back 2 session(s)"), notes)

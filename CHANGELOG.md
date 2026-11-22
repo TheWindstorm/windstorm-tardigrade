@@ -36,7 +36,11 @@ What comes back:
   is never carried.
 - **The record, the table, the progress file and the log are yours only** (G2.42): files 0600, Tardigrade's
   folders 0700. They hold start flags word for word, and a Mac's home is open to other users by default.
-- **A session its owner ended with `/exit` stays ended** (G2.36), and is not counted in a crash.
+- **A session its owner ended with `/exit` stays ended** (G2.36), and is not counted in a crash. Claude Code
+  2.1.330 often writes no `/exit` into the conversation (seen on two real machines), so the end of its prompt
+  history is read too, for the sessions on the record only. Of what a person typed there, only the time and
+  whether it is exactly `/exit` or `/quit` is kept, and nothing of it is logged or shown. If the history cannot be
+  read, nobody is taken as ended by it, and the log says so.
 - **A session with no conversation is started new even when it is slow to say so** (G2.43). On a Mac whose
   start fetches a login first, 0.1.7 counted such a session up, then lost it.
 - **A pinned session keeps its account label** (G2.41): the start file sets it, so a login wrapper need not.

@@ -567,12 +567,66 @@ def last_turn(r):
     return None
 
 
+_HISTORY = {}
+EXIT_SIDS = []                  # the session ids on the record, so the history is read once for all of them
+HISTORY_SID = re.compile(r'"sessionId"\s*:\s*"([0-9A-Za-z-]{8,64})"')
+
+
+def history_exits(base, sids):
+    """{session id: the time of its /exit or /quit, when that is the last prompt typed into it} from Claude Code's
+    prompt history in the folder `base`, for the session ids `sids` only (G2.36). Claude Code writes every prompt
+    typed into a session there, slash commands too, with the session id; it does so even when it writes no
+    /exit into the conversation itself (seen on real machines with 2.1.330). The file holds what people typed:
+    a line of another session is skipped before it is read, of a line of these only the time and whether it is
+    exactly /exit or /quit are kept, and nothing of it is logged, recorded or shown. When the file is missing or
+    does not look as expected, no session is taken as ended by it, and the log says the check could not be made."""
+    have = _HISTORY.get(base)
+    if have is not None and set(sids) <= have[0]:
+        return have[1]
+    want = set(sids) | (have[0] if have else set())
+    last, shaped, problem = {}, 0, ""
+    try:
+        with open(os.path.join(base, "history.jsonl"), "rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 4_000_000))
+            tail = fh.read().decode(errors="replace").splitlines()
+    except OSError as e:
+        tail, problem = [], f"it cannot be read ({e.__class__.__name__})"
+    for line in tail:
+        m = HISTORY_SID.search(line)
+        if not m:
+            continue
+        shaped += 1
+        if m.group(1) not in want:
+            continue                    # another session's: not read
+        try:
+            d = json.loads(line)
+            sid, t, words = d["sessionId"], float(d["timestamp"]) / 1000, d.get("display")
+        except (ValueError, KeyError, TypeError):
+            continue
+        if sid in want and isinstance(words, str) and t >= last.get(sid, (0, False))[0]:
+            last[sid] = (t, words.strip() in ("/exit", "/quit"))
+    if not problem and tail and not shaped:
+        problem = "it does not look as expected (no session ids in it)"
+    if problem and have is None:
+        log(f"the prompt history in {base} could not be used: {problem}. A session ended with /exit is known only "
+            "from its conversation or its pane; one may be brought back that its owner ended.")
+    out = {sid: t for sid, (t, ex) in last.items() if ex}
+    _HISTORY[base] = (want, out)
+    return out
+
+
 def exited_at(r):
-    """When this session's owner ended it with /exit (or /quit), as a Unix time, or 0. Ended means the last
-    turn of its conversation is that command (Claude Code's own lines after it, its "Bye!" and its
-    bookkeeping, do not count) and it was written after a record last saw the session running. An /exit
-    older than that was followed by a resume (a session moved to another account does exactly that)."""
+    """When this session's owner ended it with /exit (or /quit), as a Unix time, or 0, if that was after a record
+    last saw the session running (an /exit older than that was followed by a resume: a session moved to another
+    account does exactly that). Two places say it: Claude Code's prompt history, which has every /exit typed,
+    and the conversation, whose last turn is then that command (Claude Code's "Bye!" after it does not count)."""
     import datetime
+    base = r.get("config_dir") or os.path.join(HOME, ".claude")
+    seen = float(r.get("last_seen") or 0)
+    t = history_exits(base, [r["session_id"]] + EXIT_SIDS).get(r["session_id"], 0)
+    if t > seen:
+        return t
     d = last_turn(r)
     c = (d.get("message") or {}).get("content") if d and isinstance(d.get("message"), dict) else None
     if not (isinstance(c, str) and EXIT_CMD.search(c)):
@@ -581,7 +635,7 @@ def exited_at(r):
         t = datetime.datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return 0
-    return t if t and t > float(r.get("last_seen") or 0) else 0
+    return t if t and t > seen else 0
 
 
 def ended_on_limit(r):
@@ -966,6 +1020,7 @@ def record():
     # A session its owner ended with /exit (after a record last saw it running) is over, at once, and never
     # part of a crash count. "Its pane holds the shell it left" counts only for a session that went alone:
     # a memory kill of many sessions leaves shells behind too, and that is a crash.
+    EXIT_SIDS[:] = [r["session_id"] for r in gone]
     exits = {r["session_id"]: exited_at(r) for r in gone}
     fresh = [r for r in gone if not r.get("lost_since") and not exits[r["session_id"]]]
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
@@ -1345,7 +1400,7 @@ def show_waiting(todo, created):
                 created.add((sock, name))
             continue
         cwd = r["cwd"] if os.path.isdir(r["cwd"]) else HOME
-        cmd = f"{shlex.quote(py)} -I {shlex.quote(script)} wait {r['session_id']}"
+        cmd = f"{shlex.quote(py)} -I {shlex.quote(script)} wait {shlex.quote(str(r['session_id']))}"
         if new_session(sock, name, cwd, cmd) == 0:
             created.add((sock, name))
             tmux(sock, "set-option", "-t", f"={name}:", WAIT_MARK, "1")
@@ -1598,6 +1653,7 @@ class Watch:
         self.queued = []                # sessions whose note met a limit and waits for the reset (G2.45)
         self.at_limit = set()           # logins known to be at their usage limit in this run (G2.45)
         self.conv_read = set()          # sessions whose conversation was looked at for a limit reply
+        self.after_due = {}             # sid: (when its note was typed, its screen just before, its row) (G2.45)
 
     def take_gone(self):
         out, self.gone_new = self.gone_new, []
@@ -1609,7 +1665,7 @@ class Watch:
         self.note_times = [t for t in self.note_times if time.time() - t < win]
         return len(self.note_times) < max(1, int(float(CFG.get("notes_per_min") or 6)))
 
-    def login_at_limit(self, r, started):
+    def login_at_limit(self, r):
         """A usage limit belongs to the login, not to one conversation: once one session shows it LIVE in this
         run (limit words that appeared on its screen after our note; never what was there before, which after a
         resume is its history, and never an old reply in its conversation), no note is
@@ -1638,6 +1694,7 @@ class Watch:
         """one pass over the started sessions and the tabs; returns how many sessions are still waited for"""
         self.last_look = time.time()
         self.tabs()
+        self.after_looks()
         waiting, P = 0, procs()               # one process list per pass, for every session in it
         for r in started:
             sid = r["session_id"]
@@ -1674,31 +1731,42 @@ class Watch:
                 if OTHER_DIALOG.search(bottom(screen, 15)):
                     self.held[sid] = HELD_SCREEN   # this session only: after a resume, its screen is history
                 if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(styled) \
-                        and not OTHER_DIALOG.search(bottom(screen, 15)) and self.may_note():
+                        and not OTHER_DIALOG.search(bottom(screen, 15)) and self.may_note() \
+                        and login_key(r) not in {login_key(x[2]) for x in self.after_due.values()}:
                     self.note_times.append(time.time())
                     type_note(r, self.note_for[sid])
                     self.noted.append(display(r))
                     self.noted_ids.add(sid)
                     log(f"  {display(r)}: loaded and idle; wake-up note typed")
-                    time.sleep(1.5 if TESTING else 4)      # looked at once more: did it meet a limit?
-                    after = SGR.sub("", tmux(r["tmux_socket"], "capture-pane", "-p", "-t",
-                                             f"={r['tmux_session']}:", timeout=6)[1])
-                    # only text that appeared after the note counts: the one evidence the login is at its limit NOW
-                    new = lambda pat: bool(pat.search(bottom(after, 15))) and \
-                        len(pat.findall(after)) > len(pat.findall(screen))
-                    if new(QUEUED):
-                        self.queued.append(display(r))
-                        log(f"  {display(r)}: the note met a usage limit; Claude Code holds it and will run it by "
-                            "itself at the reset (press Esc in that session to drop it)")
-                    if new(QUEUED) or new(AT_LIMIT):
-                        self.login_at_limit(r, started)
+                    self.after_due[sid] = (time.time(), screen, r)    # looked at once more, in a later pass
                 else:
                     waiting += 1
                     continue
             self.settled.add(sid)
-        return waiting
+        return waiting + len(self.after_due)
+
+    def after_looks(self, all_now=False):
+        """A note's second look, a few seconds after it was typed, without holding up the pass: did it meet a
+        limit? Only limit words that were not on the screen before the note count (G2.45). Until it is done,
+        no other note on the same login is typed."""
+        for sid, (t, before, r) in list(self.after_due.items()):
+            wait = (1.5 if TESTING else 4) - (time.time() - t)
+            if wait > 0 and not all_now:
+                continue
+            if wait > 0:
+                time.sleep(wait)
+            del self.after_due[sid]
+            after = SGR.sub("", tmux(r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1])
+            new = lambda pat: bool(pat.search(bottom(after, 15))) and len(pat.findall(after)) > len(pat.findall(before))
+            if new(QUEUED):
+                self.queued.append(display(r))
+                log(f"  {display(r)}: the note met a usage limit; Claude Code holds it and will run it by itself at "
+                    "the reset (press Esc in that session to drop it)")
+            if new(QUEUED) or new(AT_LIMIT):
+                self.login_at_limit(r)
 
     def count(self, started):
+        self.after_looks(all_now=True)
         res = {"trust_answered": self.answered, "noted": self.noted, "loaded": [], "not_loaded": [],
                "down_again": [], "note_not_typed": [], "note_queued": self.queued, "note_held_login_at_limit": []}
         why = {}
@@ -1807,6 +1875,7 @@ def _revive(boot):
             "Two starts of one id would be two copies. Run `record --force` while the session runs, then revive.")
     rows = [r for r in rows if r["session_id"] not in twice]
     held = running_sids()
+    EXIT_SIDS[:] = [r["session_id"] for r in rows if r["session_id"] not in held]
     note = wake_note(boot)
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": []}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
@@ -2365,7 +2434,8 @@ def census():
     if pr:
         print(f"A RESTORE IS RUNNING: {pr['back']} of {pr['total']} sessions back, since "
               f"{time.strftime('%H:%M', time.localtime(pr['began']))} ({ago(now - pr['began'])}). "
-              "The others are on their way: do not start them by hand.")
+              + ("The others are on their way: do not start them by hand." if pr["back"] < pr["total"] else
+                 "All are back; it is still watching them load (questions, notes, tabs): do not start any by hand."))
         if began_text(pr):
             print(f"  This boot's restore {began_text(pr)}.")
     lr = d["last_revive"]

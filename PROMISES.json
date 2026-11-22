@@ -95,7 +95,7 @@
   },
   {
    "id": "T7",
-   "seen": "The same night: a session its owner had ended with /exit two minutes earlier was still on the 5-minute record and was started again.",
+   "seen": "The same night: a session its owner had ended with /exit two minutes earlier was still on the 5-minute record and was started again. SEEN AGAIN 2026-11-22, a clean reboot of a Mac test machine on a 0.1.8 candidate: a session ended with /exit 24 s after the last record was brought back. Claude Code 2.1.330 had written no /exit into its conversation (nor into another one's on a Linux test machine); only its prompt history had it. The premise was false, and the suite had tested the premise. The fix reads the prompt history too; a replay of the real history and record of both test machines and of a machine with 98 running sessions found the one ended session and no false one.",
    "promise": "A session its owner ended is not brought back: its conversation ends with /exit, or its process is gone while its pane still holds the shell it left. A crash (G1.11) is never read as many sessions ended by hand.",
    "codon": "G2.36",
    "owner": "maintainer",
