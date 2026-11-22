@@ -952,7 +952,7 @@ class Windows(Base):
         self.start_lane("alpha", "Alpha Lane")
         rc, out = self.tg("open", "--dry-run")
         self.assertIn("Alpha Lane:", out)
-        self.assertIn("attach -t =alpha", out)
+        self.assertIn("attach -t '=alpha'", out)
 
 
     def test_G4_2_a_herdr_tab_gets_its_session_back_only_at_an_idle_shell_with_an_empty_prompt(self):
@@ -987,7 +987,7 @@ class Windows(Base):
         typed = [r for r in runs if "cmd" in r]
         self.assertEqual(sorted(r["pane"] for r in typed), ["new-1", "p0"], out)      # Beta and Gamma: left alone
         for r in typed:
-            self.assertRegex(r["cmd"], r"^env -u TMUX \S+ -S \S+ attach -t =(alpha|delta)$")   # only the attach, ever
+            self.assertRegex(r["cmd"], r"^env -u TMUX \S+ -S \S+ attach -t '=(alpha|delta)'$")   # quoted: zsh reads a bare =word as a command path   # only the attach, ever
         self.assertEqual([r for r in runs if "create" in r], [{"create": "Delta Lane", "workspace": "w1"}])
         self.assertIn("Beta Lane: its tab has text typed after the prompt; left alone", out)
         self.assertIn("Gamma Lane: its tab is running something else; left alone", out)

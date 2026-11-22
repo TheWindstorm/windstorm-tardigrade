@@ -1316,6 +1316,12 @@ def notify(text):
         pass
 
 
+def q_target(name):
+    """`=name` (tmux: exactly this session), always inside single quotes. Unquoted, zsh takes a word that
+    begins with = for the path of a command and refuses the line."""
+    return "'=" + name.replace("'", "'\\''") + "'"
+
+
 def attach_tabs(rows, wait=True):
     """Herdr only: put each revived session back in the tab that carries its label. The one thing typed
     into a Herdr pane is the `tmux attach` for that session, and only when the pane holds an idle shell
@@ -1330,12 +1336,12 @@ def attach_tabs(rows, wait=True):
             return
         time.sleep(30)
     pl, tl, wl = herdr("pane", "list"), herdr("tab", "list") or {}, herdr("workspace", "list") or {}
-    tabs, pns = tl.get("tabs", []), (pl or {}).get("panes", [])
+    tabs, pns, typed = tl.get("tabs", []), (pl or {}).get("panes", []), []
     for r in want:
         sock, s = r["tmux_socket"], r["tmux_session"]
         if not has_session(sock, s):
             continue
-        att = f"env -u TMUX {shlex.quote(CFG['tmux'])} -S {shlex.quote(sock)} attach -t {shlex.quote('=' + s)}"
+        att = f"env -u TMUX {shlex.quote(CFG['tmux'])} -S {shlex.quote(sock)} attach -t {q_target(s)}"
         cand = [t for t in tabs if clean_label(t.get("label")) == r["herdr_tab"]]
         ws = [w for w in wl.get("workspaces", []) if clean_label(w.get("label")) == r.get("herdr_workspace")]
         if ws:
@@ -1350,7 +1356,7 @@ def attach_tabs(rows, wait=True):
             if pane:
                 time.sleep(2)
                 herdr("pane", "run", pane, att)
-                log(f"herdr {display(r)}: new tab '{r['herdr_tab']}'")
+                typed.append((r, f"new tab '{r['herdr_tab']}'"))
             continue
         tp = [p for p in pns if p.get("tab_id") == cand[0]["tab_id"]]
         if not tp:
@@ -1369,7 +1375,16 @@ def attach_tabs(rows, wait=True):
             log(f"herdr {display(r)}: its tab has text typed after the prompt; left alone")
             continue
         herdr("pane", "run", pid, att)
-        log(f"herdr {display(r)}: tab '{r['herdr_tab']}' re-attached")
+        typed.append((r, f"tab '{r['herdr_tab']}'"))
+    if typed:
+        time.sleep(0 if TESTING else 4)      # then look: did a window really attach to the session?
+    for r, what in typed:
+        n = tmux(r["tmux_socket"], "display", "-p", "-t", f"={r['tmux_session']}:", "#{session_attached}")[1].strip()
+        if n.isdigit() and int(n) > 0:
+            log(f"herdr {display(r)}: {what} re-attached")
+        else:
+            log(f"herdr {display(r)}: the attach was typed into its {what}, but nothing is attached to the "
+                "session yet; look at that tab")
 
 
 # ---------- census ----------
@@ -1470,7 +1485,7 @@ def open_windows():
                 break
     for r in hidden:
         att = [CFG["tmux"], "-S", r["tmux_socket"], "attach", "-t", "=" + r["tmux_session"]]
-        line = " ".join(shlex.quote(x) for x in att)
+        line = " ".join(shlex.quote(x) for x in att[:-1]) + " " + q_target(r["tmux_session"])   # safe to paste in zsh too
         if DRY or not desk or (not MAC and not term):
             print(f"{display(r)}: {line}")
             continue
