@@ -573,12 +573,12 @@
   {
    "id": "T41",
    "seen": "2026-11-22, switching machines over: on a machine where another tool runs its own agents with Claude Code, each in its own folder, Tardigrade reads every claude process's status file, arguments and environment before any setting can leave it out; loose_skip leaves such a process out of the record only after it has been read.",
-   "promise": "a setting names folders to leave alone (skip_cwd_prefix): a process whose folder is inside one is not looked at any further; its environment, arguments and conversation are never read, and it is counted as left out.",
+   "promise": "a setting names folders to leave alone (skip_cwd_prefix): a process whose folder is inside one is not looked at any further; Tardigrade's own code reads only its folder, never its environment, arguments, status file or conversation, and it is counted as left out. On Linux the system's ps, which Tardigrade runs for the process list, opens more of every process (seen with strace, procps-ng 4.0.4) until 0.1.10 (T47).",
    "codon": "G1.15",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
-   "test": "test_G1_15_a_process_in_a_folder_to_leave_alone_is_not_read_at_all",
+   "test": "test_G1_15_a_process_in_a_folder_to_leave_alone_has_only_its_folder_read",
    "proven": "",
    "issue": 44,
    "moved_why": "",
@@ -651,6 +651,20 @@
    "test": "test_G3_17_a_session_that_goes_down_during_a_restore_stands_out_for_that_boot",
    "proven": "",
    "issue": 49,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T47",
+   "seen": "2026-11-22, a Linux test machine watched with strace while T41 was seen: to list processes Tardigrade runs `ps -axo pid=,ppid=,uid=,stat=,comm=`, and procps-ng 4.0.4's ps opened stat, status, environ and cmdline of every process on the machine (1738 of 1738), a process in a skip_cwd_prefix folder included, while printing only those five columns.",
+   "promise": "on Linux the process list is read from /proc directly (each process's stat, and its owner from the entry itself): nothing opens another process's environment or arguments before it is known to be one of this user's sessions, and a process in a skip_cwd_prefix folder has only its folder read. On macOS ps stays. On every box the new build names exactly the same live sessions as the old one.",
+   "codon": "G1.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 50,
    "moved_why": "",
    "moved_by_person": ""
   }

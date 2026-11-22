@@ -96,7 +96,7 @@ says which it is.
   `trust on`.
 - It types nothing into a session except its own wake-up message, into a session it started, once that session
   is idle.
-- It never stores a token or a key, and never reads another user's processes.
+- It never stores a token or a key, and counts another user's processes by program name only; its own code reads nothing else of them (on Linux the system's `ps` it runs opens more of every process, until 0.1.10).
 - It does not bring back timers, watchers or background commands. It tells the revived session they are gone.
 
 ## If you are a session that was just brought back

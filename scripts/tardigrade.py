@@ -28,7 +28,8 @@ Rules it keeps:
     one-way fingerprint, so it can tell whether a session came back on the same login.
   * The record is never overwritten by a half-started machine, and never by an empty list. Sessions
     that vanish together (a crash) stay on the record for some hours, so they still come back.
-  * Other users' sessions on a shared machine are counted, never read.
+  * Other users' sessions on a shared machine are counted by program name; nothing else of them is read by
+    this code (on Linux the system's ps, run for the process list, opens more of every process).
 
 Standard library only. Record: ~/.config/windstorm-tardigrade/lanes.json
 Log: ~/.local/state/windstorm-tardigrade/tardigrade.log
@@ -80,7 +81,7 @@ CFG = {
     "attach_wait_min": 30,    # wait this long for the Herdr server after boot
     "down_keep_days": 14,     # how long a session that went down stays on the "down" list
     "skip_tmux_sockets": [],  # tmux socket names to leave alone, when another tool brings those sessions back
-    "skip_cwd_prefix": [],    # folders to leave alone: a claude process working inside one is not read at all
+    "skip_cwd_prefix": [],    # folders to leave alone: of a claude process working inside one, only its folder is read
     "answer_trust": False,    # opt-in (`trust on`): answer "trust this folder?" for a revived session's own folder
     "watch_min": 15,          # after a boot, keep looking at the started sessions this long (slow machines load late)
     "claude_command": "claude",   # the command that starts Claude Code; the flags and --resume are added to it
@@ -864,7 +865,7 @@ def start_flags(a):
 
 
 PANES_NOW = []      # this scan's tmux panes, for one_shot()
-LEFT_ALONE = [0]    # this scan's claude processes in a skip_cwd_prefix folder, not read (G1.15)
+LEFT_ALONE = [0]    # this scan's claude processes in a skip_cwd_prefix folder; only their folder read (G1.15)
 
 
 def proc_cwd(pid):
@@ -888,8 +889,9 @@ def in_skip_folder(path):
 
 
 def left_alone(pid):
-    """G1.15: is this process working inside a folder named in skip_cwd_prefix? Then nothing more of it is read:
-    not its environment, not its arguments, not its status file or conversation."""
+    """G1.15: is this process working inside a folder named in skip_cwd_prefix? Then this code reads nothing more of it:
+    not its environment, not its arguments, not its status file or conversation. (On Linux the system's ps, which
+    procs() runs for the whole list, opens more of every process; 0.1.10 reads /proc itself, T47.)"""
     return bool(CFG.get("skip_cwd_prefix")) and in_skip_folder(proc_cwd(pid))
 
 
@@ -943,10 +945,10 @@ def live(with_launch=True):
         if not is_claude(comm):
             continue
         if uid != me:
-            others += 1        # counted, never read
+            others += 1        # counted by program name; nothing else read here
             continue
         if left_alone(pid):
-            LEFT_ALONE[0] += 1     # in a folder to leave alone: counted, never read
+            LEFT_ALONE[0] += 1     # in a folder to leave alone: counted; only its folder was read
             continue
         ef = env_facts(pid)
         sj = session_json(pid, ef["config_dir"])
@@ -1185,7 +1187,7 @@ def record():
                 log(f"record: {display(r)}: {f} is carried: {what}")
     if not rows and old["lanes"]:
         # A row for a print-mode run (one 0.1.8 wrote down) is not kept as a session even here (G2.47, T43).
-        # A row in a folder left alone is not read even for that (G1.15: seen with strace on a real machine).
+        # A row in a folder left alone: its conversation is not read even for that (G1.15: seen with strace on a real machine).
         pr = [r for r in old["lanes"] if not in_skip_folder(r.get("cwd", "")) and print_run(r)]
         log(f"record: 0 live sessions; kept the previous record ({len(old['lanes']) - len(pr)} sessions)"
             + (f"; {len(pr)} print-mode run(s) moved to the down list: {', '.join(display(r) for r in pr)}" if pr else ""))
@@ -2115,7 +2117,7 @@ def _revive(boot):
         nm = display(r)
         if in_skip_folder(r.get("cwd", "")):
             # its folder is left alone now: its live process, if any, is not read, so starting it could make a copy.
-            # First of all: nothing of it is read, not even its conversation for an /exit (G1.15; seen with strace).
+            # First of all: nothing more of it is read, not even its conversation for an /exit (G1.15; seen with strace).
             log(f"skip  {nm}: its folder is in skip_cwd_prefix; left alone, never started")
             report["left_out"].append(nm)        # not "already running": it is never started at all
             if want:
@@ -2872,11 +2874,11 @@ def census():
         print(f"\n{b['name']} ({b['session_id'][:8]}) was started by hand while the restore was bringing back "
               f"{b['in_place_of'][:8]} under that name. Two sessions may now do one job: end the one you do not want.")
     if d["other_users"]:
-        print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; not read.")
+        print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; counted by program name only.")
     if d["helpers"]:
         print(f"Helper sessions started by other sessions: {d['helpers']} (not brought back after a reboot).")
     if d.get("left_alone"):
-        print(f"Left alone in a skip_cwd_prefix folder: {d['left_alone']} Claude process(es). Not read; not brought back.")
+        print(f"Left alone in a skip_cwd_prefix folder: {d['left_alone']} Claude process(es). Only their folder read; not brought back.")
     if d["not_kept"]:
         print(f"\nRUNNING, BUT WILL NOT COME BACK after a reboot ({len(d['not_kept'])}):")
         for x in sorted(d["not_kept"], key=lambda x: x["name"].lower()):

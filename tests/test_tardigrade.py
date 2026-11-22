@@ -413,7 +413,7 @@ class Record(Base):
         self.assertEqual(([r["name"] for r in t["lanes"]], t["down"]), (["Alpha Lane"], []))
 
 
-    def test_G1_15_a_process_in_a_folder_to_leave_alone_is_not_read_at_all(self):
+    def test_G1_15_a_process_in_a_folder_to_leave_alone_has_only_its_folder_read(self):
         agents = os.path.join(self.tmp, "agents")
         os.makedirs(os.path.join(agents, "a1"))
         a = self.start_lane("alpha", "Alpha Lane")
@@ -432,9 +432,9 @@ class Record(Base):
         self.assertEqual([r["name"] for r in t["lanes"]], ["Alpha Lane"], out)
         self.assertEqual([r["name"] for r in t["down"]], [], "a session left alone is not down: it is not ours")
         rc, out = self.tg("census")
-        self.assertIn("Left alone in a skip_cwd_prefix folder: 1 Claude process(es). Not read; not brought back.", out)
+        self.assertIn("Left alone in a skip_cwd_prefix folder: 1 Claude process(es). Only their folder read; not brought back.", out)
         self.assertNotIn("Agent One", out)
-        # nothing of it is read: not its environment, its arguments or its status file
+        # nothing more of it is read by our code: not its environment, its arguments or its status file
         import importlib.util
         spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
         tg = importlib.util.module_from_spec(spec)

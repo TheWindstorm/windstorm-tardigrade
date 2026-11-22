@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Known edge (T41, G1.15; fix due in 0.1.10, T47): of a process in a `skip_cwd_prefix` folder, Tardigrade's own
+  code reads only its folder. On Linux the system's `ps`, which it runs for the process list, opens more of every
+  process on the machine (environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only
+  process id, parent, user, state and program name.
+
 ## 0.1.8.1 (2026-11-22)
 A fix to what 0.1.8 counts as a session (G1.14, T40). A `claude -p` run, which Claude Code marks "interactive"
 in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could

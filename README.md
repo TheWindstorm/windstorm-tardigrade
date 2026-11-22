@@ -205,7 +205,9 @@ Setup tells you this for your machine. It never changes it for you.
   fingerprint, and uses it to check that a session came back on the same login. The check comes before anything
   is typed: a session whose login changed is listed as "needs you", with no message typed and nothing run on the
   wrong account. A variable whose name looks like a secret's is never recorded or copied, whatever the settings say.
-- On a shared machine it counts other users' Claude processes and reads nothing of theirs.
+- On a shared machine it counts other users' Claude processes by program name; its own code reads nothing else of
+  theirs. (On Linux the system's `ps`, which it runs for the process list, opens more of every process: see
+  `skip_cwd_prefix`.)
 - Python standard library only. No network. It prints names, folders and counts, never message text.
 - The record is never overwritten by a machine that is still starting, and never by an empty list.
 
@@ -232,7 +234,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
-| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted and nothing else of it is read: not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. |
+| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted, and Tardigrade's own code reads only its folder (from the system): not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. On Linux, the system's `ps`, which Tardigrade runs to list processes, opens more than that for every process on the machine (its environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only process id, parent, user, state and program name. From 0.1.10 the list is read from /proc directly (T47). |
 
 On a small machine, set `starts_at_once` to 2, and, if the machine must stay usable while sessions come back, a
 `load_max` of about twice its number of cores. Right after a boot most of the load is the boot itself.
