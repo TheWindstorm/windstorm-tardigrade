@@ -107,7 +107,10 @@ after it), no other session on the same login gets a note in that run. A limit r
 a screen after a resume (which shows history), holds that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. To drop a held note, press Esc in that
 session. Tardigrade does not press it for you. Your own words for the note (`wake_text`) must not read like a limit
 notice ("hit your weekly limit", "continue automatically", "/usage-credits"): `setup` names such words, and the
-default note is used in their place.
+default note is used in their place. The same goes for your status line: Tardigrade reads the lines under Claude
+Code's input box however many there are, so a status line that prints words such as "usage limit" or "limit
+reached" holds that session's note, and one that changes into such words right after a note marks its login as at
+its limit. Keep those words out of your status line.
 
 **A session you ended with `/exit` stays ended**, also when the machine restarts minutes later. Tardigrade
 reads it from Claude Code's prompt history (`~/.claude/history.jsonl`), for the sessions on its record only: of
