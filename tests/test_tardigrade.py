@@ -1011,6 +1011,21 @@ class Revive(Base):
         rep = jload(self.state("last-revive.json"))
         self.assertEqual(sorted(rep["loaded"]), ["Alpha Lane", "Beta Lane", "Echo Lane", "Gamma Lane"], out)
 
+    def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
+        self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')
+        self.cfg({"on_done": "tell started={started} loaded={loaded} not_loaded={not_loaded} down={down} failed={failed}",
+                  "wake": "idle"})
+        for nm in ("alpha", "beta"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 2)
+        self.assertEqual(fread(os.path.join(self.home, "told.log")),
+                         "started=2 loaded=2 not_loaded=0 down=0 failed=0 | 2 2 0\n")
+        self.assertIn("on_done ran (exit 0)", out)
+
     def test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts(self):
         self.cfg({"load_max": 5, "load_wait_s": 2})
         self.recorded_then_rebooted()
@@ -1379,6 +1394,38 @@ class Windows(Base):
         self.assertNotIn("wst-Busy Gone", [r.get("rename") for r in runs])
         self.assertIn({"create": "Delta Lane", "workspace": "wn-Busy Gone", "no_focus": True}, runs)
         self.assertIn("the first tab of the workspace made again is not blank (it is running something else)", out)
+
+    def test_G4_8_revive_only_says_what_it_did_about_the_tab(self):
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], "Team"
+        jdump(t, p)
+        beta = [x for x in self.launches() if x["sid"] == t["lanes"][1]["session_id"]][0]
+        self.kill(beta["pid"])
+        time.sleep(1.5)
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        shell = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": "t0", "label": "Alpha Lane", "workspace_id": "w1"},
+                        {"tab_id": "t1", "label": "Beta Lane", "workspace_id": "w1"}],
+               "panes": [{"pane_id": "p0", "tab_id": "t0", "workspace_id": "w1"}, {"pane_id": "p1", "tab_id": "t1", "workspace_id": "w1"}],
+               "process_info": {"p0": {"shell_pid": 1, "foreground_processes": [
+                                    {"pid": 2, "argv": [TMUX, "-S", self.sock, "attach", "-t", "=alpha"]}]},
+                                "p1": {"shell_pid": 100, "foreground_processes": shell + [{"pid": 7, "argv": ["vim"]}]}},
+               "visible": {}}, os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle"})
+        rc, out = self.tg("revive", "--only", "Alpha Lane")                 # running, its tab already shows it
+        self.assertIn("skip  Alpha Lane: already running", out)
+        self.assertIn("revive --only Alpha Lane: tab: already there", out)
+        rc, out = self.tg("revive", "--only", "Beta Lane")                  # brought back; its tab is busy
+        self.assertIn("revive --only Beta Lane: tab: not attached: its tab is running something else; left alone", out)
 
     def test_G4_2_a_herdr_tab_gets_its_session_back_only_at_an_idle_shell_with_an_empty_prompt(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))

@@ -95,6 +95,7 @@ CFG = {
     "load_max": 0,            # 0 = off; else wait before each start while the 1-minute load is above this
     "load_wait_s": 120,       # the longest such wait, per session
     "lost_keep_h": 12,        # sessions that vanished together stay revivable this long
+    "on_done": "",            # a command run when a restore ends, with the counts: {started} {loaded} {not_loaded} {down} {failed}
 }
 
 WAKE_NOTE = (
@@ -1652,7 +1653,46 @@ def _revive(boot):
     w.tabs(last=True)
     report["tabs"] = TAB_LOG
     write_json(os.path.join(STATE, "last-revive.json"), report)
+    if want:
+        say_tab(rows[0])
+    on_done(report)
     return 0
+
+
+def say_tab(r):
+    """G4.8: `revive --only` says what it did about the session's tab"""
+    if not r.get("herdr_tab"):
+        log(f"revive --only {display(r)}: tab: none on the record for this session")
+        return
+    if not (CFG["herdr"] and CFG["herdr_tabs"]):
+        log(f"revive --only {display(r)}: tab: Herdr tabs are not set up here; nothing done")
+        return
+    said = [x.split(": ", 1)[1] for x in TAB_LOG["attached"] if x.startswith(display(r) + ": ")]
+    left = [x.split(": ", 1)[1] for x in TAB_LOG["not"] if x.startswith(display(r) + ": ")]
+    if said:
+        log(f"revive --only {display(r)}: tab: " + ("already there" if said[0] == "already there" else f"attached, {said[0]}"))
+    elif left:
+        log(f"revive --only {display(r)}: tab: not attached: {left[0]}")
+    else:
+        log(f"revive --only {display(r)}: tab: not attached (Herdr did not answer, or its tmux session is not there)")
+
+
+def on_done(report):
+    """G2.38: with on_done set, that command is run once a restore ends, with the counts, so a person or a
+    program is told instead of having to look. The counts are in its {placeholders} and in TARDIGRADE_* variables."""
+    cmd = str(CFG.get("on_done") or "")
+    if not cmd:
+        return
+    counts = {"started": len(report.get("started", [])), "loaded": len(report.get("loaded", [])),
+              "not_loaded": len(report.get("not_loaded", [])), "down": len(report.get("down_again", [])),
+              "failed": len(report.get("failed", [])) + len(report.get("needs_you", []))}
+    line = cmd
+    for k, v in counts.items():
+        line = line.replace("{" + k + "}", str(v))
+    env = server_env()
+    env.update({"TARDIGRADE_" + k.upper(): str(v) for k, v in counts.items()})
+    rc = run(["/bin/sh", "-c", line], timeout=60, env=env)[0]
+    log(f"on_done ran (exit {rc}): " + ", ".join(f"{k} {v}" for k, v in counts.items()))
 
 
 def notify(text):
