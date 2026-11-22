@@ -1818,7 +1818,12 @@ class Watch:
         if not (CFG["herdr"] and CFG["herdr_tabs"]):
             return
         due = [r for r in self.tab_rows if r.get("herdr_tab") and r["session_id"] not in self.tabs_done]
-        if due and (last or herdr_up()):
+        if not due:
+            return
+        up = herdr_up()
+        if not up:
+            herdr_missing(len(due))       # G4.10: said at the first pass, not only after the last wait
+        if last or up:
             self.tabs_done |= attach_tabs(due, wait=last)
 
     def reattach(self, sid):
@@ -2070,6 +2075,10 @@ def _revive(boot):
         pass
     created, came, note_for = set(), [], {}
     pending = {r["session_id"]: [r, 0] for r in todo}
+    try:
+        os.remove(herdr_wait_path())       # G4.10: what an earlier run found about Herdr is not this run's
+    except OSError:
+        pass
     prog = {"pid": os.getpid(), "boot": boot_id(), "began": int(time.time()), "uptime_at_start": int(uptime_s()),
             "total": len(todo), "back": 0, "done": False, "boot_run": boot, "user_up_s": up_s,
             "boot_wait_s": int(float(CFG["boot_wait_s"])),
@@ -2326,14 +2335,17 @@ def on_done(report):
     counts = {"started": len(report.get("started", [])), "loaded": len(report.get("loaded", [])),
               "not_loaded": len(report.get("not_loaded", [])), "down": len(report.get("down_again", [])),
               "failed": len(report.get("failed", [])), "needs_you": len(report.get("needs_you", []))}
-    line = cmd
+    no_herdr = int((report.get("tabs") or {}).get("herdr_not_running") or 0)      # G4.10
+    line = cmd.replace("{herdr_tabs_not_attached}", str(no_herdr))
     for k, v in counts.items():
         line = line.replace("{" + k + "}", str(v))
     env = server_env()
     env.update({"TARDIGRADE_" + k.upper(): str(v) for k, v in counts.items()})
+    env["TARDIGRADE_HERDR_TABS_NOT_ATTACHED"] = str(no_herdr)
     rc = run(["/bin/sh", "-c", line], timeout=60, env=env)[0]
     log(f"on_done ran (exit {rc}): " + ", ".join(f"{v} {k.replace('_', ' ').replace('needs', 'need')}"
-                                                 for k, v in counts.items()))
+                                                 for k, v in counts.items())
+        + (f"; Herdr is not running: {no_herdr} tab(s) not attached" if no_herdr else ""))
 
 
 def notify(text):
@@ -2362,6 +2374,50 @@ def q_target(name):
 
 
 TAB_LOG = {"attached": [], "not": []}     # what this run did about each tab, for `report` (G3.8)
+HERDR_DOWN = {}                            # G4.10: when this run found Herdr not running, and how many tabs wait
+
+
+def herdr_wait_path():
+    return os.path.join(STATE, "herdr-wait.json")
+
+
+def herdr_missing(n):
+    """G4.10: a restore whose record has tabs says so as soon as it finds Herdr not running, and census can
+    read it. Tardigrade never starts Herdr itself: the tabs are attached when Herdr appears."""
+    first = not HERDR_DOWN.get("since")
+    HERDR_DOWN.update(tabs=n, since=HERDR_DOWN.get("since") or int(time.time()))
+    if first:
+        log(f"Herdr is not running: {n} tab(s) wait for it (up to {float(CFG['attach_wait_min']):g} minutes after "
+            "the sessions have loaded); Tardigrade does not start Herdr")
+    try:
+        write_json(herdr_wait_path(), {"tabs": n, "since": HERDR_DOWN["since"], "pid": os.getpid(), "boot": boot_id()})
+    except OSError:
+        pass
+
+
+def herdr_back():
+    """G4.10: Herdr came up during the run: say so, and census stops saying it is not running"""
+    if HERDR_DOWN.get("since"):
+        log(f"herdr: its server is up now ({ago(time.time() - HERDR_DOWN['since'])} after it was found not running); "
+            "attaching the tabs")
+        HERDR_DOWN.clear()
+    try:
+        os.remove(herdr_wait_path())
+    except OSError:
+        pass
+
+
+def herdr_wait_now():
+    """census (G4.10): {"tabs": N, "running": the restore still waits for it} while this boot's restore found Herdr
+    not running and it is still not, else {}"""
+    w = read_json(herdr_wait_path(), {})
+    if not isinstance(w, dict) or w.get("boot") != boot_id() or not int(w.get("tabs") or 0):
+        return {}
+    if CFG["herdr"] and CFG["herdr_tabs"] and herdr_up():
+        return {}
+    return {"tabs": int(w["tabs"]), "since": int(w.get("since") or 0), "running": alive(int(w.get("pid") or 0))}
+
+
 MADE = {}      # workspace label -> what this run made again: {"ws", "tab", "pane", "used"}
 
 
@@ -2428,10 +2484,13 @@ def attach_tabs(rows, wait=True):
         return done
     end = time.time() + (float(CFG["attach_wait_min"]) * 60 if wait else 0)
     while not herdr_up():
+        herdr_missing(len([r for r in want if has_session(r["tmux_socket"], r["tmux_session"])]) or len(want))
         if time.time() > end:
             log("herdr: its server never came up; tabs left as they are")
+            TAB_LOG["herdr_not_running"] = HERDR_DOWN.get("tabs", len(want))
             return done
         time.sleep(1 if TESTING else 30)
+    herdr_back()
     pl, tl, wl = herdr("pane", "list"), herdr("tab", "list") or {}, herdr("workspace", "list") or {}
     tabs, pns, typed = tl.get("tabs", []), (pl or {}).get("panes", []), []
     for r in want:
@@ -2559,6 +2618,7 @@ def census_data():
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "not_kept": not_kept, "replaced": replaced, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
+        "herdr_not_running": herdr_wait_now(),
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
                     for r in mine if r.get("by_hand")],
         "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming,
@@ -2616,6 +2676,11 @@ def census():
                  "All are back; it is still watching them load (questions, notes, tabs): do not start any by hand."))
         if began_text(pr):
             print(f"  This boot's restore {began_text(pr)}.")
+    hw = d["herdr_not_running"]
+    if hw:
+        print(f"Herdr is not running: {hw['tabs']} tab(s) not attached"
+              + ("; the restore attaches them when Herdr appears (Tardigrade does not start it)." if hw["running"] else
+                 ". Tardigrade does not start Herdr; start it, then `tardigrade revive --only NAME` attaches one."))
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
@@ -2713,6 +2778,8 @@ def report_cmd():
     tabs = rep.get("tabs") or {}
     if tabs.get("attached") or tabs.get("not"):
         print(f"  tabs                  {len(tabs.get('attached', []))} attached, {len(tabs.get('not', []))} not")
+    if tabs.get("herdr_not_running"):
+        print(f"  tabs                  Herdr was not running: {tabs['herdr_not_running']} tab(s) not attached")
     d = census_data()
     need = [("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
             ("not loaded (a question on its screen?)", rep.get("not_loaded")),

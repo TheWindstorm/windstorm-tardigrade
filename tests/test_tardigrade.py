@@ -2082,6 +2082,92 @@ class Windows(Base):
             # typed into its tab before the first session had even been started: to its waiting screen
             self.assertLess(out.index(f"herdr {nm} Lane: the attach was typed into its tab"), first_start, out)
 
+    def herdr_missing_run(self, wait_min, on_done=""):
+        """three sessions with tabs on the record, a reboot, and no Herdr server; the boot revive runs in the
+        background. Returns (the run, the file its output goes to)."""
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in ("alpha", "beta", "gamma"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], "Team"
+        jdump(t, p)
+        self.reboot()
+        os.makedirs(os.path.join(self.home, ".config", "herdr"), exist_ok=True)    # its folder, but no server
+        shell = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": f"t{i}", "label": f"{n} Lane", "workspace_id": "w1"} for i, n in enumerate(("Alpha", "Beta", "Gamma"))],
+               "panes": [{"pane_id": f"p{i}", "tab_id": f"t{i}", "workspace_id": "w1"} for i in range(3)],
+               "process_info": {f"p{i}": {"shell_pid": 100, "foreground_processes": shell} for i in range(3)},
+               "visible": {f"p{i}": "you@box:~$ \n" for i in range(3)}}, os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "settle_s": 2, "attach_wait_min": wait_min,
+                  "on_done": on_done})
+        log = os.path.join(self.home, "revive-out.txt")
+        with open(log, "w") as f:
+            run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                                   env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100"), stdout=f, stderr=subprocess.STDOUT)
+        return run, log
+
+    def until_said(self, log, words, run):
+        end = time.time() + WAIT
+        while time.time() < end:
+            if words in fread(log):
+                return fread(log)
+            if run.poll() is not None:
+                break
+            time.sleep(0.2)
+        self.fail(f"never said {words!r}: {fread(log)}")
+
+    def test_G4_10_a_restore_says_at_once_when_herdr_is_not_running(self):
+        # 1. Herdr comes up while the restore waits: said at the first pass, census says it, the tabs are attached
+        run, log = self.herdr_missing_run(1)
+        try:
+            self.until_said(log, "Herdr is not running: 3 tab(s) wait for it", run)
+            out = self.until_said(log, "revive: 3 started", run)
+            first = out.index("Herdr is not running: 3 tab(s) wait for it (up to 1 minutes after the sessions have loaded)")
+            self.assertLess(first, out.index("revive: 3 started"), out)          # at the first pass, not after the watch
+            self.until_said(log, "count: started=3", run)
+            text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=110)[1]
+            self.assertIn("Herdr is not running: 3 tab(s) not attached; the restore attaches them when Herdr appears", text)
+            with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+                f.write("")                                                   # Herdr's server appears
+            out = self.until_said(log, "attaching the tabs", run)
+            run.wait(timeout=WAIT)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        out = fread(log)
+        self.assertEqual(out.count("Herdr is not running:"), 1, out)          # once, not once a pass
+        self.assertNotIn("never came up", out)
+        runs = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()]
+        self.assertEqual(sorted(r["pane"] for r in runs if "cmd" in r), ["p0", "p1", "p2"], out)
+        self.assertNotIn("Herdr is not running", self.tg("census", TARDIGRADE_FAKE_UPTIME_S=200)[1])
+        calls = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-calls.jsonl")).splitlines()]
+        self.assertFalse([c for c in calls if "server" in c], calls)         # Tardigrade never starts Herdr
+
+    def test_G4_10_when_herdr_never_comes_census_report_and_on_done_say_how_many_tabs_wait(self):
+        told = os.path.join(self.home, "told.txt")
+        run, log = self.herdr_missing_run(0.05, on_done=f"echo n={{herdr_tabs_not_attached}} e=$TARDIGRADE_HERDR_TABS_NOT_ATTACHED > {told}")
+        try:
+            run.wait(timeout=WAIT * 2)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        out = fread(log)
+        self.assertLess(out.index("Herdr is not running: 3 tab(s) wait for it"), out.index("herdr: its server never came up"), out)
+        self.assertIn("; Herdr is not running: 3 tab(s) not attached", out)    # the on_done line
+        self.assertEqual(fread(told).strip(), "n=3 e=3")
+        text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=300)[1]
+        self.assertIn("Herdr is not running: 3 tab(s) not attached. Tardigrade does not start Herdr", text)
+        self.assertEqual(jload(self.state("herdr-wait.json"))["tabs"], 3)
+        self.assertEqual(json.loads(self.tg("census", "--json")[1])["herdr_not_running"]["tabs"], 3)
+        self.assertIn("Herdr was not running: 3 tab(s) not attached", self.tg("report")[1])
+        # a machine without tabs on its record, or without Herdr set up, hears nothing of this
+        os.remove(self.state("herdr-wait.json"))
+        self.assertNotIn("Herdr is not running", self.tg("census")[1])
+
     def lost_workspaces(self, places, extra_state):
         """sessions whose Herdr workspaces are gone after a reboot; returns (what herdr was asked, revive's log)"""
         herdr = self.script("herdr", fread(FAKE_HERDR))
