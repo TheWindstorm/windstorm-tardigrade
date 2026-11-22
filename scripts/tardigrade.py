@@ -2102,7 +2102,8 @@ def _revive(boot):
             "Two starts of one id would be two copies. Run `record --force` while the session runs, then revive.")
     rows = [r for r in rows if r["session_id"] not in twice]
     held = running_sids()
-    EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held], [True]
+    EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held
+                                    and not in_skip_folder(r.get("cwd", ""))], [True]
     note = wake_note(boot)
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": [], "left_out": []}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
@@ -2111,6 +2112,14 @@ def _revive(boot):
     as_if_down = DRY and "--all" in ARGS      # show every start line, as if nothing ran: for checking before a reboot
     for r in rows:
         nm = display(r)
+        if in_skip_folder(r.get("cwd", "")):
+            # its folder is left alone now: its live process, if any, is not read, so starting it could make a copy.
+            # First of all: nothing of it is read, not even its conversation for an /exit (G1.15; seen with strace).
+            log(f"skip  {nm}: its folder is in skip_cwd_prefix; left alone, never started")
+            report["left_out"].append(nm)        # not "already running": it is never started at all
+            if want:
+                return 1
+            continue
         if r["session_id"] in held and not as_if_down:
             log(f"skip  {nm}: already running on this machine")
             report["skipped"].append(nm)
@@ -2121,13 +2130,6 @@ def _revive(boot):
             log(f"skip  {nm}: its owner ended it with /exit at {time.strftime('%Y-%m-%d %H:%M', time.localtime(ex))}"
                 + (f". To bring it back anyway: revive --only {r['session_id']}" if want else ""))
             report["ended"].append(nm)
-            if want:
-                return 1
-            continue
-        if in_skip_folder(r.get("cwd", "")):
-            # its folder is left alone now: its live process, if any, is not read, so starting it could make a copy
-            log(f"skip  {nm}: its folder is in skip_cwd_prefix; left alone, never started")
-            report["left_out"].append(nm)        # not "already running": it is never started at all
             if want:
                 return 1
             continue

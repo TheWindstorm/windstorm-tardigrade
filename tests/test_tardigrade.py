@@ -453,12 +453,21 @@ class Record(Base):
         t = self.table()
         t["lanes"] = t["lanes"] + [old_row]
         jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        # seen on a real machine (strace): revive opened such a row's conversation, to look for an /exit, before
+        # it saw the folder. Its conversation ends on /exit here: a revive that reads it says "ended it with /exit".
+        cd = os.path.join(self.home, ".claude", "projects", "-agents-a1")
+        os.makedirs(cd, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() + 5)) + ".000Z"
+        with open(os.path.join(cd, old_row["session_id"] + ".jsonl"), "w") as f:
+            f.write(json.dumps({"type": "user", "timestamp": stamp, "message": {"content":
+                                "<command-name>/exit</command-name>\n<command-message>exit</command-message>"}}) + "\n")
         n = len(self.launches())
         rc, out = self.tg("revive")
         self.wait_launches(n + 1)
         time.sleep(2)
         self.assertEqual([x["sid"] for x in self.launches()[n:]], [a], out)
         self.assertIn("skip  Agent One: its folder is in skip_cwd_prefix; left alone, never started", out)
+        self.assertNotIn("ended it with /exit", out)
 
     def test_G1_9_a_session_outside_tmux_is_recorded_for_the_socket_and_prefix_in_the_settings(self):
         self.cfg({"loose_socket": "work", "loose_prefix": "pane-", "loose_skip": ["^$", "^scratch"]})
