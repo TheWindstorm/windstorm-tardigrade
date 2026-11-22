@@ -799,6 +799,25 @@ class Revive(Base):
         self.assertEqual(new[a]["seen"].get("ACCT_NAME"), "sam")
         self.assertNotIn("ACCT_NAME", new[b]["seen"])
 
+    def test_G2_41_the_account_label_is_set_by_the_start_file_not_left_to_the_wrapper(self):
+        # a real wrapper (one that fetches a login token) does not put the label back; the G2.15 stand-in did
+        self.script("acctwrap", '#!/bin/bash\necho "$@" >> "$HOME/acctwrap.log"\n[ "$1" = use ] || exit 2\n'
+                                'shift 2\nexec claude "$@"\n')
+        self.cfg({"account_env": "ACCT_NAME", "account_command": "acctwrap use {account}"})
+        a = self.start_lane("alpha", "Alpha Lane", extra_env={"ACCT_NAME": "sam"})
+        b = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = {x["sid"]: x for x in self.wait_launches(n + 2)[n:]}
+        self.assertEqual(new[a]["seen"].get("ACCT_NAME"), "sam")       # so the next record still knows it is pinned
+        self.assertNotIn("ACCT_NAME", new[b]["seen"])
+        self.assertIn("export ACCT_NAME=sam\n", fread(self.state(os.path.join("launch", a + ".sh"))))
+        self.assertIn("unset ACCT_NAME\n", fread(self.state(os.path.join("launch", b + ".sh"))))
+        self.tg("record", "--force")
+        self.assertEqual({r["name"]: r["account"] for r in self.table()["lanes"]}, {"Alpha Lane": "sam", "Beta Lane": ""})
+
     def test_G2_16_a_start_command_from_the_settings_replaces_the_start_line(self):
         self.script("mystart", '#!/bin/bash\nprintf "%s|" "$@" >> "$HOME/mystart.log"\nexec claude --resume "$1"\n')
         self.cfg({"start_command": "mystart {session_id} {mode} {model} {name} {flags}"})

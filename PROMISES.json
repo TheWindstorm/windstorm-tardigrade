@@ -359,6 +359,20 @@
    "issue": 26,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T26",
+   "seen": "2026-11-22, while setting up a pinned-account session for its first real reboot: the machine's real login wrapper fetches a token and runs claude, but does not put the account label back into the session's environment. Through account_command alone a revived session would run on the right login with no label, the next record would not know it is pinned, and the reboot after that would start it the ordinary way. The setup works around it with 'env LABEL={account}' in account_command. The stand-in wrapper in test G2.15 sets the label itself, so the test never saw this.",
+   "promise": "Tardigrade sets the account label variable itself in the start file for a session that has one, and unsets it for a session that has none, so a wrapper need not put it back.",
+   "codon": "G2.41",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G2_41_the_account_label_is_set_by_the_start_file_not_left_to_the_wrapper",
+   "proven": "",
+   "issue": 27,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

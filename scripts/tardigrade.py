@@ -1000,6 +1000,13 @@ def launch_text(r):
     for k, v in sorted((r.get("carry_env") or {}).items()):
         if k in ok and SAFE_VALUE.fullmatch(str(v)):
             lines.append(f"export {k}={shlex.quote(str(v))}")
+    # The account label is set here, by us (G2.41): a wrapper that fetches a login need not put it back, and
+    # without it the next record would not know the session is pinned. A session with no label has it unset.
+    acct = (plain_names([CFG.get("account_env")]) or [""])[0]
+    if acct and r.get("account") and SAFE_VALUE.fullmatch(str(r["account"])):
+        lines.append(f"export {acct}={shlex.quote(str(r['account']))}")
+    elif acct:
+        lines.append(f"unset {acct}")
     # the session's own folder, whatever the shell's start files or the env_file said
     lines.append(f"cd -- {shlex.quote(r['cwd'] if os.path.isdir(r['cwd']) else HOME)} 2>/dev/null")
     lines.append(f'{claude_line(r)}; echo; echo "[session ended; shell kept]"; exec {sh} -l')

@@ -184,7 +184,7 @@ accounts, or shown in another tool.
 |---|---|---|
 | `claude_command` | `"claude"` | The command that starts Claude Code. The session's flags and `--resume <id>` are added to it. |
 | `account_env` | | The name of an environment variable that holds a session's account label, if your wrapper sets one. A label, never a secret. |
-| `account_command` | | Used in place of `claude_command` for a session that had a label, for example `"my-wrapper use {account}"`. |
+| `account_command` | | Used in place of `claude_command` for a session that had a label, for example `"my-wrapper use {account}"`. The start file sets the `account_env` variable to the label before it runs this command, so the wrapper need not put it back. |
 | `start_command` | | Your own whole start line, in place of the three above. Placeholders: `{session_id}` `{cwd}` `{name}` `{model}` `{effort}` `{mode}` `{account}` `{tmux_session}` and `{flags}` (the session's exact flags). Each is quoted for the shell. |
 | `env_file` | | A file of `NAME=value` lines (or NUL-separated, as `env -0` writes) added to each revived session's environment. For a desktop's display and session bus, which a boot service does not have. Names that look like a secret's are left out, and so are the variables that belong to the starting shell (its folder, user id, terminal). |
 | `tmux_conf` | | A tmux config file for a tmux server that Tardigrade has to start. |
