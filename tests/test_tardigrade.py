@@ -62,7 +62,7 @@ atexit.register(_end_live)
 @unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="tg", dir="/tmp")
+        self.tmp = tempfile.mkdtemp(prefix="tg", dir=os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
         self.pids, self.loose = [], []
         LIVE.append(self)
         self.addCleanup(self.end_all)     # runs even when setUp fails after this line, or tearDown raises
@@ -2064,6 +2064,39 @@ class Windows(Base):
         self.assertEqual([r for r in runs if "create" in r], [{"create": "Delta Lane", "workspace": "w1", "no_focus": True}])
         self.assertIn("Beta Lane: its tab has text typed after the prompt; left alone", out)
         self.assertIn("Gamma Lane: its tab is running something else; left alone", out)
+
+
+@unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
+class Tests(unittest.TestCase):
+    def test_G7_1_a_run_stopped_part_way_leaves_nothing_behind(self):
+        """a real run of one test, stopped by SIGTERM once its tmux server is up, as `timeout` stops it"""
+        parent = tempfile.mkdtemp(prefix="tgstop")
+        self.addCleanup(shutil.rmtree, parent, True)
+        env = dict(os.environ, TARDIGRADE_TEST_TMP=parent)
+        run = subprocess.Popen([sys.executable, "-m", "unittest",
+                                "tests.test_tardigrade.Revive.test_G2_1_revive_brings_a_session_back_as_itself"],
+                               cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: run.poll() is None and run.kill())
+        end, up = time.time() + WAIT, False
+        while time.time() < end and run.poll() is None and not up:
+            up = any(os.path.exists(os.path.join(parent, d, f"tmux-{os.getuid()}", "default")) for d in os.listdir(parent))
+            time.sleep(0.1)
+        self.assertTrue(up, "the run never started its tmux server")
+        time.sleep(0.5)
+        run.send_signal(signal.SIGTERM)
+        run.wait(timeout=30)
+        time.sleep(1)
+        left = []
+        for pid in os.listdir("/proc"):
+            if pid.isdigit():
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        if parent.encode() in f.read():
+                            left.append(pid)
+                except OSError:
+                    pass
+        self.assertEqual(left, [], "processes of the stopped run are still alive")
+        self.assertEqual(os.listdir(parent), [], "the stopped run left its folder behind")
 
 
 class Invariants(unittest.TestCase):

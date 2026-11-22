@@ -257,6 +257,14 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G5.9 | `setup`'s first record is a plain record: sessions that vanished together are held on the record as the timer's record holds them (G1.11), so installing or upgrading on a machine whose sessions are down forgets none of them. Only a person's own `record --force` lets them go (T35). | `test_G5_9_setup_keeps_sessions_that_are_down_on_the_record` |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
+### G7 Tests
+
+The tests run on a person's own machine, so they must leave it as they found it.
+
+| Codon | Claim | Proof |
+|---|---|---|
+| G7.1 | A test run that is stopped part-way (a timeout, a closed terminal, a setUp that fails) leaves no tmux server, no process and no folder behind. Each test registers its cleanup the moment its folder exists, every step of it runs even if one fails, and SIGTERM, SIGHUP and exit run the cleanups of the tests still running. | `test_G7_1_a_run_stopped_part_way_leaves_nothing_behind` |
+
 ### Planned: what the hundred-session reboot asked for
 
 Not built yet. Each row is a promise in `PROMISES.json`. When one is built, its codon moves into its gene's table
