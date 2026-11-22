@@ -1506,6 +1506,22 @@ def bottom(screen, n):
     return "\n".join([ln for ln in screen.splitlines() if ln.strip()][-n:])
 
 
+def under_box(screen):
+    """T36: how many lines with text are under the lowest rule on the screen (the input box's lower edge):
+    notices, the status line, which a person can make any height, and the mode line. A fixed count from
+    the foot missed the box on a machine whose status line is 13 lines tall. At most 40."""
+    lines = [SGR.sub("", ln) for ln in screen.splitlines() if SGR.sub("", ln).strip()]
+    for i in range(len(lines) - 1, -1, -1):
+        if BOX_EDGE.match(lines[i]):
+            return min(len(lines) - 1 - i, 40)
+    return 0
+
+
+def near_box(screen, n):
+    """the n lines with text above the status line, and all that is under the box (see under_box)"""
+    return bottom(screen, n + under_box(screen))
+
+
 def trust_dialog(screen):
     """The foot of the screen if Claude Code's folder question is the dialog open there now, else "".
     A resumed session redraws its old conversation, and a conversation can quote this very dialog, cursor
@@ -1619,7 +1635,7 @@ def box_empty(screen):
     ❯ right under a rule, with nothing after the ❯ but its dim placeholder (a session nobody wrote in shows
     one, such as 'Try "how does <filepath> work?"'). The screen is read with its styles (capture-pane -e),
     so typed text and the placeholder can be told apart. No box found means: not known to be empty."""
-    lines = [ln for ln in screen.splitlines() if SGR.sub("", ln).strip()][-15:]
+    lines = [ln for ln in screen.splitlines() if SGR.sub("", ln).strip()][-(15 + under_box(screen)):]
     for i in range(len(lines) - 1, 0, -1):
         plain = SGR.sub("", lines[i]).lstrip()
         if plain.startswith("❯") and BOX_EDGE.match(SGR.sub("", lines[i - 1])):
@@ -1730,10 +1746,10 @@ class Watch:
                     and not (self.held.get(sid) == HELD_SCREEN and login_key(r) in self.at_limit):
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
-                if OTHER_DIALOG.search(bottom(screen, 15)):
+                if OTHER_DIALOG.search(near_box(screen, 15)):
                     self.held[sid] = HELD_SCREEN   # this session only: after a resume, its screen is history
-                if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(styled) \
-                        and not OTHER_DIALOG.search(bottom(screen, 15)) and self.may_note() \
+                if sj.get("status") == "idle" and not QUESTION.search(near_box(screen, 15)) and box_empty(styled) \
+                        and not OTHER_DIALOG.search(near_box(screen, 15)) and self.may_note() \
                         and login_key(r) not in {login_key(x[2]) for x in self.after_due.values()}:
                     self.note_times.append(time.time())
                     type_note(r, self.note_for[sid])
@@ -1759,7 +1775,7 @@ class Watch:
                 time.sleep(wait)
             del self.after_due[sid]
             after = SGR.sub("", tmux(r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1])
-            new = lambda pat: bool(pat.search(bottom(after, 15))) and len(pat.findall(after)) > len(pat.findall(before))
+            new = lambda pat: bool(pat.search(near_box(after, 15))) and len(pat.findall(after)) > len(pat.findall(before))
             if new(QUEUED):
                 self.queued.append(display(r))
                 log(f"  {display(r)}: the note met a usage limit; Claude Code holds it and will run it by itself at "
@@ -2742,7 +2758,8 @@ def setup():
     # this boot counts as revived: the sessions running now are the ones to remember
     with open(marker(), "w") as f:
         f.write("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
-    ARGS.append("--force")
+    # T35: a plain record, not a forced one: sessions that vanished are held as the timer's record holds them,
+    # so installing or upgrading on a machine whose sessions are down forgets none of them
     HERDR_WAIT["s"] = 120          # setup's first record: give a loaded machine's Herdr time to answer
     record()
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")

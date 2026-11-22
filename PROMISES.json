@@ -485,6 +485,34 @@
    "issue": 35,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T35",
+   "seen": "2026-11-22, installing a 0.1.8 candidate on a Linux test machine whose sessions had vanished together and were held on the record: `setup` makes its first record as `record --force`, which moved every vanished row to the down list at once ('record: 1 session(s), 20 down'), out of reach of `revive --only` and of the boot run. In the same second the record timer's own first run had held them correctly. 0.1.7's setup does the same.",
+   "promise": "setup's first record is a plain record: rows that vanished are held exactly as the timer's record holds them. Only a person's own `record --force` lets them go.",
+   "codon": "G5.9",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G5_9_setup_keeps_sessions_that_are_down_on_the_record",
+   "proven": "",
+   "issue": 36,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T36",
+   "seen": "2026-11-22, a restore on a Linux test machine whose status line is 13 lines tall: every revived session showed an empty input box and reported idle, yet read 'loaded, but not idle (a question on its screen?)' and got no note. The box, a question, a usage notice and a queued note were looked for only in the last 15 lines with text, and the box's upper edge was the 16th.",
+   "promise": "the input box, a question, a usage or limit notice and a queued note are looked for in the 15 lines above whatever sits under the box's lower edge (notices, the status line of any height, the mode line), plus those lines, up to 40: with a tall status line the note is typed, and a notice above that status line still holds it.",
+   "codon": "G2.40",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G2_40_a_tall_status_line_moves_where_the_box_is_looked_for",
+   "proven": "",
+   "issue": 37,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

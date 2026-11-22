@@ -1241,6 +1241,31 @@ class Revive(Base):
         self.assertTrue(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0\x1b[2mTry \"how does <filepath> work?\"\x1b[0m\n{rule}\n"))
         self.assertFalse(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0hello \x1b[2mtypo\x1b[0m\n{rule}\n"))
 
+    def tall_status_revive(self, notice):
+        sid = self.recorded_then_rebooted()
+        with open(os.path.join(self.home, "tallstatus"), "w") as f:
+            f.write("16")
+        if notice:
+            open(os.path.join(self.home, "limitnotice"), "w").close()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        return sid, out
+
+    def test_G2_40_a_tall_status_line_moves_where_the_box_is_looked_for(self):
+        # T36: a real Linux machine draws a 13-line status line under the input box. The foot was read as a
+        # fixed 15 lines, so the box was never found there and no revived session got its note
+        sid, out = self.tall_status_revive(notice=False)
+        self.assertEqual([t["sid"] for t in self.wait_typed(1)], [sid], out)
+        self.assertEqual(jload(self.state("last-revive.json"))["noted"], ["Alpha Lane"])
+
+    def test_G2_40_a_notice_above_a_tall_status_line_still_holds_the_note(self):
+        # T36: with the box found again, a usage-limit notice above that tall status line must still be seen
+        sid, out = self.tall_status_revive(notice=True)
+        time.sleep(2)
+        self.assertEqual(self.typed(), [], out)
+        self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
+
     def test_G2_40_no_note_is_typed_beside_a_usage_or_limit_notice(self):
         # seen on two real machines at their weekly limit: the notice sits under an ordinary, empty input box
         self.recorded_then_rebooted()
@@ -1274,7 +1299,7 @@ class Revive(Base):
         # and the same rule holds the trust answer (G2.12): one pattern for both
         src = fread(SCRIPT)
         call = src.index("type_note(r, self.note_for")
-        self.assertIn("not OTHER_DIALOG.search(bottom(screen, 15))", src[call - 500:call])
+        self.assertIn("not OTHER_DIALOG.search(near_box(screen, 15))", src[call - 500:call])
 
     def limit_reply(self, sid, then=()):
         """a conversation whose last turn is Claude Code's limit reply (as 2.1.330 writes it), then `then`"""
@@ -1676,6 +1701,25 @@ class Setup(Base):
         self.assertIn("OnUnitActiveSec=5min", out)
         self.assertIn(os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py"), out)
 
+    def test_G5_9_setup_keeps_sessions_that_are_down_on_the_record(self):
+        # T35: on a real Linux machine whose sessions had vanished together, setup's first record was a forced
+        # one and moved all of them to the down list, out of reach of a revive
+        self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
+                    'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
+        self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+        for nm in ("alpha", "beta", "gamma", "delta"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        for row in self.launches()[1:]:           # three of the four vanish together; one still runs
+            self.kill(row["pid"])
+        time.sleep(1)
+        rc, out = self.tg("setup")
+        self.assertTrue(os.path.exists(os.path.join(self.home, "systemctl.log")), out)    # only the stand-in
+        t = self.table()
+        self.assertEqual(sorted(r["name"] for r in t["lanes"]), ["Alpha Lane", "Beta Lane", "Delta Lane", "Gamma Lane"], out)
+        self.assertEqual(t["down"], [], out)
+        self.assertIn("vanished together", out)
+
     def test_G5_2_setup_dry_run_installs_nothing(self):
         rc, out = self.tg("setup", "--dry-run")
         self.assertIn("would copy", out)
@@ -2001,7 +2045,7 @@ class Invariants(unittest.TestCase):
         self.assertIn('"answer_trust": False,', self.src)           # off by default
         self.assertEqual(self.src.count("type_note(r, "), 2)        # its definition and one call, in the watch
         call = self.src.index("type_note(r, self.note_for")
-        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15))', self.src[call - 400:call])
+        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(near_box(screen, 15))', self.src[call - 400:call])
 
     def test_INV6_standard_library_only_and_no_network(self):
         import re

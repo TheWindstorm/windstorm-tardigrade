@@ -9,7 +9,8 @@ another dialog open under it, and write down every key received), `failonce` (en
 `status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for), `noconvslow` (the same, said only after 6 s),
 `failsid` (session ids whose start always fails), `limitnotice` (show the usage-limit notice under
 the empty box), `limitqueue` (a line typed in meets the weekly limit and is held for the reset), `oldlimit` (session ids whose
-redrawn history shows an old limit reply above a newer short turn)."""
+redrawn history shows an old limit reply above a newer short turn), `tallstatus` (that many status-line
+lines drawn at the very foot, under the box and any notice)."""
 import ctypes
 import json
 import os
@@ -133,6 +134,11 @@ if not os.path.exists(os.path.join(home, "nobox")):
     if os.path.exists(os.path.join(home, "limitnotice")):     # what Claude Code 2.1.330 shows at the weekly limit
         sys.stdout.write("  ⚠ Usage limit reached · limit resets 12pm\r\n    Continuing automatically at 12pm · "
                          "Esc to cancel · /usage-credits to\r\n    continue now\r\n")
+    try:    # a person's own status line, as tall as the number in `tallstatus`, under everything else
+        for i in range(int(open(os.path.join(home, "tallstatus")).read())):
+            sys.stdout.write(f"  STATUS{i} folder · branch · context 4% · week 17% used · cpu 6%\r\n")
+    except (OSError, ValueError):
+        pass
     sys.stdout.flush()
 # whatever is typed into this "session" is written down, one line each
 end = time.time() + 900
