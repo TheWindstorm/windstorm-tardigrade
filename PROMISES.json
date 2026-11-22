@@ -457,6 +457,20 @@
    "issue": 33,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T33",
+   "seen": "2026-11-22, a clean reboot of a Mac test machine on a 0.1.8 candidate with 25 sessions: until the next record, census said 'Running 24 ... down 14' and listed as DOWN the 10 lanes the restore had started new under new ids (Claude Code had no conversation for them). A clean restore read as a failed one.",
+   "promise": "census never lists as DOWN a session whose own tmux session runs its replacement under the same name: it lists it as started new, with the old and the new id. The old id does not count toward a shared name, and the new id is not listed as 'will not come back'.",
+   "codon": "G3.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G3_16_a_session_started_new_under_a_new_id_is_not_listed_as_down",
+   "proven": "",
+   "issue": 34,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

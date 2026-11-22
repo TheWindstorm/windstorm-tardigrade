@@ -1549,6 +1549,33 @@ class Census(Base):
         self.assertIn("STARTED BY HAND while its session was coming back", text)
         self.assertEqual(text.count("STARTED BY HAND"), 1)                    # the real Beta is not marked
 
+    def test_G3_16_a_session_started_new_under_a_new_id_is_not_listed_as_down(self):
+        # seen on a real Mac: until the next record, census said "down: 14" for a clean restore, naming as DOWN
+        # every lane the restore had started new (Claude Code had no conversation for it) under a new id
+        self.cfg({"wake": "idle"})
+        self.start_lane("alpha", "Alpha Lane")
+        empty = self.start_lane("beta", "Beta Lane")
+        with open(os.path.join(self.home, "noconv"), "w") as f:
+            f.write(empty)
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 3)
+        self.assertIn("Beta Lane: Claude Code has no conversation for it", out)
+        new = [x["sid"] for x in self.launches()[n:] if x["sid"] != empty and "--resume" not in x["argv"]]
+        self.assertEqual(len(new), 1, out)
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual((d["running"], d["down"]), (2, 0), d)
+        self.assertEqual(d["replaced"], [{"name": "Beta Lane", "was": empty, "now": new[0]}])
+        self.assertNotIn("Beta Lane", d["same_name"])
+        self.assertEqual([x["name"] for x in d["not_kept"]], [])
+        rc, text = self.tg("census")
+        self.assertIn("STARTED NEW under a new id, in their own place (up, not down", text)
+        down_part = text.split("DOWN: on the record, not running now")[-1].split("STARTED NEW")[0] \
+            if "DOWN: on the record" in text else ""
+        self.assertNotIn("Beta Lane", down_part)
+
     def test_G3_8_report_prints_the_last_restores_timeline_and_what_needs_a_person(self):
         a, b = self.start_lane("alpha", "Alpha Lane"), self.start_lane("beta", "Beta Lane")
         self.tg("record", "--force")

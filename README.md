@@ -116,6 +116,10 @@ session back anyway: `revive --only <its id>`. One known edge: a session being m
 moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down; `revive --only
 <its name>` brings it back.
 
+**A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
+wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
+"needs you" and nothing is typed into it.
+
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
 session with the same name, folder and flags.
 

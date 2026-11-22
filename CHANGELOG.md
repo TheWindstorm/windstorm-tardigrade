@@ -45,6 +45,8 @@ What comes back:
   a name, and sessions the restore itself had started new under a new id. Now a session in a tmux session the
   restore made, or with any id coming back under its name, is never marked. While a restore is still watching
   sessions that are all back, `census` says so instead of speaking of others on their way.
+- **A lane started new under a new id is not listed as down** (G3.16). On a real Mac, `census` said "down: 14"
+  for a clean restore until the next record; now it lists those lanes as started new, with both ids.
 - **A session with no conversation is started new even when it is slow to say so** (G2.43). On a Mac whose
   start fetches a login first, 0.1.7 counted such a session up, then lost it.
 - **A pinned session keeps its account label** (G2.41): the start file sets it, so a login wrapper need not.

@@ -2348,11 +2348,21 @@ def census_data():
     stopped = [] if going else coming        # a waiting screen left by a restore that is no longer running
     coming = coming if going else []
     down += [r for r in table["down"] if r["session_id"] not in live_ids]
+    # G3.16: a session started new under a new id (Claude Code had no conversation for it) runs in its old tmux
+    # session, under its old name. Its old id is not down: the lane is up, and the next record takes the new id.
+    taken = {(r.get("tmux_socket"), r.get("tmux_session")): r for r in mine if r.get("tmux_session")}
+    replaced = []
+    for r in down:
+        now_r = taken.get((r.get("tmux_socket"), r.get("tmux_session")))
+        if now_r and not r.get("ended") and now_r.get("name") == r.get("name"):
+            replaced.append({"name": display(r), "was": r["session_id"], "now": now_r["session_id"]})
+    gone_ids = {x["was"] for x in replaced}
+    down = [r for r in down if r["session_id"] not in gone_ids]
     # A name is not an identity (G3.7): a name that more than one session carries, running or on the record,
     # and a session started by hand, under the name of one the last restore was bringing back, after it began.
     ids_by_name = {}
     for r in mine + table["lanes"] + table["down"]:
-        if r.get("name"):
+        if r.get("name") and r["session_id"] not in gone_ids:
             ids_by_name.setdefault(r["name"], set()).add(r["session_id"])
     same_name = {n: sorted(i) for n, i in ids_by_name.items() if len(i) > 1}
     pr = read_json(progress_path(), {})
@@ -2374,7 +2384,8 @@ def census_data():
     not_kept = []
     for r in mine:
         why = left_out_why(r)
-        if not why and r["session_id"] not in on_record and r.get("status") != "starting":
+        if not why and r["session_id"] not in on_record and r.get("status") != "starting" \
+                and r["session_id"] not in {x["now"] for x in replaced}:     # its old row brings it back (G3.16)
             why = ("started after the last record: the next record takes it" if r.get("started_at", 0) >= rec_at
                    else "not on the record: run `tardigrade record`")
         if why:
@@ -2390,7 +2401,7 @@ def census_data():
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
-        "not_kept": not_kept, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
+        "not_kept": not_kept, "replaced": replaced, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
                     for r in mine if r.get("by_hand")],
         "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming,
@@ -2481,6 +2492,11 @@ def census():
     table("HIDDEN: running, but no window shows them", d["sessions"]["hidden"])
     table("WITH A WINDOW", d["sessions"]["with_window"])
     table("DOWN: on the record, not running now", d["sessions"]["down"], down=True)
+    if d["replaced"]:
+        print(f"\nSTARTED NEW under a new id, in their own place (up, not down; the next record takes the new id): "
+              f"{len(d['replaced'])}")
+        for x in d["replaced"]:
+            print(f"  {x['name']:<34} was {x['was'][:8]}, now {x['now'][:8]}")
     if d["lost"]:
         print(f"\n{d['lost']} of the sessions under DOWN vanished together, which looks like a crash. They are still "
               f"on the record: `tardigrade revive` brings them back. If you ended them yourself: record --force")
