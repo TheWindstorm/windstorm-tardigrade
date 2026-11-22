@@ -536,7 +536,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
-   "test": "",
+   "test": "test_G2_42_only_the_newest_few_boot_markers_are_kept_and_they_are_private",
    "proven": "",
    "issue": 39,
    "moved_why": "",

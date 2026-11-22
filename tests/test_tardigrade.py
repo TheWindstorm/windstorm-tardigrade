@@ -1216,6 +1216,21 @@ class Revive(Base):
         u = src[src.index("def uninstall():"):src.index("def trust_cmd():")]
         self.assertIn('shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)', u)
 
+    def test_G2_42_only_the_newest_few_boot_markers_are_kept_and_they_are_private(self):
+        # T38: seen on a Linux machine, 14 markers in two days, at mode 664, the old ones never read again
+        os.makedirs(self.state(""), exist_ok=True)
+        for i in range(8):
+            p = self.state(f"revived-old-boot-{i}")
+            with open(p, "w") as f:
+                f.write("x\n")
+            os.chmod(p, 0o664)
+            os.utime(p, (time.time() - 86400 + i * 60,) * 2)
+        self.recorded_then_rebooted()
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-new")
+        left = sorted(f for f in os.listdir(self.state("")) if f.startswith("revived-"))
+        self.assertEqual(left, sorted(["revived-boot-new"] + [f"revived-old-boot-{i}" for i in (4, 5, 6, 7)]))
+        self.assertEqual(os.stat(self.state("revived-boot-new")).st_mode & 0o777, 0o600)
+
     def test_G2_16_a_start_command_from_the_settings_replaces_the_start_line(self):
         self.script("mystart", '#!/bin/bash\nprintf "%s|" "$@" >> "$HOME/mystart.log"\nexec claude --resume "$1"\n')
         self.cfg({"start_command": "mystart {session_id} {mode} {model} {name} {flags}"})

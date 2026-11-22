@@ -398,6 +398,24 @@ def marker():
     return os.path.join(STATE, f"revived-{boot_id()}")
 
 
+MARKERS_KEPT = 5            # G2.42, T38: only the newest few boot markers; an old boot's is never read again
+
+
+def write_marker(text):
+    """this boot's marker, this user's only (0600); the markers of all but the newest few boots are removed"""
+    write_private(marker(), text)
+    try:
+        old = sorted((p for p in glob.glob(os.path.join(STATE, "revived-*")) if p != marker()),
+                     key=lambda p: os.path.getmtime(p), reverse=True)
+    except OSError:
+        return
+    for p in old[MARKERS_KEPT - 1:]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
 def user_services_up_s():
     """Seconds after boot at which this user's service manager started (Linux, systemd), or None. A boot
     run cannot begin before it, and on some machines the system's own start holds it back for minutes."""
@@ -2343,8 +2361,7 @@ def _revive(boot):
                           boot_wait_s=prog["boot_wait_s"])
             write_json(os.path.join(STATE, "last-revive.json"), report)
             if boot:
-                with open(marker(), "w") as f:
-                    f.write(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+                write_marker(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
             log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
                 f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
         # the sessions that are up are looked after in every pass, also while another start is being retried
@@ -3079,8 +3096,7 @@ def setup():
             return 1
     save_cfg_key("auto_revive", True)
     # this boot counts as revived: the sessions running now are the ones to remember
-    with open(marker(), "w") as f:
-        f.write("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+    write_marker("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
     # T35: a plain record, not a forced one: sessions that vanished are held as the timer's record holds them,
     # so installing or upgrading on a machine whose sessions are down forgets none of them
     HERDR_WAIT["s"] = 120          # setup's first record: give a loaded machine's Herdr time to answer
