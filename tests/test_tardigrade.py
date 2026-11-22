@@ -1768,7 +1768,7 @@ class Census(Base):
         # with all back while the watch still runs, it does not speak of "others" on their way (seen on a real Mac)
         src = fread(SCRIPT)
         i = src.index("A RESTORE IS RUNNING")
-        self.assertIn('if pr["back"] < pr["total"] else', src[i:i + 400])
+        self.assertIn('if pr["back"] < pr["total"] and not pr.get("starts_done") else', src[i:i + 400])
         self.assertIn("All are back; it is still watching them load", src[i:i + 600])
         notes = fread(os.path.join(self.home, "notes.log")).splitlines()
         self.assertEqual(len(notes), 2, out)
@@ -2146,6 +2146,25 @@ class Windows(Base):
         self.assertNotIn("Herdr is not running", self.tg("census", TARDIGRADE_FAKE_UPTIME_S=200)[1])
         calls = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-calls.jsonl")).splitlines()]
         self.assertFalse([c for c in calls if "server" in c], calls)         # Tardigrade never starts Herdr
+
+    def test_G3_6_the_record_runs_again_once_every_start_is_done(self):
+        # T37: the run waits for Herdr after every start is done; the record does not wait with it
+        run, log = self.herdr_missing_run(1)
+        try:
+            self.until_said(log, "count: started=3", run)
+            rc, out = self.tg("record")
+            self.assertIn("record: 3 session(s)", out)
+            self.assertNotIn("skipped", out)
+            self.assertNotIn("do not start", self.tg("census", TARDIGRADE_FAKE_UPTIME_S=110)[1])
+            self.assertTrue(jload(self.state("progress.json"))["starts_done"])
+        finally:
+            run.kill()
+            run.wait(timeout=WAIT)
+        src = fread(SCRIPT)
+        rec = src[src.index("def record():"):src.index("mine, _, _ = live()", src.index("def record():"))]
+        self.assertIn("run_going() and not starts_finished()", rec)            # still skipped while it starts them
+        loop = src[src.index("waiting += len(inflight)"):src.index("end_due()", src.index("waiting += len(inflight)"))]
+        self.assertIn('prog["starts_done"] = tries_done and not inflight', loop)
 
     def test_G4_10_when_herdr_never_comes_census_report_and_on_done_say_how_many_tabs_wait(self):
         told = os.path.join(self.home, "told.txt")

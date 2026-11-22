@@ -522,7 +522,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
-   "test": "",
+   "test": "test_G3_6_the_record_runs_again_once_every_start_is_done",
    "proven": "",
    "issue": 38,
    "moved_why": "",

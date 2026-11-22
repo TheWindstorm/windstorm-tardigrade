@@ -967,6 +967,14 @@ def holder_text(sid, P):
     return "another process"
 
 
+def starts_finished():
+    """G3.6, T37: the running revive has done every start (none is waiting to be started, retried or seen up).
+    What it still waits for after that (loading, notes, tabs) does not hold the record back."""
+    pr = read_json(os.path.join(STATE, "progress.json"), {})
+    return (isinstance(pr, dict) and pr.get("boot") == boot_id() and alive(int(pr.get("pid") or 0))
+            and bool(pr.get("starts_done") or pr.get("done")))
+
+
 def run_going():
     """a revive is running now: its lock is held by a live process of this boot"""
     try:
@@ -1059,8 +1067,8 @@ def record():
         if CFG["auto_revive"] and not os.path.exists(marker()):
             log("record: skipped (this boot's revive has not run; the record is kept as it was)")
             return 0
-    if not force and run_going():
-        log("record: skipped (a revive is running; waiting screens are not sessions gone)")
+    if not force and run_going() and not starts_finished():
+        log("record: skipped (a revive is starting sessions; waiting screens are not sessions gone)")
         return 0
     mine, _, _ = live()
     old = read_table()
@@ -2283,6 +2291,9 @@ def _revive(boot):
         waiting = w.look(came)
         no_conversation_late()
         waiting += len(inflight)
+        if prog.get("starts_done") != (tries_done and not inflight):
+            prog["starts_done"] = tries_done and not inflight     # G3.6: from here the record runs again
+            write_progress(prog)
         end_due()
         if tries_done and (not waiting or time.time() >= last_up + watch_s):
             break
@@ -2631,7 +2642,8 @@ def restore_now():
     pr = read_json(progress_path(), {})
     if not isinstance(pr, dict) or pr.get("done") or pr.get("boot") != boot_id() or not alive(int(pr.get("pid") or 0)):
         return {}
-    return {k: pr.get(k) for k in ("began", "total", "back", "uptime_at_start", "boot_run", "user_up_s", "boot_wait_s")}
+    return {k: pr.get(k) for k in ("began", "total", "back", "uptime_at_start", "boot_run", "user_up_s", "boot_wait_s",
+                                   "starts_done")}
 
 
 def began_text(d):
@@ -2672,8 +2684,11 @@ def census():
     if pr:
         print(f"A RESTORE IS RUNNING: {pr['back']} of {pr['total']} sessions back, since "
               f"{time.strftime('%H:%M', time.localtime(pr['began']))} ({ago(now - pr['began'])}). "
-              + ("The others are on their way: do not start them by hand." if pr["back"] < pr["total"] else
-                 "All are back; it is still watching them load (questions, notes, tabs): do not start any by hand."))
+              + ("The others are on their way: do not start them by hand." if pr["back"] < pr["total"] and not pr.get("starts_done") else
+                 "All are back; it is still watching them load (questions, notes, tabs). Every start is done."
+                 if pr["back"] >= pr["total"] else
+                 "Every start is done; the others did not come back (see `tardigrade report`). It is still watching "
+                 "the ones that did load (questions, notes, tabs)."))
         if began_text(pr):
             print(f"  This boot's restore {began_text(pr)}.")
     hw = d["herdr_not_running"]
