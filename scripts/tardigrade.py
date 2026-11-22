@@ -4,6 +4,7 @@
   record              write down every live session (a timer runs this every 5 minutes)
   revive [--boot]     start every recorded session that is not running (runs once after boot)
   revive --only NAME  bring back just that one
+  revive --dry-run --all   show the start line of every recorded session, as if none ran
   trust on|off        opt in (or out): after a restart, answer Claude Code's "trust this folder?"
                       for a session's own folder. Off unless you switch it on.
   census [--json]     what is running, what runs with no window open, what is down
@@ -15,11 +16,16 @@ Rules it keeps:
   * A session comes back as itself: `claude --resume <its own id>` in its own folder, with its own
     model, effort and permission mode. Its name and its whole conversation come back with it.
   * Never a second copy. A session id that any live process on this machine holds is never started.
-  * It never ends a session, never types into one, never answers a dialog for you (one exception,
-    only if you switch it on: `trust on`), and never stores
-    a token or a key. For a login token it keeps the variable's name and an 8-digit one-way fingerprint,
-    so it can tell whether a session came back on the same login.
-  * The record is never overwritten by a half-started machine, and never by an empty list.
+  * It never ends a session and never answers a dialog for you (one exception, only if you switch it
+    on: `trust on`). It types one thing into a session, and only into one it started itself: its
+    wake-up note, once that session is loaded and idle. `"wake": "idle"` switches the note off.
+  * Nothing but the start command is ever on a command line: the note is typed, and the settings a
+    session needs are in a start file only you can read. A command line is what a broad, match-by-text
+    kill command is matched against.
+  * It never stores a token or a key. For a login token it keeps the variable's name and an 8-digit
+    one-way fingerprint, so it can tell whether a session came back on the same login.
+  * The record is never overwritten by a half-started machine, and never by an empty list. Sessions
+    that vanish together (a crash) stay on the record for some hours, so they still come back.
   * Other users' sessions on a shared machine are counted, never read.
 
 Standard library only. Record: ~/.config/windstorm-tardigrade/lanes.json
@@ -37,7 +43,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -66,7 +72,22 @@ CFG = {
     "down_keep_days": 14,     # how long a session that went down stays on the "down" list
     "skip_tmux_sockets": [],  # tmux socket names to leave alone, when another tool brings those sessions back
     "answer_trust": False,    # opt-in (`trust on`): answer "trust this folder?" for a revived session's own folder
-    "trust_wait_min": 15,     # after a boot, keep looking for that question this long (slow machines ask late)
+    "watch_min": 15,          # after a boot, keep looking at the started sessions this long (slow machines load late)
+    "claude_command": "claude",   # the command that starts Claude Code; the flags and --resume are added to it
+    "account_env": "",        # name of a variable that holds a session's account label (a label, never a secret)
+    "account_command": "",    # used in place of claude_command for a session with a label, e.g. "my-wrapper use {account}"
+    "start_command": "",      # your own whole start line, in place of the three above; see the README for {placeholders}
+    "env_file": "",           # NAME=value lines (or NUL-separated) added to a revived session's environment
+    "carry_env": ["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],   # settings variables a session keeps across a revive
+    "loose_socket": "tardigrade",   # tmux socket name where sessions that were not in tmux come back
+    "loose_prefix": "",       # put before the tmux name of such a session
+    "loose_skip": [],         # patterns: a session outside tmux whose name matches is not recorded ("^$" = no name)
+    "herdr_default_workspace": "",  # Herdr workspace for a session that has a tab label and no workspace
+    "tsv_path": "",           # also write the record as a tab-separated table (eight columns) at this path
+    "tsv_socket": "",         # only sessions on this tmux socket name go in that table; "" = all of them
+    "load_max": 0,            # 0 = off; else wait before each start while the 1-minute load is above this
+    "load_wait_s": 120,       # the longest such wait, per session
+    "lost_keep_h": 12,        # sessions that vanished together stay revivable this long
 }
 
 WAKE_NOTE = (
@@ -78,6 +99,15 @@ WAKE_NOTE = (
 )
 
 TOKEN_KEYS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+# a variable whose name looks like this is never recorded, carried or copied, whatever the settings say
+SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSW|CREDENTIAL|API_?KEY|PRIVATE_?KEY", re.I)
+NAME_OK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+SAFE_VALUE = re.compile(r"[\w.:/@%+,=~ -]{1,200}")
+# set by a Claude session for the programs it starts; CLAUDE_CODE_CHILD_SESSION turns transcript saving off
+CHILD_VARS = ("CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_EFFORT "
+              "CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH CLAUDE_CODE_SESSION_ATTENDED "
+              "CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN")
+COLS = ["session", "session_id", "cwd", "model", "effort", "mode", "tab_label", "workspace_label"]
 TERMINALS = ("gnome-terminal", "konsole", "kitty", "alacritty", "wezterm", "xterm", "tilix", "xfce4-terminal",
              "ptyxis", "kgx", "foot", "ghostty", "terminator", "iTerm", "Terminal", "Warp", "warp", "tabby")
 IDES = ("code", "Code", "cursor", "Cursor", "zed", "idea", "pycharm", "webstorm", "goland", "windsurf")
@@ -119,6 +149,22 @@ def load_cfg():
         CFG["shell"] = sh if sh in ("bash", "zsh") else ("zsh" if MAC else "bash")
     if not CFG["path"]:
         CFG["path"] = ":".join(dirs + ["/usr/sbin", "/sbin"])
+    if "trust_wait_min" in CFG:      # its name in 0.1.6
+        CFG["watch_min"] = CFG["trust_wait_min"]
+
+
+def plain_names(names):
+    """the names from a setting that are safe to read from an environment: plain, and not a secret's"""
+    return [n for n in (names or []) if isinstance(n, str) and NAME_OK.fullmatch(n) and not SECRET_NAME.search(n)]
+
+
+def load_now():
+    if TESTING and os.environ.get("TARDIGRADE_FAKE_LOAD"):
+        return float(os.environ["TARDIGRADE_FAKE_LOAD"])
+    try:
+        return os.getloadavg()[0]
+    except OSError:
+        return 0.0
 
 
 def save_cfg_key(key, value):
@@ -168,13 +214,14 @@ def slug(s):
 
 # ---------- processes ----------
 def procs():
-    """pid -> (parent pid, user id, program name)"""
-    rc, out = run(["ps", "-axo", "pid=,ppid=,uid=,comm="])
+    """pid -> (parent pid, user id, program name). A process that has ended and only waits to be collected
+    (a zombie) is left out: it holds no session."""
+    rc, out = run(["ps", "-axo", "pid=,ppid=,uid=,stat=,comm="])
     res = {}
     for line in out.splitlines():
-        p = line.split(None, 3)
-        if len(p) == 4 and p[0].isdigit():
-            res[int(p[0])] = (int(p[1]), int(p[2]), os.path.basename(p[3].strip()))
+        p = line.split(None, 4)
+        if len(p) == 5 and p[0].isdigit() and not p[3].startswith("Z"):
+            res[int(p[0])] = (int(p[1]), int(p[2]), os.path.basename(p[4].strip()))
     return res
 
 
@@ -194,11 +241,14 @@ def argv_of(pid):
 
 
 def env_facts(pid):
-    """Facts from a process's environment. No value is kept except one folder path. A login token is
-    reduced, in memory, to 8 hex digits of its SHA-256: enough to tell "same login or not", useless for
-    getting the token back."""
-    facts = {"child": False, "token_keys": [], "config_dir": "", "token_print": ""}
+    """Facts from a process's environment. The values kept are one folder path, an account label, and the
+    settings variables named in carry_env; a name that looks like a secret's is never among them. A login
+    token is reduced, in memory, to 8 hex digits of its SHA-256: enough to tell "same login or not",
+    useless for getting the token back."""
+    facts = {"child": False, "token_keys": [], "config_dir": "", "token_print": "", "account": "", "carry": {}}
     tok = []
+    carry = plain_names(CFG.get("carry_env"))
+    acct = (plain_names([CFG.get("account_env")]) or [""])[0]
     if MAC:
         pairs = run(["ps", "eww", "-o", "command=", "-p", str(pid)])[1].split()
     else:
@@ -218,6 +268,10 @@ def env_facts(pid):
             tok.append(kv)
         elif k == "CLAUDE_CONFIG_DIR" and v:
             facts["config_dir"] = v
+        elif k == acct and SAFE_VALUE.fullmatch(v):
+            facts["account"] = v
+        elif k in carry and SAFE_VALUE.fullmatch(v):
+            facts["carry"][k] = v
     facts["token_keys"].sort()
     if tok:
         facts["token_print"] = hashlib.sha256(("tardigrade:" + "\n".join(sorted(tok))).encode()).hexdigest()[:8]
@@ -293,7 +347,8 @@ def tmux_dir():
 
 
 def own_socket():
-    return os.path.join(tmux_dir(), "tardigrade")
+    """where a session that was not in tmux comes back"""
+    return os.path.join(tmux_dir(), os.path.basename(str(CFG.get("loose_socket") or "tardigrade")))
 
 
 def sockets():
@@ -461,6 +516,7 @@ def live(with_launch=True):
             "pid": pid, "session_id": sid, "name": (sj.get("name") or "").strip(),
             "cwd": sj.get("cwd") or HOME, "host": kind, "config_dir": ef["config_dir"],
             "token_keys": ef["token_keys"], "token_print": ef["token_print"], "entrypoint": sj.get("entrypoint", "cli"),
+            "account": ef["account"], "carry_env": ef["carry"],
             "status": sj.get("status", ""), "updated_at": int((sj.get("updatedAt") or 0) / 1000),
             "tmux_socket": "", "tmux_session": "", "attached": 0, "herdr_tab": "", "herdr_workspace": "",
         }
@@ -583,20 +639,26 @@ def record():
         labels = herdr_labels()
     rows, used = [], set()
     skip = set(CFG.get("skip_tmux_sockets") or [])
+    loose_skip = [p for p in (CFG.get("loose_skip") or []) if isinstance(p, str)]
     for r in mine:
         if not r["restorable"]:
             continue
         if r["host"] == "tmux" and os.path.basename(r["tmux_socket"]) in skip:
             continue           # another tool brings these back: one restorer per session
+        if r["host"] != "tmux" and any(re.search(p, r["name"]) for p in loose_skip):
+            continue           # a plain terminal the person told us to leave alone
         o = old_by.get(r["session_id"], {})
         tab, ws = (labels[0].get((r["tmux_socket"], r["tmux_session"])) or labels[1].get(r["pid"])
                    or (o.get("herdr_tab", ""), o.get("herdr_workspace", "")))
         if r["host"] == "herdr" and not tab:
             tab = r["name"]
+        if tab and not ws:
+            ws = CFG.get("herdr_default_workspace") or ""
         if r["host"] == "tmux":
             sock, name = r["tmux_socket"], r["tmux_session"]
-        else:   # not in tmux today: it comes back in Tardigrade's own tmux, so it outlives its window
-            sock, name = own_socket(), slug(r["name"]) or f"claude-{r['session_id'][:8]}"
+        else:   # not in tmux today: it comes back in tmux (loose_socket), so it outlives its window
+            sock = own_socket()
+            name = str(CFG.get("loose_prefix") or "") + (slug(r["name"]) or f"claude-{r['session_id'][:8]}")
             if (sock, name) in used:
                 name = f"{name}-{r['session_id'][:4]}"
         used.add((sock, name))
@@ -605,6 +667,7 @@ def record():
             "effort": r["effort"], "mode": r["mode"], "add_dirs": r["add_dirs"], "host": r["host"],
             "tmux_socket": sock, "tmux_session": name, "herdr_tab": tab, "herdr_workspace": ws,
             "config_dir": r["config_dir"], "token_keys": r["token_keys"], "token_print": r["token_print"],
+            "account": r["account"], "carry_env": r["carry_env"],
             "last_seen": int(time.time()),
         })
     if not rows and old["lanes"]:
@@ -614,9 +677,23 @@ def record():
     live_ids = {r["session_id"] for r in rows}
     down = [d for d in old["down"] if d["session_id"] not in live_ids and now - d.get("down_since", now) < keep]
     known_down = {d["session_id"] for d in down}
-    for r in old["lanes"]:
-        if r["session_id"] not in live_ids and r["session_id"] not in known_down:
-            down.append(dict(r, down_since=now))
+    # Sessions that vanish together did not each end by a person's hand: that is a crash (a tmux server
+    # that died, a terminal program that was closed with everything in it). They stay on the record as
+    # sessions to bring back for lost_keep_h hours. `record --force` says: what runs now is the truth.
+    gone = [r for r in old["lanes"] if r["session_id"] not in live_ids and r["session_id"] not in known_down]
+    fresh = [r for r in gone if not r.get("lost_since")]
+    crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
+    lost = []
+    for r in gone:
+        since = r.get("lost_since") or (now if crash else 0)
+        if since and not force and now - since < float(CFG["lost_keep_h"]) * 3600:
+            lost.append(dict(r, lost_since=since))
+        else:
+            down.append(dict({k: v for k, v in r.items() if k != "lost_since"}, down_since=now))
+    if crash:
+        log(f"record: {len(fresh)} of {len(old['lanes'])} recorded sessions vanished together (a crash?). They stay "
+            f"on the record for {CFG['lost_keep_h']} h: `revive` brings them back; `record --force` lets them go.")
+    rows += lost
     if DRY:
         for r in rows:
             log("record (dry): " + json.dumps(r, sort_keys=True))
@@ -625,11 +702,40 @@ def record():
         shutil.copyfile(TABLE, TABLE + ".prev")
     write_json(TABLE, {"version": 1, "recorded_at": now, "boot": boot_id(), "lanes": rows, "down": down})
     log(f"record: {len(rows)} session(s), {len(down)} down -> {TABLE}")
+    write_tsv(rows)
     return 0
 
 
+def write_tsv(rows):
+    """Optional: the same record as a tab-separated table, for tools that read one. Eight columns."""
+    path = os.path.expanduser(str(CFG.get("tsv_path") or ""))
+    if not path:
+        return
+    only = str(CFG.get("tsv_socket") or "")
+
+    def cell(v):
+        return re.sub(r"[\t\r\n]+", " ", str(v or ""))
+
+    lines = ["# written by Windstorm Tardigrade at each record; do not edit. " + "\t".join(COLS)]
+    for r in rows:
+        if only and os.path.basename(r["tmux_socket"]) != only:
+            continue
+        lines.append("\t".join(cell(x) for x in (
+            r["tmux_session"], r["session_id"], r["cwd"], r.get("model"), r.get("effort"), r.get("mode"),
+            r.get("herdr_tab"), r.get("herdr_workspace"))))
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path + ".new", "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(path + ".new", path)
+    except OSError as e:
+        log(f"record: could not write the table {path}: {e.strerror}")
+
+
 # ---------- revive ----------
-def launch_cmd(r, note):
+def flags_of(r):
+    """The session's own flags, exactly. A permission mode is never made looser: what was recorded is
+    what is passed, word for word."""
     flags = []
     if r["mode"] == "bypass":
         flags.append("--dangerously-skip-permissions")
@@ -641,19 +747,116 @@ def launch_cmd(r, note):
         flags += ["--effort", r["effort"]]
     for d in r.get("add_dirs") or []:
         flags += ["--add-dir", d]
+    return flags
+
+
+def fill(template, r):
+    """Put a session's facts into a start line from the settings. Every value is quoted for the shell."""
+    vals = {"session_id": r["session_id"], "cwd": r.get("cwd", ""), "name": r.get("name", ""),
+            "model": r.get("model", ""), "effort": r.get("effort", ""), "mode": r.get("mode", ""),
+            "account": r.get("account", ""), "tmux_session": r.get("tmux_session", "")}
+
+    def sub(m):
+        k = m.group(1)
+        if k == "flags":
+            return " ".join(shlex.quote(x) for x in flags_of(r))
+        return shlex.quote(str(vals[k])) if k in vals else m.group(0)
+
+    return re.sub(r"\{(\w+)\}", sub, str(template))
+
+
+def claude_line(r):
+    """the one command that starts this session again"""
+    if CFG.get("start_command"):
+        return fill(CFG["start_command"], r)
+    if r.get("account") and CFG.get("account_command"):
+        head = fill(CFG["account_command"], r)       # a session pinned to an account starts through its wrapper
+    else:
+        head = str(CFG.get("claude_command") or "claude")
+    return " ".join([head] + [shlex.quote(x) for x in flags_of(r)] + ["--resume", r["session_id"]])
+
+
+def env_file_pairs():
+    """(pairs to set, names left out) from the env_file setting. A name that looks like a secret's is left out."""
+    path = os.path.expanduser(str(CFG.get("env_file") or ""))
+    if not path:
+        return [], []
+    try:
+        with open(path, "rb") as f:
+            raw = f.read().decode(errors="replace")
+    except OSError:
+        return [], ["(the file could not be read)"]
+    nul = "\0" in raw
+    keep, left = [], []
+    for item in (raw.split("\0") if nul else raw.splitlines()):
+        if not nul:
+            item = item.strip()
+            if item.startswith("export "):
+                item = item[7:].lstrip()
+        k, eq, v = item.partition("=")
+        if not eq or item.startswith("#") or not NAME_OK.fullmatch(k):
+            continue
+        if not nul and len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+            v = v[1:-1]
+        if SECRET_NAME.search(k):
+            left.append(k)
+        else:
+            keep.append((k, v))
+    return keep, left
+
+
+SAID = {}
+
+
+def launch_dir():
+    return os.path.join(STATE, "launch")
+
+
+def write_launch_file(r):
+    """The start file for one session, readable by this user only. The pane's command line is just "read
+    this file", so no setting, no flag and no note sits on a command line, where a broad kill command that
+    matches by text could match it."""
+    os.makedirs(launch_dir(), mode=0o700, exist_ok=True)
+    path = os.path.join(launch_dir(), r["session_id"] + ".sh")
     sh = CFG["shell"]
+    lines = ["# Windstorm Tardigrade start file. Written again at each revive; safe to delete."]
+    pairs, left = env_file_pairs()
+    if left and not SAID.get("env_file"):
+        SAID["env_file"] = True      # once per run, names only
+        log(f"  env_file: left out {', '.join(sorted(set(left)))} (a name that looks like a secret's is never copied)")
+    lines += [f"export {k}={shlex.quote(v)}" for k, v in pairs]
     # A tmux server first started from inside a Claude session carries that session's environment.
     # CLAUDE_CODE_CHILD_SESSION turns transcript saving off, so none of it may reach a revived session.
-    pre = ("unset CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUDE_PID CLAUDE_EFFORT "
-           "CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH CLAUDE_CODE_SESSION_ATTENDED "
-           "CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN; ")
+    lines.append("unset " + CHILD_VARS)
     if r.get("config_dir"):
-        pre += f"export CLAUDE_CONFIG_DIR={shlex.quote(r['config_dir'])}; "
-    parts = ["claude"] + [shlex.quote(x) for x in flags] + ["--resume", r["session_id"]]
-    if note:
-        parts.append(shlex.quote(note))
-    inner = f"{pre}{' '.join(parts)}; echo; echo \"[session ended; shell kept]\"; exec {sh} -l"
-    return f"{sh} -{'l' if sh == 'zsh' else ''}ic {shlex.quote(inner)}"
+        lines.append(f"export CLAUDE_CONFIG_DIR={shlex.quote(r['config_dir'])}")
+    ok = plain_names(CFG.get("carry_env"))
+    for k, v in sorted((r.get("carry_env") or {}).items()):
+        if k in ok and SAFE_VALUE.fullmatch(str(v)):
+            lines.append(f"export {k}={shlex.quote(str(v))}")
+    lines.append(f'{claude_line(r)}; echo; echo "[session ended; shell kept]"; exec {sh} -l')
+    fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(path + ".new", path)
+    return path
+
+
+def launch_cmd(r):
+    sh = CFG["shell"]
+    return f"{sh} -{'l' if sh == 'zsh' else ''}ic {shlex.quote('. ' + shlex.quote(write_launch_file(r)))}"
+
+
+def pace():
+    """Optional (load_max): on a loaded machine, wait a little before the next start."""
+    mx = float(CFG.get("load_max") or 0)
+    if mx <= 0 or load_now() <= mx:
+        return
+    end = time.time() + float(CFG["load_wait_s"])
+    log(f"  load is {load_now():.0f}, above load_max {mx:.0f}: waiting up to {int(float(CFG['load_wait_s']))} s "
+        "before the next start")
+    while load_now() > mx and time.time() < end:
+        time.sleep(1 if TESTING else 5)
 
 
 def clean_env():
@@ -676,9 +879,9 @@ def same_login(r, pid):
     return want == "unknown" or env_facts(pid)["token_print"] == want
 
 
-def start_lane(r, note, created):
+def start_lane(r, created):
     sock, name = r["tmux_socket"], r["tmux_session"]
-    cmd = launch_cmd(r, note)
+    cmd = launch_cmd(r)
     cwd = r["cwd"] if os.path.isdir(r["cwd"]) else HOME
     if (sock, name) in created and has_session(sock, name):
         # a retry: the session this run made holds a shell because claude ended
@@ -727,28 +930,80 @@ def answer_trust(r):
     return True
 
 
-def loaded(r):
-    pid = came_up(r)
-    return bool(pid and session_json(pid, r.get("config_dir", "")).get("sessionId"))
+QUESTION = re.compile(r"trust this folder|❯\s*\d\.\s")
 
 
-def trust_sweep(rows, minutes):
-    """Keep looking at the sessions this run started until each has loaded or the time is up. A slow
-    machine can take minutes to draw the question, so one look right after the start is not enough."""
-    answered, waiting, end = [], list(rows), time.time() + minutes * 60
-    while waiting:
+def type_note(r, note):
+    """The wake-up note is typed, never put on a command line. Called only for a session this run started,
+    whose login was checked, once Claude Code reports it idle and its screen shows no question."""
+    sock, target = r["tmux_socket"], f"={r['tmux_session']}:"
+    tmux(sock, "send-keys", "-t", target, "-l", note)
+    time.sleep(0.5)
+    tmux(sock, "send-keys", "-t", target, "Enter")
+
+
+def watch(started, note_for, minutes, tab_rows):
+    """Keep looking at the sessions this run started until each has loaded (and has its note, where one is
+    due) or the time is up. A slow machine can take minutes to load a session or to draw a question, so
+    one look right after the start is not enough. Then count: LOADED means Claude Code has written the
+    session's own file, not merely that a process is up."""
+    answered, noted, noted_ids, waiting, end = [], [], set(), list(started), time.time() + minutes * 60
+    tabs_due = bool(CFG["herdr"] and CFG["herdr_tabs"] and any(r.get("herdr_tab") for r in tab_rows))
+    said = False
+    while True:
+        if tabs_due and herdr_up():
+            attach_tabs(tab_rows, wait=False)
+            tabs_due = False
         still = []
         for r in waiting:
-            if not came_up(r) or loaded(r):
+            pid = came_up(r)
+            if not pid:
+                continue                      # it went down again: counted below
+            sj = session_json(pid, r.get("config_dir", ""))
+            if not sj.get("sessionId"):
+                if CFG["answer_trust"] and answer_trust(r):
+                    answered.append(display(r))
+                still.append(r)
                 continue
-            if answer_trust(r):
-                answered.append(display(r))
-            still.append(r)
+            if r["session_id"] in note_for and r["session_id"] not in noted_ids:
+                screen = tmux(r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
+                if sj.get("status") == "idle" and not QUESTION.search(screen):
+                    type_note(r, note_for[r["session_id"]])
+                    noted.append(display(r))
+                    noted_ids.add(r["session_id"])
+                    log(f"  {display(r)}: loaded and idle; wake-up note typed")
+                else:
+                    still.append(r)
         waiting = still
         if not waiting or time.time() >= end:
             break
+        if not said:
+            log(f"watching {len(waiting)} session(s) until loaded, for up to {minutes:g} min")
+            said = True
         time.sleep(1 if TESTING else 10)
-    return answered, [display(r) for r in waiting]
+    res = {"trust_answered": answered, "noted": noted, "loaded": [], "not_loaded": [], "down_again": [],
+           "note_not_typed": [], "tabs_due": tabs_due}
+    for r in started:
+        pid = came_up(r)
+        if not pid:
+            res["down_again"].append(display(r))
+        elif not session_json(pid, r.get("config_dir", "")).get("sessionId"):
+            res["not_loaded"].append(display(r))
+        else:
+            res["loaded"].append(display(r))
+            if r["session_id"] in note_for and r["session_id"] not in noted_ids:
+                res["note_not_typed"].append(display(r))
+    log(f"count: started={len(started)} LOADED={len(res['loaded'])} UP-NOT-LOADED={len(res['not_loaded'])} "
+        f"DOWN={len(res['down_again'])}")
+    for nm in res["not_loaded"]:
+        log(f"  UP-NOT-LOADED {nm}: Claude Code runs but has not loaded the session (a question on its screen?)")
+    for nm in res["down_again"]:
+        log(f"  DOWN {nm}: it started and ended again; its tmux session holds a shell")
+    for nm in res["note_not_typed"]:
+        log(f"  {nm}: loaded, but not idle (a question on its screen?); the wake-up note was not typed")
+    if answered:
+        log(f"trust: answered for {len(answered)} session(s)")
+    return res
 
 
 def revive():
@@ -791,29 +1046,36 @@ def _revive(boot):
     held = running_sids()
     note = WAKE_NOTE.format(when=time.strftime("%Y-%m-%d %H:%M %Z")) if CFG["wake"] == "note" else ""
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": []}
-    # More than one login on this machine (some sessions with a token, some without, or two tokens) means
-    # sessions are pinned to accounts. A pinned session comes back silent, and its login is checked before
-    # anything can run on the wrong account.
-    mixed = len({login_print(x) for x in read_table()["lanes"]}) > 1
-    quiet = set()
+    # Nothing is typed into a session before its login is checked: a session that comes back on another
+    # login than it had (possible where sessions on one machine are pinned to accounts) is listed as
+    # "needs you" and gets no note, so nothing runs on the wrong account.
+    as_if_down = DRY and "--all" in ARGS      # show every start line, as if nothing ran: for checking before a reboot
     for r in rows:
         nm = display(r)
-        if r["session_id"] in held:
+        if r["session_id"] in held and not as_if_down:
             log(f"skip  {nm}: already running on this machine")
             report["skipped"].append(nm)
             continue
-        if has_session(r["tmux_socket"], r["tmux_session"]):
+        if has_session(r["tmux_socket"], r["tmux_session"]) and not as_if_down:
             log(f"skip  {nm}: a tmux session named {r['tmux_session']} already exists")
             report["skipped"].append(nm)
             continue
-        if mixed and login_print(r):
-            quiet.add(r["session_id"])
         log(f"start {nm} ({r['session_id'][:8]}, {r['mode']}, {r.get('model') or 'default model'}) in {r['cwd']}"
-            + ("  [pinned login: comes back silent, then its login is checked]" if r["session_id"] in quiet else ""))
+            + (f"  [account {r['account']}]" if r.get("account") else "")
+            + ("  [pinned login: checked before anything is typed]" if login_print(r) else ""))
+        if DRY:
+            log(f"      tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}   {claude_line(r)}")
         todo.append(r)
     if DRY:
         return 0
-    created, came = set(), []
+    try:        # start files of sessions that are no longer on the record
+        on_record = {r["session_id"] + ".sh" for r in read_table()["lanes"]}
+        for f in os.listdir(launch_dir()):
+            if f not in on_record:
+                os.remove(os.path.join(launch_dir(), f))
+    except OSError:
+        pass
+    created, came, note_for = set(), [], {}
     pending = {r["session_id"]: [r, 0] for r in todo}
     deadline = time.time() + float(CFG["retry_min"]) * 60
     while pending:
@@ -823,6 +1085,8 @@ def _revive(boot):
                 log(f"  {nm}: up (came up late)")
                 report["started"].append(nm)
                 came.append(r)
+                if note and same_login(r, came_up(r) or 0):
+                    note_for[sid] = note
                 del pending[sid]
                 continue
             if sid in running_sids():
@@ -830,23 +1094,29 @@ def _revive(boot):
                     log(f"  {nm}: up (came up late)")
                     report["started"].append(nm)
                     came.append(r)
+                    if note and same_login(r, came_up(r) or 0):
+                        note_for[sid] = note
                 else:
                     log(f"  {nm}: something else started it meanwhile; left alone")
                     report["skipped"].append(nm)
                 del pending[sid]
                 continue
-            if start_lane(r, "" if sid in quiet else note, created):
+            pace()
+            if start_lane(r, created):
                 time.sleep(float(CFG["settle_s"]))
                 pid = came_up(r)
                 if pid:
                     came.append(r)
+                    child = ("CLAUDE_CODE_CHILD_SESSION PRESENT (BAD: this session does not save its transcript)"
+                             if env_facts(pid)["child"] else "child marker absent")
                     if same_login(r, pid):
-                        log(f"  {nm}: up" + (" (silent; same login as before)" if sid in quiet else ""))
+                        log(f"  {nm}: up ({child}" + ("; same login as before)" if login_print(r) else ")"))
                         report["started"].append(nm)
+                        if note:
+                            note_for[sid] = note
                     else:
                         log(f"needs you  {nm}: it came back on a different login than it had before. "
-                            + ("It is idle and nothing ran. " if sid in quiet else "")
-                            + "Close it and start it your usual way.")
+                            "It is idle and nothing was typed. Close it and start it your usual way.")
                         report["needs_you"].append(nm)
                     del pending[sid]
                     time.sleep(float(CFG["stagger_s"]))
@@ -867,15 +1137,16 @@ def _revive(boot):
             f.write(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
     log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
         f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
-    if CFG["answer_trust"] and came:
-        wait = float(CFG["trust_wait_min"]) if boot else min(float(CFG["trust_wait_min"]), 3)
-        report["trust_answered"], report["not_loaded"] = trust_sweep(came, wait)
+    tabs_due = True
+    if came:
+        wait = float(CFG["watch_min"]) if boot else min(float(CFG["watch_min"]), 3)
+        res = watch(came, note_for, wait, rows)
+        tabs_due = res.pop("tabs_due")
+        report.update(res)
         write_json(os.path.join(STATE, "last-revive.json"), report)
-        if report["trust_answered"] or report["not_loaded"]:
-            log(f"trust: answered for {len(report['trust_answered'])} session(s); "
-                f"{len(report['not_loaded'])} still not loaded: {', '.join(report['not_loaded']) or '-'}")
     notify(f"{len(report['started'])} session(s) brought back, {len(report['failed']) + len(report['needs_you'])} need you")
-    attach_tabs(rows)
+    if tabs_due:
+        attach_tabs(rows)
     return 0
 
 
@@ -890,12 +1161,14 @@ def notify(text):
         pass
 
 
-def attach_tabs(rows):
-    """Herdr only: put each revived session back in the tab that carries its label."""
+def attach_tabs(rows, wait=True):
+    """Herdr only: put each revived session back in the tab that carries its label. The one thing typed
+    into a Herdr pane is the `tmux attach` for that session, and only when the pane holds an idle shell
+    with nothing typed after its prompt."""
     want = [r for r in rows if r.get("herdr_tab")]
     if not want or not CFG["herdr"] or not CFG["herdr_tabs"]:
         return
-    end = time.time() + float(CFG["attach_wait_min"]) * 60
+    end = time.time() + (float(CFG["attach_wait_min"]) * 60 if wait else 0)
     while not herdr_up():
         if time.time() > end:
             log("herdr: its server never came up; tabs left as they are")
@@ -958,6 +1231,7 @@ def census_data():
         "hidden": len(hidden), "down": len(down), "other_users": others, "helpers": helpers,
         "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
         "trust": len([r for r in mine if r["status"] == "trust?"]),
+        "lost": len([r for r in down if r.get("lost_since")]), "comes_back": comes_back(),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "sessions": {"hidden": hidden, "with_window": shown, "down": down},
@@ -987,7 +1261,7 @@ def census():
     if d["waiting"]:
         print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
-    print(f"Comes back after a reboot: {'yes, by itself' if d['auto_revive'] else 'NO (run setup)'}   Last record: {rec}")
+    print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
@@ -1009,6 +1283,9 @@ def census():
     table("HIDDEN: running, but no window shows them", d["sessions"]["hidden"])
     table("WITH A WINDOW", d["sessions"]["with_window"])
     table("DOWN: on the record, not running now", d["sessions"]["down"], down=True)
+    if d["lost"]:
+        print(f"\n{d['lost']} of the sessions under DOWN vanished together, which looks like a crash. They are still "
+              f"on the record: `tardigrade revive` brings them back. If you ended them yourself: record --force")
     if d["other_users"]:
         print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; not read.")
     if d["helpers"]:
@@ -1187,22 +1464,55 @@ def setup():
     return 0
 
 
+def mac_story(filevault, auto_user, me):
+    """(a short phrase for the census, the full lines for setup) from what the Mac says about itself"""
+    agent = ("On a Mac the boot agent runs only when YOU are logged in at its screen. A login over ssh does "
+             "not start it, and neither does another user's login.")
+    if "FileVault is On" in filevault:
+        return ("only after a person unlocks this Mac (FileVault) and you are logged in at its screen",
+                ["FileVault is on: after a restart this Mac waits at its unlock screen, and NOTHING comes back "
+                 "until a person types the password there.", agent])
+    if auto_user and auto_user == me:
+        return ("yes, by itself (this Mac logs you in)",
+                ["This Mac logs you in by itself after a restart, so sessions come back with nobody there.", agent])
+    if auto_user:
+        return ("only after YOU log in at its screen (this Mac logs in as another user by itself)",
+                ["This Mac logs in by itself after a restart, but as another user, not as you. Your sessions "
+                 "come back only when you log in at its screen.", agent])
+    return ("after you log in at its screen",
+            ["After a restart, sessions come back when you log in at this Mac's screen.", agent])
+
+
+def linger_on():
+    if TESTING and os.environ.get("TARDIGRADE_FAKE_LINGER"):
+        return os.environ["TARDIGRADE_FAKE_LINGER"] == "yes"
+    user = os.environ.get("USER") or os.path.basename(HOME)
+    return run(["loginctl", "show-user", user, "-p", "Linger", "--value"], timeout=10)[1].strip() == "yes"
+
+
+def mac_facts():
+    fv = run(["fdesetup", "status"], timeout=10)[1]
+    auto = run(["defaults", "read", "/Library/Preferences/com.apple.loginwindow", "autoLoginUser"], timeout=10)
+    return fv, (auto[1].strip() if auto[0] == 0 else ""), os.environ.get("USER") or os.path.basename(HOME)
+
+
+def comes_back():
+    """the census's short answer to: after a reboot, do the sessions come back?"""
+    if not CFG["auto_revive"]:
+        return "NO (run setup)"
+    if MAC:
+        return mac_story(*mac_facts())[0]
+    return "yes, by itself" if linger_on() else "yes, after you log in (lingering is off)"
+
+
 def who_logs_in():
     """Say plainly what must happen after a restart before sessions can come back."""
     out = []
     if MAC:
-        fv = run(["fdesetup", "status"], timeout=10)[1]
-        auto = run(["defaults", "read", "/Library/Preferences/com.apple.loginwindow", "autoLoginUser"], timeout=10)
-        if "FileVault is On" in fv:
-            out.append("FileVault is on: after a restart this Mac waits at its unlock screen, and NOTHING comes back "
-                       "until a person types the password there.")
-        elif auto[0] == 0 and auto[1].strip():
-            out.append("This Mac logs in by itself after a restart, so sessions come back with nobody there.")
-        else:
-            out.append("After a restart, sessions come back when someone logs in to this Mac.")
+        out += mac_story(*mac_facts())[1]
     else:
         user = os.environ.get("USER") or os.path.basename(HOME)
-        linger = run(["loginctl", "show-user", user, "-p", "Linger", "--value"], timeout=10)[1].strip()
+        linger = "yes" if linger_on() else "no"
         if linger == "yes":
             out.append("Lingering is on: sessions come back about a minute after boot, with nobody logged in.")
         else:

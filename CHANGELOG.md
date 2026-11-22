@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.7 (2026-11-21)
+Built from DNA Strand Master Plan 1.7. The fleet this skill came from is moving to it from its own restore kit;
+this release is that kit's author's list of everything the kit does.
+
+- **Nothing but the start command is on a command line** (G2.19). A command line is visible to every `pkill -f`.
+  0.1.6 passed the wake-up message as an argument. Now each session's shell is started with "read this file", and
+  the file, readable by you only, holds the settings and the start line.
+- **The wake-up message is typed** (G2.2, G2.20), once Claude Code reports the session loaded and idle and its
+  screen shows no question. A session that comes back to a question gets no message. A login is checked before
+  anything is typed (G2.11).
+- **A count after the starts** (G2.24): LOADED, UP-NOT-LOADED and DOWN, the last two by name. Loaded means Claude
+  Code has written the session's own file, not that a process is up.
+- **Sessions that vanish together stay on the record** (G1.11): more than half at once, and at least three, is a
+  crash. They stay revivable for 12 hours.
+- **A permission mode comes back word for word, never looser** (G2.14). This was already so; now a test says it.
+- **For machines with their own ways**: `account_env` + `account_command` (a session pinned to an account starts
+  through its wrapper, G2.15), `start_command` (G2.16), `env_file` (G2.17), `carry_env` (G2.18), `loose_socket`,
+  `loose_prefix`, `loose_skip` (G1.9), `tsv_path` (G1.10), `load_max` (G2.23).
+- **`revive --dry-run --all`** (G2.21): the exact start line of every recorded session, before a planned reboot.
+- **Mac: who has to log in** (G5.3). Setup and the census now say that the boot agent runs only when you are
+  logged in at the Mac's screen, and name the case of a Mac that logs in by itself as another user.
+- **Herdr tab re-attach has a test** (G4.2), with a stand-in for the `herdr` command.
+- `trust_wait_min` is now `watch_min`; the old name still works.
+
 ## 0.1.6 (2026-11-21)
 Built from DNA Strand Master Plan 1.6.
 
