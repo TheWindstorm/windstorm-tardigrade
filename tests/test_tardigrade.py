@@ -459,7 +459,7 @@ class Record(Base):
         os.makedirs(cd, exist_ok=True)
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() + 5)) + ".000Z"
         with open(os.path.join(cd, old_row["session_id"] + ".jsonl"), "w") as f:
-            f.write(json.dumps({"type": "user", "timestamp": stamp, "message": {"content":
+            f.write(json.dumps({"type": "user", "timestamp": stamp, "entrypoint": "sdk-cli", "message": {"content":
                                 "<command-name>/exit</command-name>\n<command-message>exit</command-message>"}}) + "\n")
         n = len(self.launches())
         rc, out = self.tg("revive")
@@ -468,6 +468,13 @@ class Record(Base):
         self.assertEqual([x["sid"] for x in self.launches()[n:]], [a], out)
         self.assertIn("skip  Agent One: its folder is in skip_cwd_prefix; left alone, never started", out)
         self.assertNotIn("ended it with /exit", out)
+        # nor does a record that finds nothing live read it (its conversation also says print-mode run: a record
+        # that read it would move it to the down list)
+        self.reboot()
+        rc, out = self.tg("record")
+        self.assertIn("record: 0 live sessions; kept the previous record (2 sessions)", out)
+        self.assertNotIn("print-mode run", out)
+        self.assertEqual(sorted(r["name"] for r in self.table()["lanes"]), ["Agent One", "Alpha Lane"])
 
     def test_G1_9_a_session_outside_tmux_is_recorded_for_the_socket_and_prefix_in_the_settings(self):
         self.cfg({"loose_socket": "work", "loose_prefix": "pane-", "loose_skip": ["^$", "^scratch"]})

@@ -1185,7 +1185,8 @@ def record():
                 log(f"record: {display(r)}: {f} is carried: {what}")
     if not rows and old["lanes"]:
         # A row for a print-mode run (one 0.1.8 wrote down) is not kept as a session even here (G2.47, T43).
-        pr = [r for r in old["lanes"] if print_run(r)]
+        # A row in a folder left alone is not read even for that (G1.15: seen with strace on a real machine).
+        pr = [r for r in old["lanes"] if not in_skip_folder(r.get("cwd", "")) and print_run(r)]
         log(f"record: 0 live sessions; kept the previous record ({len(old['lanes']) - len(pr)} sessions)"
             + (f"; {len(pr)} print-mode run(s) moved to the down list: {', '.join(display(r) for r in pr)}" if pr else ""))
         if pr and not DRY:
