@@ -456,10 +456,30 @@ class Revive(Base):
     def test_G2_9_two_revives_at_once_do_not_both_run(self):
         self.recorded_then_rebooted()
         os.makedirs(self.state("lock"))
+        with open(self.state(os.path.join("lock", "owner")), "w") as f:
+            f.write(f"boot-a {os.getpid()}\n")          # taken in this boot, by a process that is alive
         n = len(self.launches())
         rc, out = self.tg("revive")
         self.assertIn("another revive is running", out)
         self.assertEqual(len(self.launches()), n)
+
+    def test_G2_31_a_lock_left_by_a_revive_that_a_reboot_cut_off_does_not_block_the_next_one(self):
+        self.recorded_then_rebooted()
+        os.makedirs(self.state("lock"))
+        with open(self.state(os.path.join("lock", "owner")), "w") as f:
+            f.write(f"boot-before {os.getpid()}\n")     # the lock is from the boot before this one
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertIn("taking over", out)
+        self.wait_launches(n + 1)
+        self.assertEqual(jload(self.state("last-revive.json"))["started"], ["Alpha Lane"])
+        self.assertFalse(os.path.exists(self.state("lock")))
+        self.reboot()
+        os.makedirs(self.state("lock"))
+        with open(self.state(os.path.join("lock", "owner")), "w") as f:
+            f.write("boot-a 999999999\n")                # same boot, but the process that took it is gone
+        rc, out = self.tg("revive")
+        self.assertIn("taking over", out)
 
     def test_G2_10_only_brings_back_just_that_one(self):
         self.start_lane("alpha", "Alpha Lane")

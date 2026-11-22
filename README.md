@@ -216,7 +216,7 @@ Proven (on the version named in each line; none of the reboots below was on 0.1.
   brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
-- 56 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+- 57 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
   a second copy, once per boot, a clean environment, the typed message, the start file, the census, and the rules
   under Safety.
 - On a shared Linux machine with 98 sessions, 0.1.7's `revive --dry-run --all` was compared line by line with the

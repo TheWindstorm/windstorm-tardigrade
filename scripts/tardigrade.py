@@ -1104,18 +1104,30 @@ def revive():
             log("revive --boot: this boot's revive already ran; nothing done")
             return 0
     lock = os.path.join(STATE, "lock")
+    owner = os.path.join(lock, "owner")
     try:
         os.mkdir(lock)
     except FileExistsError:
-        if time.time() - os.path.getmtime(lock) < 7200:
+        # A revive that was cut off by a reboot or a power cut leaves its lock behind. The lock says which
+        # boot and which process took it: a lock from another boot, or from a process that is gone, is stale.
+        try:
+            with open(owner) as f:
+                o_boot, o_pid = f.read().split()
+            stale = o_boot != boot_id() or not alive(int(o_pid))
+        except (OSError, ValueError):
+            stale = time.time() - os.path.getmtime(lock) >= 7200     # a lock with no owner written: by age
+        if not stale:
             log("revive: another revive is running (lock); nothing done")
             return 0
-        os.rmdir(lock)
+        log("revive: a lock was left by a revive that did not finish (a reboot or a power cut during it); taking over")
+        shutil.rmtree(lock, ignore_errors=True)
         os.mkdir(lock)
+    with open(owner, "w") as f:
+        f.write(f"{boot_id()} {os.getpid()}\n")
     try:
         return _revive(boot)
     finally:
-        os.rmdir(lock)
+        shutil.rmtree(lock, ignore_errors=True)
 
 
 def _revive(boot):

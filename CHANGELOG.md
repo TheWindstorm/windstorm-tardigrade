@@ -42,6 +42,9 @@ Found by the first real reboot on this version (a Linux laptop, seven sessions):
 - **Sessions that were up waited while another start was retried** (G2.29). Two sessions could not be started, and
   for the 25 minutes of retries nobody looked at the five that were up: no trust answer, no note, no Herdr tab.
   Now the sessions that are up are looked after in every pass.
+- **A second restart during a revive no longer blocks the next one** (G2.31). The lock that keeps two revives
+  apart outlived a reboot, and for two hours the next boot would have brought nothing back. The lock now says
+  which boot and process took it. Found by reading the code before the second reboot, not by losing sessions.
 - **A session nobody ever wrote in cannot be resumed** (G2.30). Claude Code keeps no conversation for it and says
   "No conversation found". Such a session now comes back as a new one with the same name, folder and flags.
 
