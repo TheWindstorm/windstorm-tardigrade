@@ -47,6 +47,7 @@ update the plugin.
 |---|---|
 | `tardigrade setup` | Switches it on. From then on, sessions come back after a restart by themselves. |
 | `tardigrade census` | Lists every session: running with a window, running with **no window open**, and down. |
+| `tardigrade report` | The last restore's timeline (boot, first and last start, the count, the tabs) and what still needs you. |
 | `tardigrade open` | Opens a terminal window for each hidden session. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
@@ -158,6 +159,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `stagger_s` | `3` | Seconds between two session starts. |
 | `starts_at_once` | `4` | At most this many sessions started and not yet seen up. The wait after each start overlaps with the next starts; the decision to start is still made one session at a time. Lower it on a small machine. |
 | `boot_window_min` | `40` | The boot service acts only on a machine up for less than this. |
+| `boot_wait_s` | `45` | Seconds the boot service waits before its run. Run setup again after changing it. |
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
 | `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |

@@ -9,6 +9,7 @@
   trust on|off        opt in (or out): after a restart, answer Claude Code's "trust this folder?"
                       for a session's own folder. Off unless you switch it on.
   census [--json]     what is running, what runs with no window open, what is down
+  report              the last restore's timeline, and what still needs a person
   open                open a terminal window for each hidden session
   setup / uninstall   install or remove the boot service and the record timer
   --dry-run           with record, revive, open or setup: say what would happen, change nothing
@@ -63,6 +64,7 @@ CFG = {
     "path": None,             # PATH for revived sessions; default: a standard one plus ~/.local/bin
     "tmux_tmpdir": None,      # set this if your shell sets TMUX_TMPDIR
     "boot_window_min": 40,    # "just booted" means: up for less than this
+    "boot_wait_s": 45,        # the boot service waits this long before its run (written into the unit by setup)
     "stagger_s": 3,           # pause between two session starts
     "settle_s": 8,            # wait this long before checking that a start worked
     "starts_at_once": 4,      # at most this many sessions started and not yet seen up; the waits overlap
@@ -345,6 +347,25 @@ def uptime_s():
 
 def marker():
     return os.path.join(STATE, f"revived-{boot_id()}")
+
+
+def user_services_up_s():
+    """Seconds after boot at which this user's service manager started (Linux, systemd), or None. A boot
+    run cannot begin before it, and on some machines the system's own start holds it back for minutes."""
+    if TESTING and os.environ.get("TARDIGRADE_FAKE_USER_UP_S"):
+        return float(os.environ["TARDIGRADE_FAKE_USER_UP_S"])
+    if MAC:
+        return None
+    try:
+        ppid = os.getppid()
+        with open(f"/proc/{ppid}/comm") as f:
+            if f.read().strip() != "systemd":
+                return None
+        with open(f"/proc/{ppid}/stat") as f:
+            ticks = int(f.read().rsplit(")", 1)[1].split()[19])
+        return ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 def in_boot_window():
@@ -1414,6 +1435,11 @@ def _revive(boot):
                     f"{'running' if r['session_id'] in held else 'not running'}  {r['cwd']}")
             return 1
     log(f"=== revive v{VERSION} (boot={boot}, dry-run={DRY}) uptime={int(uptime_s())} s, {len(rows)} to look at")
+    up_s = user_services_up_s() if boot else None
+    if boot:
+        log(f"boot run began {int(uptime_s())} s after boot: "
+            + (f"this user's services came up {int(up_s)} s after boot, then " if up_s is not None else "")
+            + f"this service's own wait of {int(float(CFG['boot_wait_s']))} s (boot_wait_s)")
     ids = [r["session_id"] for r in rows]
     twice = sorted({i for i in ids if ids.count(i) > 1})
     for i in twice:
@@ -1467,7 +1493,8 @@ def _revive(boot):
     created, came, note_for = set(), [], {}
     pending = {r["session_id"]: [r, 0] for r in todo}
     prog = {"pid": os.getpid(), "boot": boot_id(), "began": int(time.time()), "uptime_at_start": int(uptime_s()),
-            "total": len(todo), "back": 0, "done": False,
+            "total": len(todo), "back": 0, "done": False, "boot_run": boot, "user_up_s": up_s,
+            "boot_wait_s": int(float(CFG["boot_wait_s"])),
             "sessions": {r["session_id"]: {"name": display(r), "state": "waiting"} for r in todo}}
     write_progress(prog)
     show_waiting(todo, created)
@@ -1581,6 +1608,8 @@ def _revive(boot):
                 pace()                 # load_max is read again before each start
                 if start_lane(r, created):
                     inflight[sid] = (r, time.time())
+                    report.setdefault("first_start", int(time.time()))
+                    report["last_start"] = int(time.time())
                     log(f"  {nm}: started ({len(inflight)} of at most {at_once} not yet seen up)")
                 else:
                     pending[sid][1] += 1
@@ -1593,7 +1622,9 @@ def _revive(boot):
             for sid, (r, n) in pending.items():
                 log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session holds a shell")
                 report["failed"].append(display(r))
-            report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows))
+            report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows), began=prog["began"],
+                          uptime_at_start=prog["uptime_at_start"], boot_run=boot, user_up_s=up_s,
+                          boot_wait_s=prog["boot_wait_s"])
             write_json(os.path.join(STATE, "last-revive.json"), report)
             if boot:
                 with open(marker(), "w") as f:
@@ -1612,12 +1643,15 @@ def _revive(boot):
     end_due(all_now=True)
     if came:
         report.update(w.count(came))
+        report["counted_at"] = int(time.time())
         write_json(os.path.join(STATE, "last-revive.json"), report)
     prog.update(done=True, ended=int(time.time()))
     write_progress(prog)
     notify(f"Restore done: {len(report['started'])} session(s) brought back, "
            f"{len(report['failed']) + len(report['needs_you'])} need you")
     w.tabs(last=True)
+    report["tabs"] = TAB_LOG
+    write_json(os.path.join(STATE, "last-revive.json"), report)
     return 0
 
 
@@ -1646,6 +1680,7 @@ def q_target(name):
     return "'=" + name.replace("'", "'\\''") + "'"
 
 
+TAB_LOG = {"attached": [], "not": []}     # what this run did about each tab, for `report` (G3.8)
 MADE = {}      # workspace label -> what this run made again: {"ws", "tab", "pane", "used"}
 
 
@@ -1731,6 +1766,7 @@ def attach_tabs(rows, wait=True):
             if not pane:
                 log(f"herdr {display(r)}: no tab '{r['herdr_tab']}', and its workspace '{r.get('herdr_workspace')}' "
                     "is gone and could not be made again; it runs in tmux with no tab")
+                TAB_LOG["not"].append(f"{display(r)}: its workspace is gone and could not be made again")
                 continue
             time.sleep(0 if TESTING else 2)
             herdr("pane", "run", pane, att)
@@ -1744,10 +1780,13 @@ def attach_tabs(rows, wait=True):
         fg = pi.get("foreground_processes") or []
         done.add(r["session_id"])           # from here on, whatever happens, the tab is done for this run
         if any(attach_of(p.get("argv")) == (sock, s) for p in fg):
+            TAB_LOG["attached"].append(f"{display(r)}: already there")
             continue
         ok, why = idle_shell(pid)
         if not ok:
-            log(f"herdr {display(r)}: its tab {why.replace('it is ', 'is ').replace('it has ', 'has ')}; left alone")
+            why = why.replace('it is ', 'is ').replace('it has ', 'has ')
+            log(f"herdr {display(r)}: its tab {why}; left alone")
+            TAB_LOG["not"].append(f"{display(r)}: its tab {why}; left alone")
             continue
         herdr("pane", "run", pid, att)
         typed.append((r, f"tab '{r['herdr_tab']}'"))
@@ -1757,9 +1796,11 @@ def attach_tabs(rows, wait=True):
         n = tmux(r["tmux_socket"], "display", "-p", "-t", f"={r['tmux_session']}:", "#{session_attached}")[1].strip()
         if n.isdigit() and int(n) > 0:
             log(f"herdr {display(r)}: {what} re-attached")
+            TAB_LOG["attached"].append(f"{display(r)}: {what}")
         else:
             log(f"herdr {display(r)}: the attach was typed into its {what}, but nothing is attached to the "
                 "session yet; look at that tab")
+            TAB_LOG["not"].append(f"{display(r)}: typed into its {what}, nothing attached yet")
     return done
 
 
@@ -1808,7 +1849,17 @@ def restore_now():
     pr = read_json(progress_path(), {})
     if not isinstance(pr, dict) or pr.get("done") or pr.get("boot") != boot_id() or not alive(int(pr.get("pid") or 0)):
         return {}
-    return {k: pr.get(k) for k in ("began", "total", "back", "uptime_at_start")}
+    return {k: pr.get(k) for k in ("began", "total", "back", "uptime_at_start", "boot_run", "user_up_s", "boot_wait_s")}
+
+
+def began_text(d):
+    """how long after boot a boot run began, and what it waited for (G5.8)"""
+    if not d.get("boot_run"):
+        return ""
+    up = d.get("user_up_s")
+    return (f"began {ago(d.get('uptime_at_start') or 0)} after boot: "
+            + (f"this user's services came up {ago(up)} after boot, then " if up is not None else "")
+            + f"its own wait of {d.get('boot_wait_s')} s")
 
 
 def where_text(r):
@@ -1840,6 +1891,8 @@ def census():
         print(f"A RESTORE IS RUNNING: {pr['back']} of {pr['total']} sessions back, since "
               f"{time.strftime('%H:%M', time.localtime(pr['began']))} ({ago(now - pr['began'])}). "
               "The others are on their way: do not start them by hand.")
+        if began_text(pr):
+            print(f"  This boot's restore {began_text(pr)}.")
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
@@ -1888,6 +1941,52 @@ def census():
               f"or have it answered after a restart: tardigrade trust on")
     if d["hidden"]:
         print("\nTo open a window for each hidden one: tardigrade open")
+    return 0
+
+
+def report_cmd():
+    """G3.8: the last restore's timeline, from the times the run itself wrote down, and what still needs a
+    person. Reads only."""
+    rep = read_json(os.path.join(STATE, "last-revive.json"), {})
+    if not rep or not rep.get("began"):
+        print("No restore has run yet with this version (nothing in last-revive.json).")
+        return 1
+
+    def at(t):
+        return time.strftime("%a %H:%M:%S", time.localtime(t)) if t else "-"
+
+    began, ups = rep["began"], rep.get("uptime_at_start") or 0
+    booted = began - ups
+    print(f"Windstorm Tardigrade: the last restore ({'after a boot' if rep.get('boot_run') else 'by hand'}), "
+          f"times are this machine's ({time.strftime('%Z')})")
+    if rep.get("boot_run"):
+        print(f"  machine started       {at(booted)}")
+        if rep.get("user_up_s") is not None:
+            print(f"  user services up      {at(booted + rep['user_up_s'])}   ({ago(rep['user_up_s'])} after boot)")
+    print(f"  run began             {at(began)}" + (f"   ({began_text(rep)})" if rep.get("boot_run") else ""))
+    print(f"  first start           {at(rep.get('first_start'))}")
+    print(f"  last start            {at(rep.get('last_start'))}")
+    print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started, "
+          f"{len(rep.get('loaded', []))} loaded, {len(rep.get('not_loaded', []))} not loaded, "
+          f"{len(rep.get('down_again', []))} down again, {len(rep.get('skipped', []))} already running"
+          + (f"   ({ago(rep['counted_at'] - booted)} after boot)" if rep.get("boot_run") and rep.get("counted_at") else ""))
+    tabs = rep.get("tabs") or {}
+    if tabs.get("attached") or tabs.get("not"):
+        print(f"  tabs                  {len(tabs.get('attached', []))} attached, {len(tabs.get('not', []))} not")
+    d = census_data()
+    need = [("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
+            ("not loaded (a question on its screen?)", rep.get("not_loaded")),
+            ("loaded, note not typed (not idle)", rep.get("note_not_typed")), ("down again", rep.get("down_again")),
+            ("ended by its owner, not brought back", rep.get("ended")),
+            ("running elsewhere by its turn", rep.get("elsewhere")), ("tab not attached", tabs.get("not")),
+            ("a name carried by more than one session", [f"{n}: {', '.join(i)}" for n, i in d["same_name"].items()]),
+            ("started by hand while its session was coming back", [f"{b['name']} ({b['session_id'][:8]})" for b in d["by_hand"]])]
+    need = [(k, v) for k, v in need if v]
+    print("\nStill needs a person:" + ("" if need else " nothing."))
+    for k, v in need:
+        print(f"  {k}:")
+        for x in v:
+            print(f"    {x}")
     return 0
 
 
@@ -1942,7 +2041,7 @@ RemainAfterExit=yes
 KillMode=process
 TimeoutStartSec=0
 Nice=5
-ExecStartPre=/bin/sleep 45
+ExecStartPre=/bin/sleep {int(float(CFG["boot_wait_s"]))}
 ExecStart={py} -I {script} revive --boot
 
 [Install]
@@ -2017,7 +2116,8 @@ def setup():
         os.makedirs(la, exist_ok=True)
         uid = str(os.getuid())
         for label, verb, extra in (
-                ("ai.thewindstorm.tardigrade-revive", "sleep 45; exec", "<key>RunAtLoad</key><true/>"),
+                ("ai.thewindstorm.tardigrade-revive", f"sleep {int(float(CFG['boot_wait_s']))}; exec",
+                 "<key>RunAtLoad</key><true/>"),
                 ("ai.thewindstorm.tardigrade-record", "exec", "<key>StartInterval</key><integer>300</integer>")):
             p = os.path.join(la, label + ".plist")
             arg = " revive --boot" if "revive" in label else " record"
@@ -2163,7 +2263,7 @@ def trust_cmd():
     return 0
 
 
-COMMANDS = {"wait": wait_screen, "trust": trust_cmd, "record": record, "revive": revive, "census": census, "status": census, "open": open_windows,
+COMMANDS = {"wait": wait_screen, "report": report_cmd, "trust": trust_cmd, "record": record, "revive": revive, "census": census, "status": census, "open": open_windows,
             "setup": setup, "uninstall": uninstall}
 
 if __name__ == "__main__":

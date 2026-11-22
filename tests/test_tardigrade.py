@@ -1122,6 +1122,30 @@ class Census(Base):
         self.assertIn("STARTED BY HAND while its session was coming back", text)
         self.assertEqual(text.count("STARTED BY HAND"), 1)                    # the real Beta is not marked
 
+    def test_G3_8_report_prints_the_last_restores_timeline_and_what_needs_a_person(self):
+        a, b = self.start_lane("alpha", "Alpha Lane"), self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        seen = self.table()["lanes"][0]["last_seen"]
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d)
+        with open(os.path.join(d, b + ".jsonl"), "w") as f:                    # Beta's owner ended it
+            f.write(json.dumps({"type": "user", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(seen + 2)) + ".000Z",
+                                "message": {"content": "<command-name>/exit</command-name>"}}) + "\n")
+        self.reboot()
+        self.cfg({"wake": "idle"})
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_USER_UP_S=60)
+        self.wait_launches(n + 1)
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        before, n = fread(p), len(self.launches())
+        rc, out = self.tg("report")
+        self.assertEqual(rc, 0, out)
+        for line in ("machine started", "user services up", "run began", "first start", "last start", "counted"):
+            self.assertRegex(out, rf"\n  {line} +\w\w\w \d\d:\d\d:\d\d", line)
+        self.assertIn("1 started, 1 loaded, 0 not loaded, 0 down again", out)
+        self.assertIn("Still needs a person:\n  ended by its owner, not brought back:\n    Beta Lane", out)
+        self.assertEqual((fread(p), len(self.launches())), (before, n))          # it reads only
+
     def test_G3_2_census_changes_nothing(self):
         self.start_lane("alpha", "Alpha Lane")
         self.tg("record", "--force")
@@ -1226,6 +1250,32 @@ class Setup(Base):
         src = fread(SCRIPT)
         setup = src[src.index("def setup():"):src.index("def mac_story(")]
         self.assertLess(setup.index('HERDR_WAIT["s"] = 120'), setup.index("record()"))   # setup gives Herdr longer
+
+    def test_G5_8_the_boot_run_says_when_it_began_and_what_it_waited_for(self):
+        self.cfg({"boot_wait_s": 15})
+        self.assertIn("ExecStartPre=/bin/sleep 15", self.tg("setup", "--print-units")[1])     # its own wait, a setting
+        self.cfg({"boot_wait_s": 45, "wake": "idle", "settle_s": 3, "starts_at_once": 1})
+        for nm in ("alpha", "beta"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                               env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="275", TARDIGRADE_FAKE_USER_UP_S="230"),
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and not os.path.exists(self.state("progress.json")):
+                time.sleep(0.1)
+            time.sleep(0.5)
+            text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=280)[1]
+            out, _ = run.communicate(timeout=120)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        self.assertIn("boot run began 275 s after boot: this user's services came up 230 s after boot, then this "
+                      "service's own wait of 45 s (boot_wait_s)", out)
+        self.assertRegex(text, r"This boot's restore began .+ after boot: this user's services came up .+ after boot, "
+                               r"then its own wait of 45 s")
 
     def test_G5_5_trust_on_and_off_write_the_setting_and_say_what_it_means(self):
         rc, out = self.tg("trust")
