@@ -566,13 +566,47 @@ class Revive(Base):
 
     def test_G2_28_one_process_list_per_pass_is_taken_and_handed_down(self):
         src = fread(SCRIPT)
-        body = src[src.index("def watch(started, note_for, minutes, tab_rows):"):src.index("def revive():")]
-        self.assertEqual(body.count("procs()"), 2)                  # one per pass of the loop, one for the count
+        body = src[src.index("class Watch:"):src.index("def revive():")]
+        self.assertEqual(body.count("procs()"), 2)                  # one per pass, one for the count
         self.assertEqual(body.count("came_up(r, P)"), 2)
         self.assertNotIn("came_up(r)", body)
-        loop = src[src.index("    while pending:"):src.index("    for sid, (r, n) in pending.items():")]
+        loop = src[src.index("    while True:\n        if pending and not tries_done"):src.index("        if not tries_done and (not pending")]
         self.assertEqual(loop.count("procs()"), 1)                  # fresh for each session, then handed down
         self.assertIn("running_sids(P)", loop)
+
+    def test_G2_29_sessions_that_are_up_are_looked_after_while_another_start_is_still_retried(self):
+        self.tg("trust", "on")
+        self.cfg({"retry_min": 0.25})
+        self.start_lane("alpha", "Alpha Lane")
+        bad = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        for name, text in (("trustprompt", "1"), ("failsid", bad)):
+            with open(os.path.join(self.home, name), "w") as f:
+                f.write(text)
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertIn("Beta Lane: GAVE UP", out)
+        self.assertLess(out.index('Alpha Lane: answered Yes to "trust this folder?"'), out.index("Beta Lane: GAVE UP"), out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["failed"], rep["loaded"]), (["Alpha Lane"], ["Beta Lane"], ["Alpha Lane"]), out)
+
+    def test_G2_30_a_session_nobody_ever_wrote_in_comes_back_new_under_the_same_name(self):
+        sid = self.recorded_then_rebooted()
+        with open(os.path.join(self.home, "noconv"), "w") as f:
+            f.write(sid)
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = self.wait_launches(n + 2)[n:]
+        self.assertEqual(new[0]["argv"][-2:], ["--resume", sid])                 # tried as itself first
+        self.assertEqual(new[1]["argv"], ["--dangerously-skip-permissions", "--model", "claude-opus-5-5", "--effort", "high",
+                                          "--name", "Alpha Lane"])
+        self.assertEqual(new[1]["cwd"], self.work)
+        self.assertIn("Starting it new, with the same name, folder and flags", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["fresh"], rep["failed"], rep["loaded"]), (["Alpha Lane"], ["Alpha Lane"], [], ["Alpha Lane"]), out)
+        self.assertEqual(self.typed(), [])      # no "your conversation is intact" note for a session that had none
+        rc, cj = self.tg("census", "--json")
+        self.assertEqual([r["name"] for r in json.loads(cj)["sessions"]["hidden"]], ["Alpha Lane"])
 
     def test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser(self):
         a = self.start_lane("alpha", "Alpha Lane", flags="--permission-mode acceptEdits")
@@ -686,9 +720,12 @@ class Revive(Base):
         self.assertIn("start Alpha Lane", out)
         self.assertIn(f"tmux default:alpha   claude --dangerously-skip-permissions --model claude-opus-5-5 "
                       f"--effort high --resume {sid}", out)
+        rc, out = self.tg("revive", "--dry-run", "--all", "--start-file")
+        self.assertIn(f"cd -- {self.work} 2>/dev/null\nclaude --dangerously-skip-permissions", out)
         time.sleep(3)
         self.assertEqual(len(self.launches()), n)
         self.assertFalse(os.path.exists(self.state("launch")))       # not even a start file is written
+        self.assertNotIn("cd -- ", fread(self.state("tardigrade.log")))     # and its text is not in the log
 
     def test_G2_22_a_start_that_fails_is_tried_again_in_the_same_tmux_session(self):
         sid = self.recorded_then_rebooted()
@@ -888,13 +925,13 @@ class Invariants(unittest.TestCase):
     def test_INV2_it_types_two_things_only_each_from_one_function(self):
         # the opt-in trust answer (G2.12, G2.13) and its own wake-up note (G2.2, G2.20); nothing else, anywhere
         trust = self.src[self.src.index("def answer_trust(r):"):self.src.index("QUESTION = re.compile")]
-        note = self.src[self.src.index("def type_note(r, note):"):self.src.index("def watch(")]
+        note = self.src[self.src.index("def type_note(r, note):"):self.src.index("class Watch:")]
         self.assertEqual((trust.count("send-keys"), note.count("send-keys")), (2, 2))
         self.assertEqual(self.src.replace(trust, "").replace(note, "").count("send-keys"), 0)
         self.assertNotIn("send-text", self.src)
         self.assertIn('"answer_trust": False,', self.src)           # off by default
         self.assertEqual(self.src.count("type_note(r, "), 2)        # its definition and one call, in the watch
-        call = self.src.index("type_note(r, note_for")
+        call = self.src.index("type_note(r, self.note_for")
         self.assertIn('sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15))', self.src[call - 200:call])
 
     def test_INV6_standard_library_only_and_no_network(self):

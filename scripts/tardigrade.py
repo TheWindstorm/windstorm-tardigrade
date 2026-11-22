@@ -5,6 +5,7 @@
   revive [--boot]     start every recorded session that is not running (runs once after boot)
   revive --only NAME  bring back just that one
   revive --dry-run --all   show the start line of every recorded session, as if none ran
+                      (add --start-file to also print each start file, to the screen only)
   trust on|off        opt in (or out): after a restart, answer Claude Code's "trust this folder?"
                       for a session's own folder. Off unless you switch it on.
   census [--json]     what is running, what runs with no window open, what is down
@@ -778,7 +779,11 @@ def claude_line(r):
         head = fill(CFG["account_command"], r)       # a session pinned to an account starts through its wrapper
     else:
         head = str(CFG.get("claude_command") or "claude")
-    return " ".join([head] + [shlex.quote(x) for x in flags_of(r)] + ["--resume", r["session_id"]])
+    if r.get("fresh"):      # it never had a conversation, so there is none to resume: same name, folder and flags
+        tail = ["--name", shlex.quote(r["name"])] if r.get("name") else []
+    else:
+        tail = ["--resume", r["session_id"]]
+    return " ".join([head] + [shlex.quote(x) for x in flags_of(r)] + tail)
 
 
 def env_file_pairs():
@@ -819,12 +824,8 @@ def launch_dir():
     return os.path.join(STATE, "launch")
 
 
-def write_launch_file(r):
-    """The start file for one session, readable by this user only. The pane's command line is just "read
-    this file", so no setting, no flag and no note sits on a command line, where a broad kill command that
-    matches by text could match it."""
-    os.makedirs(launch_dir(), mode=0o700, exist_ok=True)
-    path = os.path.join(launch_dir(), r["session_id"] + ".sh")
+def launch_text(r):
+    """what the start file for one session says"""
     sh = CFG["shell"]
     lines = ["# Windstorm Tardigrade start file. Written again at each revive; safe to delete."]
     pairs, left = env_file_pairs()
@@ -844,9 +845,18 @@ def write_launch_file(r):
     # the session's own folder, whatever the shell's start files or the env_file said
     lines.append(f"cd -- {shlex.quote(r['cwd'] if os.path.isdir(r['cwd']) else HOME)} 2>/dev/null")
     lines.append(f'{claude_line(r)}; echo; echo "[session ended; shell kept]"; exec {sh} -l')
+    return "\n".join(lines) + "\n"
+
+
+def write_launch_file(r):
+    """The start file for one session, readable by this user only. The pane's command line is just "read
+    this file", so no setting, no flag and no note sits on a command line, where a broad kill command that
+    matches by text could match it."""
+    os.makedirs(launch_dir(), mode=0o700, exist_ok=True)
+    path = os.path.join(launch_dir(), r["session_id"] + ".sh")
     fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write(launch_text(r))
     os.replace(path + ".new", path)
     return path
 
@@ -1010,70 +1020,77 @@ def type_note(r, note):
     tmux(sock, "send-keys", "-t", target, "Enter")
 
 
-def watch(started, note_for, minutes, tab_rows):
-    """Keep looking at the sessions this run started until each has loaded (and has its note, where one is
-    due) or the time is up. A slow machine can take minutes to load a session or to draw a question, so
-    one look right after the start is not enough. Then count: LOADED means Claude Code has written the
-    session's own file, not merely that a process is up."""
-    answered, noted, noted_ids, waiting, end = [], [], set(), list(started), time.time() + minutes * 60
-    tabs_due = bool(CFG["herdr"] and CFG["herdr_tabs"] and any(r.get("herdr_tab") for r in tab_rows))
-    said = False
-    while True:
-        if tabs_due and herdr_up():
-            attach_tabs(tab_rows, wait=False)
-            tabs_due = False
-        still, P = [], procs()                # one process list per pass, for every session in it
-        for r in waiting:
+class Watch:
+    """Looks at the sessions this run started until each has loaded (and has its note, where one is due).
+    A slow machine can take minutes to load a session or to draw a question, so one look right after the
+    start is not enough. It works in passes, so that sessions which are up are looked after while another
+    start is still being retried. At the end it counts: LOADED means Claude Code has written the session's
+    own file, not merely that a process is up."""
+
+    def __init__(self, note_for, tab_rows):
+        self.note_for, self.tab_rows = note_for, tab_rows
+        self.answered, self.noted, self.noted_ids, self.settled, self.gone = [], [], set(), set(), set()
+        self.tabs_due = bool(CFG["herdr"] and CFG["herdr_tabs"] and any(r.get("herdr_tab") for r in tab_rows))
+
+    def look(self, started):
+        """one pass over the started sessions; returns how many are still waited for"""
+        if self.tabs_due and herdr_up():
+            attach_tabs(self.tab_rows, wait=False)
+            self.tabs_due = False
+        waiting, P = 0, procs()               # one process list per pass, for every session in it
+        for r in started:
+            sid = r["session_id"]
+            if sid in self.settled or sid in self.gone:
+                continue
             pid = came_up(r, P)
             if not pid:
                 log(f"  {display(r)}: went down again while being watched")
-                continue                      # counted below
+                self.gone.add(sid)
+                continue
             sj = session_json(pid, r.get("config_dir", ""))
             if not sj.get("sessionId"):
                 if CFG["answer_trust"] and answer_trust(r):
-                    answered.append(display(r))
-                still.append(r)
+                    self.answered.append(display(r))
+                waiting += 1
                 continue
-            if r["session_id"] in note_for and r["session_id"] not in noted_ids:
+            if sid in self.note_for and sid not in self.noted_ids:
                 screen = tmux(r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)):
-                    type_note(r, note_for[r["session_id"]])
-                    noted.append(display(r))
-                    noted_ids.add(r["session_id"])
+                    type_note(r, self.note_for[sid])
+                    self.noted.append(display(r))
+                    self.noted_ids.add(sid)
                     log(f"  {display(r)}: loaded and idle; wake-up note typed")
                 else:
-                    still.append(r)
-        waiting = still
-        if not waiting or time.time() >= end:
-            break
-        if not said:
-            log(f"watching {len(waiting)} session(s) until loaded, for up to {minutes:g} min")
-            said = True
-        time.sleep(1 if TESTING else 10)
-    res = {"trust_answered": answered, "noted": noted, "loaded": [], "not_loaded": [], "down_again": [],
-           "note_not_typed": [], "tabs_due": tabs_due}
-    P = procs()
-    for r in started:
-        pid = came_up(r, P)
-        if not pid:
-            res["down_again"].append(display(r))
-        elif not session_json(pid, r.get("config_dir", "")).get("sessionId"):
-            res["not_loaded"].append(display(r))
-        else:
-            res["loaded"].append(display(r))
-            if r["session_id"] in note_for and r["session_id"] not in noted_ids:
-                res["note_not_typed"].append(display(r))
-    log(f"count: started={len(started)} LOADED={len(res['loaded'])} UP-NOT-LOADED={len(res['not_loaded'])} "
-        f"DOWN={len(res['down_again'])}")
-    for nm in res["not_loaded"]:
-        log(f"  UP-NOT-LOADED {nm}: Claude Code runs but has not loaded the session (a question on its screen?)")
-    for nm in res["down_again"]:
-        log(f"  DOWN {nm}: it started and ended again; its tmux session holds a shell")
-    for nm in res["note_not_typed"]:
-        log(f"  {nm}: loaded, but not idle (a question on its screen?); the wake-up note was not typed")
-    if answered:
-        log(f"trust: answered for {len(answered)} session(s)")
-    return res
+                    waiting += 1
+                    continue
+            self.settled.add(sid)
+        return waiting
+
+    def count(self, started):
+        res = {"trust_answered": self.answered, "noted": self.noted, "loaded": [], "not_loaded": [],
+               "down_again": [], "note_not_typed": []}
+        P = procs()
+        for r in started:
+            pid = came_up(r, P)
+            if not pid:
+                res["down_again"].append(display(r))
+            elif not session_json(pid, r.get("config_dir", "")).get("sessionId"):
+                res["not_loaded"].append(display(r))
+            else:
+                res["loaded"].append(display(r))
+                if r["session_id"] in self.note_for and r["session_id"] not in self.noted_ids:
+                    res["note_not_typed"].append(display(r))
+        log(f"count: started={len(started)} LOADED={len(res['loaded'])} UP-NOT-LOADED={len(res['not_loaded'])} "
+            f"DOWN={len(res['down_again'])}")
+        for nm in res["not_loaded"]:
+            log(f"  UP-NOT-LOADED {nm}: Claude Code runs but has not loaded the session (a question on its screen?)")
+        for nm in res["down_again"]:
+            log(f"  DOWN {nm}: it started and ended again; its tmux session holds a shell")
+        for nm in res["note_not_typed"]:
+            log(f"  {nm}: loaded, but not idle (a question on its screen?); the wake-up note was not typed")
+        if self.answered:
+            log(f"trust: answered for {len(self.answered)} session(s)")
+        return res
 
 
 def revive():
@@ -1135,6 +1152,8 @@ def _revive(boot):
             + ("  [pinned login: checked before anything is typed]" if login_print(r) else ""))
         if DRY:
             log(f"      tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}   {claude_line(r)}")
+            if "--start-file" in ARGS:      # to the screen only, never to the log: it holds the env_file's values
+                print(launch_text(r), end="")
         todo.append(r)
     if DRY:
         return 0
@@ -1148,36 +1167,57 @@ def _revive(boot):
     created, came, note_for = set(), [], {}
     pending = {r["session_id"]: [r, 0] for r in todo}
     deadline = time.time() + float(CFG["retry_min"]) * 60
-    while pending:
-        for sid, (r, n) in list(pending.items()):
-            nm = display(r)
-            P = procs()                # taken fresh for each session, right before the decision to start it
-            late = came_up(r, P) if n else None
-            if late:
-                log(f"  {nm}: up (came up late)")
-                report["started"].append(nm)
-                came.append(r)
-                if note and same_login(r, late):
-                    note_for[sid] = note
-                del pending[sid]
-                continue
-            if sid in running_sids(P):
-                log(f"  {nm}: something else started it meanwhile; left alone")
-                report["skipped"].append(nm)
-                del pending[sid]
-                continue
-            pace()
-            if start_lane(r, created):
-                time.sleep(float(CFG["settle_s"]))
-                pid = came_up(r)
+    watch_s = (float(CFG["watch_min"]) if boot else min(float(CFG["watch_min"]), 3)) * 60
+    w = Watch(note_for, rows)
+    next_try, last_up, tries_done, said = 0.0, time.time(), False, False
+
+    def try_start(r):
+        """one start; the process id of its Claude if it came up"""
+        if not start_lane(r, created):
+            return None
+        time.sleep(float(CFG["settle_s"]))
+        return came_up(r)
+
+    while True:
+        if pending and not tries_done and time.time() >= next_try:
+            for sid, (r, n) in list(pending.items()):
+                nm = display(r)
+                P = procs()            # taken fresh for each session, right before the decision to start it
+                late = came_up(r, P) if n else None
+                if late:
+                    log(f"  {nm}: up (came up late)")
+                    report["started"].append(nm)
+                    came.append(r)
+                    last_up = time.time()
+                    if note and same_login(r, late) and not r.get("fresh"):
+                        note_for[sid] = note
+                    del pending[sid]
+                    continue
+                if sid in running_sids(P):
+                    log(f"  {nm}: something else started it meanwhile; left alone")
+                    report["skipped"].append(nm)
+                    del pending[sid]
+                    continue
+                pace()
+                pid = try_start(r)
+                if not pid and not r.get("fresh") and not CFG.get("start_command") and "No conversation found" in tmux(
+                        r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]:
+                    # Claude Code keeps no conversation for a session nobody ever wrote in. There is nothing to
+                    # resume and nothing to lose: it comes back as a new session with the same name, folder and flags.
+                    log(f"  {nm}: Claude Code has no conversation for it (nobody ever wrote in it). "
+                        "Starting it new, with the same name, folder and flags.")
+                    r["fresh"] = True
+                    report.setdefault("fresh", []).append(nm)
+                    pid = try_start(r)
                 if pid:
                     came.append(r)
+                    last_up = time.time()
                     child = ("CLAUDE_CODE_CHILD_SESSION PRESENT (BAD: this session does not save its transcript)"
                              if env_facts(pid)["child"] else "child marker absent")
                     if same_login(r, pid):
                         log(f"  {nm}: up ({child}" + ("; same login as before)" if login_print(r) else ")"))
                         report["started"].append(nm)
-                        if note:
+                        if note and not r.get("fresh"):
                             note_for[sid] = note
                     else:
                         log(f"needs you  {nm}: it came back on a different login than it had before. "
@@ -1186,31 +1226,35 @@ def _revive(boot):
                     del pending[sid]
                     time.sleep(float(CFG["stagger_s"]))
                     continue
-            pending[sid][1] += 1
-            log(f"  {nm}: not running yet (attempt {pending[sid][1]}); will retry")
-            time.sleep(float(CFG["stagger_s"]))
-        if not pending or time.time() >= deadline:
+                pending[sid][1] += 1
+                log(f"  {nm}: not running yet (attempt {pending[sid][1]}); will retry")
+                time.sleep(float(CFG["stagger_s"]))
+            next_try = time.time() + (1 if TESTING else 60)
+        if not tries_done and (not pending or time.time() >= deadline):
+            tries_done = True
+            for sid, (r, n) in pending.items():
+                log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session holds a shell")
+                report["failed"].append(display(r))
+            report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows))
+            write_json(os.path.join(STATE, "last-revive.json"), report)
+            if boot:
+                with open(marker(), "w") as f:
+                    f.write(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+            log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
+                f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
+        # the sessions that are up are looked after in every pass, also while another start is being retried
+        waiting = w.look(came) if came else 0
+        if tries_done and (not waiting or time.time() >= last_up + watch_s):
             break
-        time.sleep(60 if not TESTING else 1)
-    for sid, (r, n) in pending.items():
-        log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session holds a shell")
-        report["failed"].append(display(r))
-    report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows))
-    write_json(os.path.join(STATE, "last-revive.json"), report)
-    if boot:
-        with open(marker(), "w") as f:
-            f.write(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
-    log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
-        f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
-    tabs_due = True
+        if waiting and not said:
+            log(f"watching {waiting} session(s) until loaded, for up to {watch_s / 60:g} min")
+            said = True
+        time.sleep(1 if TESTING else 10)
     if came:
-        wait = float(CFG["watch_min"]) if boot else min(float(CFG["watch_min"]), 3)
-        res = watch(came, note_for, wait, rows)
-        tabs_due = res.pop("tabs_due")
-        report.update(res)
+        report.update(w.count(came))
         write_json(os.path.join(STATE, "last-revive.json"), report)
     notify(f"{len(report['started'])} session(s) brought back, {len(report['failed']) + len(report['needs_you'])} need you")
-    if tabs_due:
+    if w.tabs_due:
         attach_tabs(rows)
     return 0
 

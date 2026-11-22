@@ -37,6 +37,14 @@ Found in review by the kit's author, before any machine ran this version:
   start file ends by changing to the session's own folder (G2.27).
 - **One process list per pass** (G2.28), for machines with thousands of processes.
 
+Found by the first real reboot on this version (a Linux laptop, seven sessions):
+
+- **Sessions that were up waited while another start was retried** (G2.29). Two sessions could not be started, and
+  for the 25 minutes of retries nobody looked at the five that were up: no trust answer, no note, no Herdr tab.
+  Now the sessions that are up are looked after in every pass.
+- **A session nobody ever wrote in cannot be resumed** (G2.30). Claude Code keeps no conversation for it and says
+  "No conversation found". Such a session now comes back as a new one with the same name, folder and flags.
+
 ## 0.1.6 (2026-11-21)
 Built from DNA Strand Master Plan 1.6.
 

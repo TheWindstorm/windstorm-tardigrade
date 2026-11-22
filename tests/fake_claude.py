@@ -6,7 +6,8 @@ name to "claude").
 Files in HOME change how it behaves: `slow` (seconds to "load"), `trustprompt` (stop at the folder
 question first), `usagebox` (never load: redraw an old conversation that quotes the folder question, with
 another dialog open under it, and write down every key received), `failonce` (end at once, one time),
-`status` (the status it reports, default idle)."""
+`status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for),
+`failsid` (session ids whose start always fails)."""
 import ctypes
 import json
 import os
@@ -26,11 +27,18 @@ try:
     names = json.load(open(names_path))
 except (OSError, ValueError):
     names = {}
+def listed(name, sid):
+    try:
+        return sid in open(os.path.join(home, name)).read()
+    except OSError:
+        return False
+
+
 if "--resume" in a:
     sid = a[a.index("--resume") + 1]
 else:
     sid = os.environ.get("FAKE_SID") or str(uuid.uuid4())
-    names[sid] = os.environ.get("FAKE_NAME", "")
+    names[sid] = a[a.index("--name") + 1] if "--name" in a else os.environ.get("FAKE_NAME", "")
     json.dump(names, open(names_path, "w"))
 with open(os.path.join(home, "launches.jsonl"), "a") as f:
     f.write(json.dumps({"pid": os.getpid(), "sid": sid, "argv": a, "cwd": os.getcwd(),
@@ -38,6 +46,11 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
                         "claude_env": sorted(k for k in os.environ if k.startswith("CLAUDE")),
                         "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME", "PWD",
                                                            "CLAUDE_CODE_AUTO_COMPACT_WINDOW") if k in os.environ}}) + "\n")
+if "--resume" in a and listed("noconv", sid):
+    print(f"No conversation found with session ID: {sid}")     # what Claude Code says for a session nobody wrote in
+    sys.exit(1)
+if listed("failsid", sid):
+    sys.exit(1)                         # a session whose start keeps failing
 if os.path.exists(os.path.join(home, "failonce")):
     os.remove(os.path.join(home, "failonce"))
     sys.exit(1)                         # a start that fails, as when the network is not up yet

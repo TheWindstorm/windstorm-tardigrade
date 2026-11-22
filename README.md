@@ -91,6 +91,9 @@ session checks its notes and starts again what is still needed. The message is t
 Code reports it loaded and idle, and never into one that shows a question. It costs one turn per session. To bring
 sessions back silent instead, put `"wake": "idle"` in `~/.config/windstorm-tardigrade/config.json`.
 
+**A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
+session with the same name, folder and flags.
+
 **After a crash:** if more than half of your sessions vanish at the same moment (a tmux server that died, a
 terminal program closed with everything in it), Tardigrade does not take that for you ending them. They stay on
 the record for 12 hours, the census says so, and `tardigrade revive` brings them back.
@@ -213,7 +216,7 @@ Proven (on the version named in each line; none of the reboots below was on 0.1.
   brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
-- 54 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+- 56 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
   a second copy, once per boot, a clean environment, the typed message, the start file, the census, and the rules
   under Safety.
 - On a shared Linux machine with 98 sessions, 0.1.7's `revive --dry-run --all` was compared line by line with the

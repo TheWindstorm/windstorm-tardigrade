@@ -70,6 +70,9 @@ Show that line. UP-NOT-LOADED means a question is open on that session's screen:
 Before a planned reboot, run `revive --dry-run --all` and show it: it lists the exact line that will start each
 recorded session, and starts nothing.
 
+A line "Starting it new" means that session never had a conversation, so there was nothing to resume; it came
+back as a new session with the same name. Nothing was lost.
+
 If the census says sessions "vanished together", that was a crash. `revive --dry-run`, show it, then `revive`.
 
 Lines that start with `needs you` name sessions that came back on a different login than they had before. This
