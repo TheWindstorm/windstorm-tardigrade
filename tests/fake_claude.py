@@ -8,7 +8,8 @@ question first), `usagebox` (never load: redraw an old conversation that quotes 
 another dialog open under it, and write down every key received), `failonce` (end at once, one time),
 `status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for), `noconvslow` (the same, said only after 6 s),
 `failsid` (session ids whose start always fails), `limitnotice` (show the usage-limit notice under
-the empty box), `limitqueue` (a line typed in meets the weekly limit and is held for the reset)."""
+the empty box), `limitqueue` (a line typed in meets the weekly limit and is held for the reset), `oldlimit` (session ids whose
+redrawn history shows an old limit reply above a newer short turn)."""
 import ctypes
 import json
 import os
@@ -125,6 +126,9 @@ json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": nam
            "status": status, "updatedAt": now}, open(os.path.join(d, f"{os.getpid()}.json"), "w"))
 # its input box at the foot of the screen, empty, as Claude Code draws it when idle
 if not os.path.exists(os.path.join(home, "nobox")):
+    if listed("oldlimit", sid):     # its redrawn history: a limit reply from before the reset, then a short turn
+        sys.stdout.write("  \u23bf  You've hit your weekly limit \u00b7 resets 12pm\r\n\u23fa Usage limit reached \u00b7 "
+                         "set to continue automatically at 12pm\r\n\r\n\u276f hello again\r\n\r\n\u23fa Hello.\r\n")
     sys.stdout.write("\r\n" + "─" * 40 + "\r\n❯ \r\n" + "─" * 40 + "\r\n  ⏵⏵ bypass permissions on\r\n")
     if os.path.exists(os.path.join(home, "limitnotice")):     # what Claude Code 2.1.330 shows at the weekly limit
         sys.stdout.write("  ⚠ Usage limit reached · limit resets 12pm\r\n    Continuing automatically at 12pm · "

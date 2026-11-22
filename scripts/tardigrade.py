@@ -1595,7 +1595,8 @@ class Watch:
 
     def login_at_limit(self, r, started):
         """A usage limit belongs to the login, not to one conversation: once one session shows it LIVE in this
-        run (a note just held, or the notice on its screen now; never an old reply in its conversation), no note is
+        run (limit words that appeared on its screen after our note; never what was there before, which after a
+        resume is its history, and never an old reply in its conversation), no note is
         typed into any other session on the same login for the rest of this run, or every one of them would
         wait in Claude Code's queue and all run at once at the reset (G2.45)."""
         k = login_key(r)
@@ -1655,9 +1656,7 @@ class Watch:
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
                 if OTHER_DIALOG.search(bottom(screen, 15)):
-                    self.held[sid] = HELD_SCREEN
-                    if AT_LIMIT.search(bottom(screen, 15)):
-                        self.login_at_limit(r, started)         # live: on its screen now
+                    self.held[sid] = HELD_SCREEN   # this session only: after a resume, its screen is history
                 if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(styled) \
                         and not OTHER_DIALOG.search(bottom(screen, 15)) and self.may_note():
                     self.note_times.append(time.time())
@@ -1668,12 +1667,15 @@ class Watch:
                     time.sleep(1.5 if TESTING else 4)      # looked at once more: did it meet a limit?
                     after = SGR.sub("", tmux(r["tmux_socket"], "capture-pane", "-p", "-t",
                                              f"={r['tmux_session']}:", timeout=6)[1])
-                    if QUEUED.search(bottom(after, 15)):
+                    # only text that appeared after the note counts: the one evidence the login is at its limit NOW
+                    new = lambda pat: bool(pat.search(bottom(after, 15))) and \
+                        len(pat.findall(after)) > len(pat.findall(screen))
+                    if new(QUEUED):
                         self.queued.append(display(r))
                         log(f"  {display(r)}: the note met a usage limit; Claude Code holds it and will run it by "
                             "itself at the reset (press Esc in that session to drop it)")
-                    if AT_LIMIT.search(bottom(after, 15)):
-                        self.login_at_limit(r, started)         # live: the note just met the limit
+                    if new(QUEUED) or new(AT_LIMIT):
+                        self.login_at_limit(r, started)
                 else:
                     waiting += 1
                     continue

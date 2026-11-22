@@ -1190,7 +1190,7 @@ class Revive(Base):
         self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["noted"], rep["note_not_typed"]), ([], ["Alpha Lane"]))
-        self.assertIn("this machine's own login is at its usage limit", out)       # live evidence (G2.45)
+        self.assertNotIn("is at its usage limit", out)    # a screen can be history: it holds this session only (G2.45)
         # the forms it takes, or may take; and ordinary words are not mistaken for one
         import importlib.util
         spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
@@ -1285,6 +1285,25 @@ class Revive(Base):
         self.assertNotEqual(k({"account": "A"}), k({"account": "B"}))
         self.assertNotEqual(k({"token_print": "p1"}), k({"token_print": "p2"}))
         self.assertNotEqual(k({}), k({"config_dir": "/elsewhere"}))
+
+    def test_G2_45_an_old_limit_reply_on_a_screen_holds_that_session_only(self):
+        # after a resume the foot of the screen is history: Alpha's shows a limit reply from before the reset above
+        # a newer short turn. Alpha's note is held; Beta and Gamma, on the same login, get theirs.
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        with open(os.path.join(self.home, "oldlimit"), "w") as f:
+            f.write(a)
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        self.assertEqual(sorted(x["sid"] for x in self.typed()), sorted(x["sid"] for x in self.launches()[n:] if x["sid"] != a), out)
+        self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
+        self.assertNotIn("is at its usage limit", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((sorted(rep["noted"]), rep["note_held_login_at_limit"]), (["Beta Lane", "Gamma Lane"], []))
 
     def test_G2_45_once_one_note_meets_the_limit_no_other_session_on_that_login_gets_one(self):
         # a usage limit belongs to the login: five sessions on one login, the first note is held for the reset,
