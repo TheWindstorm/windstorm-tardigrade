@@ -479,12 +479,12 @@
    "codon": "G4.7",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.8",
    "test": "test_G4_7_a_new_workspace_tab_whose_shell_is_still_starting_is_waited_for",
    "proven": "",
    "issue": 35,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "2026-11-22 staff ruling: making a lost workspace again is new in 0.1.8 and is what a person looks at; it does not ship leaving a blank tab in their layout when the fix is a bounded wait.",
+   "moved_by_person": "Skills Boss (staff ruling)"
   }
  ],
  "declined": [
