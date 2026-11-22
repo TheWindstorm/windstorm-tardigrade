@@ -244,6 +244,11 @@ The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 Most people need none of these. They are for machines where sessions are started through a wrapper, pinned to
 accounts, or shown in another tool.
 
+Check this before the first reboot on a machine. A session started with a login token in its environment, and no
+label your start can read, comes back on whatever login the plain `claude` finds, which may be another account.
+If every session on the machine should run on one login, put the wrapper that fetches it into `claude_command`.
+`tardigrade revive --dry-run --all` shows each session's start line, so you can see this before you need it.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `claude_command` | `"claude"` | The command that starts Claude Code. The session's flags and `--resume <id>` are added to it. |
