@@ -633,6 +633,20 @@ class Revive(Base):
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["started"], rep["failed"], rep["loaded"]), (["Alpha Lane"], ["Beta Lane"], ["Alpha Lane"]), out)
 
+    def test_G2_32_a_question_is_answered_while_later_sessions_are_still_being_started(self):
+        self.tg("trust", "on")
+        for n in ("alpha", "beta", "gamma"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        with open(os.path.join(self.home, "trustprompt"), "w") as f:
+            f.write("1")
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        self.assertLess(out.index('Alpha Lane: answered Yes to "trust this folder?"'), out.index("Gamma Lane: up"), out)
+        self.assertIn("count: started=3 LOADED=3 UP-NOT-LOADED=0 DOWN=0", out)
+
     def test_G2_30_a_session_nobody_ever_wrote_in_comes_back_new_under_the_same_name(self):
         sid = self.recorded_then_rebooted()
         with open(os.path.join(self.home, "noconv"), "w") as f:

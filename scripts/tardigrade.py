@@ -1035,10 +1035,13 @@ class Watch:
         self.note_for, self.tab_rows = note_for, tab_rows
         self.answered, self.noted, self.noted_ids, self.settled, self.gone = [], [], set(), set(), set()
         self.tabs_due = bool(CFG["herdr"] and CFG["herdr_tabs"] and any(r.get("herdr_tab") for r in tab_rows))
+        self.last_look = time.time()
 
-    def look(self, started):
-        """one pass over the started sessions; returns how many are still waited for"""
-        if self.tabs_due and herdr_up():
+    def look(self, started, tabs=True):
+        """one pass over the started sessions; returns how many are still waited for. tabs=False while
+        sessions are still being started: the Herdr tabs are done once, when every session is there."""
+        self.last_look = time.time()
+        if tabs and self.tabs_due and herdr_up():
             attach_tabs(self.tab_rows, wait=False)
             self.tabs_due = False
         waiting, P = 0, procs()               # one process list per pass, for every session in it
@@ -1243,6 +1246,9 @@ def _revive(boot):
                         report["needs_you"].append(nm)
                     del pending[sid]
                     time.sleep(float(CFG["stagger_s"]))
+                    # with many sessions the starts take minutes: the ones already up are looked after meanwhile
+                    if time.time() - w.last_look >= (0 if TESTING else 15):
+                        w.look(came, tabs=False)
                     continue
                 pending[sid][1] += 1
                 log(f"  {nm}: not running yet (attempt {pending[sid][1]}); will retry")
