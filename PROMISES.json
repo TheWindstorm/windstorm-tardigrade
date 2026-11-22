@@ -634,7 +634,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
-   "test": "",
+   "test": "test_G2_48_a_limit_reply_holds_the_note_only_while_its_reset_is_ahead",
    "proven": "",
    "issue": 48,
    "moved_why": "",

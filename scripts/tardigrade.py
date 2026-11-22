@@ -670,6 +670,56 @@ def exited_at(r):
     return t if t and t > seen else 0
 
 
+LIMIT_MARGIN_S = 300            # G2.48: a reset counts as passed this long after the moment it names
+MONTHS = {m: i + 1 for i, m in enumerate(("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))}
+RESETS = re.compile(r"resets (?:(%s) (\d{1,2}), )?(\d{1,2})(?::(\d{2}))?\s*(am|pm) \(([A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*)\)"
+                    % "|".join(MONTHS), re.I)
+
+
+def limit_reset(text, written):
+    """G2.48: the moment a limit reply's "resets ..." words name, as a Unix time, or None when it cannot be read.
+    It is worked out from the reply's own time and the zone it names, never from today's clock: "resets 12pm
+    (Zone)" is the first 12pm in that zone after the reply was written; "resets Nov 24, 6pm (Zone)" is that day."""
+    import datetime
+    m = RESETS.search(text or "")
+    if not m or not written:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(m.group(6))
+        at = datetime.datetime.fromtimestamp(float(written), tz)
+        hour = int(m.group(3)) % 12 + (12 if m.group(5).lower() == "pm" else 0)
+        minute = int(m.group(4) or 0)
+        if hour > 23 or minute > 59:
+            return None
+        if m.group(1):
+            mon = MONTHS[m.group(1).title()]
+            t = datetime.datetime(at.year, mon, int(m.group(2)), hour, minute, tzinfo=tz)
+            if t < at - datetime.timedelta(days=1):          # a day early in the next year: "resets Jan 2" in December
+                t = datetime.datetime(at.year + 1, mon, int(m.group(2)), hour, minute, tzinfo=tz)
+        else:
+            t = at.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if t <= at:
+                t += datetime.timedelta(days=1)
+        return t.timestamp()
+    except Exception:          # no zone database, an unknown zone, a day that does not exist: it cannot be read
+        return None
+
+
+def limit_reply(r):
+    """G2.45, G2.48: (its words, when it was written) for the usage or limit reply this session's conversation
+    last ended on, or ("", 0)"""
+    import datetime
+    words = ended_on_limit(r)
+    if not words:
+        return "", 0
+    try:
+        t = datetime.datetime.fromisoformat(str(last_turn(r).get("timestamp", "")).replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        t = 0
+    return words, t
+
+
 def ended_on_limit(r):
     """G2.45: the words of the usage or limit reply this session's conversation last ended on, or "". Claude
     Code writes that reply as an assistant line marked as an error ("You've hit your weekly limit · resets
@@ -1795,6 +1845,7 @@ class Watch:
         self.queued = []                # sessions whose note met a limit and waits for the reset (G2.45)
         self.at_limit = set()           # logins known to be at their usage limit in this run (G2.45)
         self.conv_read = set()          # sessions whose conversation was looked at for a limit reply
+        self.stale_limit = set()        # sessions whose last limit reply has reset since (G2.48)
         self.after_due = {}             # sid: (when its note was typed, its screen just before, its row) (G2.45)
 
     def take_gone(self):
@@ -1862,8 +1913,15 @@ class Watch:
             final = (HELD_CONV, HELD_ACCOUNT)
             if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final:
                 # its own reasons first: an old limit reply in its conversation (looked at once), its screen now
-                limit = "" if sid in self.conv_read else ended_on_limit(r)
+                limit, written = ("", 0) if sid in self.conv_read else limit_reply(r)
                 self.conv_read.add(sid)
+                reset = limit_reset(limit, written) if limit else None
+                if limit and reset is not None and time.time() >= reset + LIMIT_MARGIN_S:
+                    # G2.48: that limit has reset since; Claude Code holds nothing, and the note just runs
+                    self.stale_limit.add(sid)
+                    log(f"  {display(r)}: its last limit reply (\"{limit}\") reset at "
+                        f"{time.strftime('%Y-%m-%d %H:%M %Z', time.localtime(reset))}; the wake-up note is typed")
+                    limit = ""
                 if limit:
                     self.held[sid] = HELD_CONV
                     log(f"  {display(r)}: its conversation last ended on a usage or limit reply (\"{limit}\"); the "
@@ -1875,10 +1933,12 @@ class Watch:
                     and not (self.held.get(sid) == HELD_SCREEN and login_key(r) in self.at_limit):
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
-                if OTHER_DIALOG.search(near_box(screen, 15)):
+                # G2.48: a session whose last limit reply has reset shows that reply in its history on the screen
+                old = sid in self.stale_limit
+                if OTHER_DIALOG.search(near_box(screen, 15)) and not old:
                     self.held[sid] = HELD_SCREEN   # this session only: after a resume, its screen is history
                 if sj.get("status") == "idle" and not QUESTION.search(near_box(screen, 15)) and box_empty(styled) \
-                        and not OTHER_DIALOG.search(near_box(screen, 15)) and self.may_note() \
+                        and (old or not OTHER_DIALOG.search(near_box(screen, 15))) and self.may_note() \
                         and login_key(r) not in {login_key(x[2]) for x in self.after_due.values()}:
                     self.note_times.append(time.time())
                     type_note(r, self.note_for[sid])

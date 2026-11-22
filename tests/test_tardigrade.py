@@ -1528,23 +1528,23 @@ class Revive(Base):
         call = src.index("type_note(r, self.note_for")
         self.assertIn("not OTHER_DIALOG.search(near_box(screen, 15))", src[call - 500:call])
 
-    def limit_reply(self, sid, then=()):
-        """a conversation whose last turn is Claude Code's limit reply (as 2.1.330 writes it), then `then`"""
+    def limit_reply(self, sid, then=(), age_s=60, text="You've hit your weekly limit \u00b7 resets 12pm (America/New_York)"):
+        """a conversation whose last turn is Claude Code's limit reply (as 2.1.330 writes it), then `then`. By default
+        written a minute ago, so the reset it names is still ahead (G2.48)."""
         d = os.path.join(self.home, ".claude", "projects", "-work")
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, sid + ".jsonl"), "w") as f:
-            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 3 * 86400)) + ".000Z"   # 3 days old
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - age_s)) + ".000Z"
             for e in ({"type": "user", "timestamp": stamp, "message": {"content": "carry on"}},
                       {"type": "assistant", "timestamp": stamp, "isApiErrorMessage": True, "error": "rate_limit", "message": {
-                          "model": "<synthetic>", "content": [{"type": "text", "text":
-                              "You've hit your weekly limit \u00b7 resets 12pm (America/New_York)"}]}},
+                          "model": "<synthetic>", "content": [{"type": "text", "text": text}]}},
                       {"type": "system", "subtype": "informational", "level": "notice"}, {"type": "cost-state"}) + tuple(then):
                 f.write(json.dumps(e) + "\n")
 
     def test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named(self):
         # seen on a real machine: a note typed at the weekly limit is not lost; Claude Code holds it and runs it
-        # by itself at the reset, hours later. Alpha's conversation ended on a limit reply 3 days ago: no note for
-        # it. That reply is no evidence that the login is at its limit NOW, so Beta and Gamma, on the same
+        # by itself at the reset, hours later. Alpha's conversation ended on a limit reply a minute ago, whose reset
+        # is still ahead: no note for it. That reply is no evidence that the login is at its limit NOW, so Beta and Gamma, on the same
         # login, still get theirs.
         a = self.start_lane("alpha", "Alpha Lane")
         self.start_lane("beta", "Beta Lane")
@@ -1599,6 +1599,48 @@ class Revive(Base):
         self.assertNotEqual(k({"account": "A"}), k({"account": "B"}))
         self.assertNotEqual(k({"token_print": "p1"}), k({"token_print": "p2"}))
         self.assertNotEqual(k({}), k({"config_dir": "/elsewhere"}))
+
+    def test_G2_48_a_limit_reply_holds_the_note_only_while_its_reset_is_ahead(self):
+        import datetime as D
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        z = lambda w: D.datetime.fromisoformat(w.replace("Z", "+00:00")).timestamp()
+        weekly, five = "You've hit your weekly limit \u00b7 resets ", "You've hit your 5-hour limit \u00b7 resets "
+        # real reply texts from one weekend; the moment comes from the reply's own time and zone, never today's clock
+        for text, written, reset in [
+                (weekly + "12pm (America/New_York)", "2026-11-21T20:00:00Z", "2026-11-22T17:00:00Z"),   # the next noon there
+                (weekly + "12pm (America/New_York)", "2026-11-22T15:00:00Z", "2026-11-22T17:00:00Z"),   # the same day
+                (weekly + "Nov 24, 6pm (America/New_York)", "2026-11-22T15:00:00Z", "2026-11-24T23:00:00Z"),  # its own day
+                (weekly + "Jan 2, 6pm (America/New_York)", "2026-12-30T15:00:00Z", "2027-01-02T23:00:00Z"),   # next year
+                (five + "2:10pm (America/New_York)", "2026-11-22T16:00:00Z", "2026-11-22T19:10:00Z")]:
+            self.assertEqual(tg.limit_reset(text, z(written)), z(reset), text)
+        for text in ("Usage limit reached \u00b7 limit resets 12pm", weekly + "Nov 8, 12pm",          # no zone named
+                     weekly + "12pm (Not/AZone)", "You've hit your weekly limit"):
+            self.assertIsNone(tg.limit_reset(text, z("2026-11-22T16:00:00Z")), text)        # cannot be read: held
+        self.assertIsNone(tg.limit_reset(weekly + "12pm (America/New_York)", 0))              # no time of its own
+        # a restore: Alpha's reply reset days ago and gets its note; Beta's names a day still ahead; Gamma's names
+        # no zone; neither of those two gets one
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        c = self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")
+        ahead = D.datetime.now(D.timezone.utc) + D.timedelta(days=3)
+        self.limit_reply(a, age_s=3 * 86400)
+        self.limit_reply(b, text=weekly + ahead.strftime("%b ") + str(ahead.day) + ", 6pm (UTC)")
+        self.limit_reply(c, age_s=3 * 86400, text="Usage limit reached \u00b7 limit resets 12pm")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        self.assertEqual([x["sid"] for x in self.typed()], [a], out)
+        self.assertRegex(out, r"Alpha Lane: its last limit reply \(\"You've hit your weekly limit \u00b7 resets 12pm "
+                              r"\(America/New_York\)\"\) reset at \d{4}-\d\d-\d\d \d\d:\d\d .*; the wake-up note is typed")
+        self.assertIn("Beta Lane: its conversation last ended on a usage or limit reply", out)
+        self.assertIn("Gamma Lane: its conversation last ended on a usage or limit reply", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["noted"], sorted(rep["note_not_typed"])), (["Alpha Lane"], ["Beta Lane", "Gamma Lane"]))
 
     def test_G2_45_an_old_limit_reply_on_a_screen_holds_that_session_only(self):
         # after a resume the foot of the screen is history: Alpha's shows a limit reply from before the reset above

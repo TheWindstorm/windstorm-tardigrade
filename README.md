@@ -104,7 +104,7 @@ session at its limit that has not yet met it in its own conversation can still g
 after each note, and if it is held for the reset, the log and the counts say so ("note queued until the reset"). A
 limit belongs to the login, not to one conversation: once a note just typed meets the limit (the limit words appear
 after it), no other session on the same login gets a note in that run. A limit reply already in a conversation, or on
-a screen after a resume (which shows history), holds that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. To drop a held note, press Esc in that
+a screen after a resume (which shows history), holds that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. And it holds it only while its reset is still ahead: when the reply says when it resets ("resets 12pm (America/New_York)", "resets Nov 24, 6pm (…)"), that moment is worked out from the reply's own time and zone, and once it has passed (with five minutes' margin) the note is typed and the log says so. A reply that does not say when, or names no zone, still holds it. To drop a held note, press Esc in that
 session. Tardigrade does not press it for you. Your own words for the note (`wake_text`) must not read like a limit
 notice ("hit your weekly limit", "continue automatically", "/usage-credits"): `setup` names such words, and the
 default note is used in their place. The same goes for your status line: Tardigrade reads the lines under Claude
