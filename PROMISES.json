@@ -523,7 +523,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G3_6_the_record_runs_again_once_every_start_is_done",
-   "proven": "",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM of mine (tmux 3.4, Claude Code 2.1.330, no login, made-up sessions), on 14295fa (0.1.9 cafdfc9 with the T48 fix; the same T37 code as the candidate): a boot with three sessions, one held at its folder's trust question for the whole watch. Census said \"do not start them by hand\" only until every start was done (12 s), then \"Every start is done\"; the record timer ran during the watch (\"record: 3 session(s), 0 down\" at 5:20:54 PM ET) while the run still watched. 0.1.8.1's record at the same point skipped (\"a revive is running\").",
    "issue": 38,
    "moved_why": "",
    "moved_by_person": ""
@@ -621,7 +621,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G4_10_a_restore_says_at_once_when_herdr_is_not_running",
-   "proven": "",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM of mine (tmux 3.4, Claude Code 2.1.330, no login, made-up sessions), on candidate 1e2eb14: the config named a Herdr path, no Herdr server ran, and the record's three rows had tabs. First pass \"Herdr is not running: 3 tab(s) wait for it (up to 10 minutes after the sessions have loaded); Tardigrade does not start Herdr\"; census \"Herdr is not running: 3 tab(s) not attached\"; the late line \"herdr: its server never came up; tabs left as they are\"; on_done got 3 in {herdr_tabs_not_attached} and in TARDIGRADE_HERDR_TABS_NOT_ATTACHED; report \"Herdr was not running: 3 tab(s) not attached\". Nothing tried to start Herdr.",
    "issue": 47,
    "moved_why": "",
    "moved_by_person": ""
@@ -649,7 +649,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G3_17_a_session_that_goes_down_during_a_restore_stands_out_for_that_boot",
-   "proven": "",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM of mine (tmux 3.4, Claude Code 2.1.330, no login, made-up sessions), on candidate 1e2eb14: in a boot's restore, after the count and while the run waited for Herdr, one session was ended by typing Ctrl+C twice: the log said it \"went down while the restore still waits (after the count)\", census \"Down during the restore: b-6e (at 22:55)\" (5:55 PM ET), report listed it under \"Still needs a person\"; the next boot showed neither.",
    "issue": 49,
    "moved_why": "",
    "moved_by_person": ""
