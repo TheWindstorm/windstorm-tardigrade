@@ -569,6 +569,7 @@ def live(with_launch=True):
             "token_keys": ef["token_keys"], "token_print": ef["token_print"], "entrypoint": sj.get("entrypoint", "cli"),
             "account": ef["account"], "carry_env": ef["carry"],
             "status": sj.get("status", ""), "updated_at": int((sj.get("updatedAt") or 0) / 1000),
+            "started_at": int((sj.get("startedAt") or 0) / 1000),
             "tmux_socket": "", "tmux_session": "", "attached": 0, "herdr_tab": "", "herdr_workspace": "",
         }
         if kind == "tmux":
@@ -1748,6 +1749,19 @@ def census_data():
     coming = [r for r in down if r.get("tmux_session") and is_waiting(r["tmux_socket"], r["tmux_session"])]
     down = [r for r in down if r not in coming]
     down += [r for r in table["down"] if r["session_id"] not in live_ids]
+    # A name is not an identity (G3.7): a name that more than one session carries, running or on the record,
+    # and a session started by hand, under the name of one the last restore was bringing back, after it began.
+    ids_by_name = {}
+    for r in mine + table["lanes"] + table["down"]:
+        if r.get("name"):
+            ids_by_name.setdefault(r["name"], set()).add(r["session_id"])
+    same_name = {n: sorted(i) for n, i in ids_by_name.items() if len(i) > 1}
+    pr = read_json(progress_path(), {})
+    coming_names = {v.get("name"): k for k, v in ((pr.get("sessions") or {}) if isinstance(pr, dict) else {}).items()}
+    for r in mine:
+        sid_back = coming_names.get(r["name"])
+        if sid_back and sid_back != r["session_id"] and r.get("started_at", 0) >= int(pr.get("began") or 0) > 0:
+            r["by_hand"] = sid_back
     hidden = [r for r in mine if not r["window"]]
     shown = [r for r in mine if r["window"]]
     return {
@@ -1759,7 +1773,9 @@ def census_data():
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
-        "coming_back": len(coming), "restore": restore_now(),
+        "coming_back": len(coming), "restore": restore_now(), "same_name": same_name,
+        "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
+                    for r in mine if r.get("by_hand")],
         "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming},
     }
 
@@ -1819,7 +1835,8 @@ def census():
                 print(f"  {display(r):<34} last seen {ago(now - t)} ago   {r.get('cwd', '')}{how}")
             else:
                 q = ago(now - r["updated_at"]) if r["updated_at"] else "?"
-                print(f"  {display(r):<34} {r['status'] or '?':<8} quiet {q:<8} {where_text(r):<30} {r['cwd']}")
+                mark = "   STARTED BY HAND while its session was coming back" if r.get("by_hand") else ""
+                print(f"  {display(r):<34} {r['status'] or '?':<8} quiet {q:<8} {where_text(r):<30} {r['cwd']}{mark}")
 
     if coming := d["sessions"]["coming_back"]:
         print(f"\nCOMING BACK: a waiting screen holds its place ({len(coming)})")
@@ -1831,6 +1848,13 @@ def census():
     if d["lost"]:
         print(f"\n{d['lost']} of the sessions under DOWN vanished together, which looks like a crash. They are still "
               f"on the record: `tardigrade revive` brings them back. If you ended them yourself: record --force")
+    if d["same_name"]:
+        print("\nSAME NAME: more than one session carries it. A name is not enough to tell them apart; use the id.")
+        for nm, ids in sorted(d["same_name"].items()):
+            print(f"  {nm:<34} {len(ids)} sessions: {', '.join(ids)}")
+    for b in d["by_hand"]:
+        print(f"\n{b['name']} ({b['session_id'][:8]}) was started by hand while the restore was bringing back "
+              f"{b['in_place_of'][:8]} under that name. Two sessions may now do one job: end the one you do not want.")
     if d["other_users"]:
         print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; not read.")
     if d["helpers"]:

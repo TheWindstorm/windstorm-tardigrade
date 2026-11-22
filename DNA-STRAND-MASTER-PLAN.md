@@ -215,6 +215,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G3.4 | `census` counts the sessions that are stopped at a question or a dialog, and says so in its first lines. | `test_G3_4_census_counts_sessions_that_wait_for_an_answer` |
 | G3.5 | A recorded session that has stopped at Claude Code's "trust this folder?" question is shown as `trust?` and counted as waiting. Tardigrade reads the pane to find this out and keeps nothing from it. | `test_G3_5_census_names_a_session_parked_at_the_trust_question` |
 | G3.6 | While a restore runs, the first lines of `census` say so: how many of how many are back, and since when. A desktop note, and a Herdr notification where Herdr is up, says when a restore starts and when it ends. | `test_G3_6_census_and_a_note_say_that_a_restore_is_running` |
+| G3.7 | `census` lists every name that more than one session carries, running or on the record, with each id. A running session that started after the last restore began, carrying the name of a session that restore was bringing back under another id, is marked as started by hand while its session was coming back. | `test_G3_7_census_names_a_name_two_sessions_carry_and_a_copy_started_by_hand` |
 | G3.3 | On a shared machine, other users' Claude processes are counted by program name only. Their arguments, environment and files are never read. | Not verified by a test (see below). |
 
 ### G4 Windows and tabs
@@ -245,7 +246,6 @@ above with the name of its test, and the row's `test` field names the same test.
 
 | Codon | Claim | Promise |
 |---|---|---|
-| G3.7 | `census` lists every name that more than one session carries, running or on the record, with each id. A running session that started after the last restore began, carrying the name of a session that restore was bringing back under another id, is marked as started by hand while its session was coming back. | T8, due 0.1.8 |
 | G3.8 | `report` prints the last restore's timeline from times the run itself wrote down: the machine's start, the run's start and its own wait, the first and the last start, how many were up and loaded and when, the tabs attached and not (and why), and what still needs a person (failed, needs you, not loaded, note not typed, waiting at a question, ended by its owner, a name carried twice). Local time. It reads only. | T9, due 0.1.8 |
 | G5.6 | `record` (setup's first one too) takes a session's tab and workspace labels from, in order: Herdr now, the record before, and the `tsv_path` table when that table has the session's id (a table another tool wrote, the case of a machine switching over). A Herdr call that times out on a loaded machine loses that one pane's labels, not all of them, and setup gives Herdr longer to answer. | T10, due 0.1.8 |
 | G4.6 | On a desktop, a window opens by itself after login for each returned session that had a window, once the restore is done. A setting that setup offers; off where there is no desktop. | T11, due 0.1.9 |

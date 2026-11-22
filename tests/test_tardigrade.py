@@ -1095,6 +1095,33 @@ class Census(Base):
         runs = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()]
         self.assertEqual([r["body"] for r in runs if "notification" in r], notes)
 
+    def test_G3_7_census_names_a_name_two_sessions_carry_and_a_copy_started_by_hand(self):
+        self.cfg({"wake": "idle", "settle_s": 3, "starts_at_once": 1})
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta")]
+        self.tg("record", "--force")
+        self.reboot()
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                               env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100"),
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and not os.path.exists(self.state("progress.json")):
+                time.sleep(0.1)
+            time.sleep(1.1)
+            # its owner looks, does not see Beta yet, and starts a new session under its name somewhere else
+            hand = self.start_lane("byhand", "Beta Lane")
+            out, _ = run.communicate(timeout=120)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual(d["same_name"], {"Beta Lane": sorted([ids[1], hand])}, out)
+        self.assertEqual(d["by_hand"], [{"name": "Beta Lane", "session_id": hand, "in_place_of": ids[1]}])
+        rc, text = self.tg("census")
+        self.assertIn("SAME NAME: more than one session carries it", text)
+        self.assertIn("STARTED BY HAND while its session was coming back", text)
+        self.assertEqual(text.count("STARTED BY HAND"), 1)                    # the real Beta is not marked
+
     def test_G3_2_census_changes_nothing(self):
         self.start_lane("alpha", "Alpha Lane")
         self.tg("record", "--force")

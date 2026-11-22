@@ -115,7 +115,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G3_7_census_names_a_name_two_sessions_carry_and_a_copy_started_by_hand",
    "proven": "",
    "issue": 9,
    "moved_why": "",
