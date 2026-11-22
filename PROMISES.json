@@ -541,6 +541,20 @@
    "issue": 39,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T40",
+   "seen": "2026-11-22, a real try on a Linux machine: a claude -p run (one 25 s shell command) started from inside a session's own shell was written down by the 5-minute record as a session in tmux, under that session's own tmux name, with its flags. Claude Code marks a print-mode run \"interactive\" in its status file (entrypoint \"sdk-cli\"), so the check for runs that are not interactive did not catch it. A restart before the next record would have started it again as an interactive session, in a tmux session the real one also wanted.",
+   "promise": "a print-mode run, an SDK run, a run with no terminal and a run started from inside another session are never written down as a session and never started; they are counted as helpers.",
+   "codon": "G1.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8.1",
+   "ship_in": "0.1.8.1",
+   "test": "test_G1_12_a_one_shot_run_is_never_a_lane_wherever_it_runs",
+   "proven": "",
+   "issue": 42,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
