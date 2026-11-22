@@ -105,7 +105,35 @@ class Base(unittest.TestCase):
                     self.kill(int(out.strip()))
             except Exception:
                 pass
+        # anything else of this test's still running: a tardigrade run in flight when the run was stopped carries
+        # the test's folder only in its HOME, not on its command line. Each is ended by its exact process id.
+        mine = self.processes_of_this_test()
+        for pid in mine:
+            self.kill(pid)
+        end = time.time() + 3
+        while time.time() < end and any(os.path.exists(f"/proc/{p}") for p in mine):
+            time.sleep(0.1)
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def processes_of_this_test(self):
+        """this user's processes whose command line or environment names this test's folder (never this one)"""
+        found, me, key = [], os.getpid(), self.tmp.encode()
+        for p in os.listdir("/proc"):
+            if not p.isdigit() or int(p) == me:
+                continue
+            try:
+                if os.stat(f"/proc/{p}").st_uid != os.getuid():
+                    continue
+                with open(f"/proc/{p}/cmdline", "rb") as f:
+                    hit = key in f.read()
+                if not hit:
+                    with open(f"/proc/{p}/environ", "rb") as f:
+                        hit = key in f.read()
+            except OSError:
+                continue
+            if hit:
+                found.append(int(p))
+        return found
 
     def end_loose(self):
         """end the sessions this test started outside tmux, each by its exact process id"""
@@ -2086,17 +2114,25 @@ class Tests(unittest.TestCase):
         run.send_signal(signal.SIGTERM)
         run.wait(timeout=30)
         time.sleep(1)
-        left = []
-        for pid in os.listdir("/proc"):
-            if pid.isdigit():
-                try:
-                    with open(f"/proc/{pid}/cmdline", "rb") as f:
-                        if parent.encode() in f.read():
-                            left.append(pid)
-                except OSError:
-                    pass
-        self.assertEqual(left, [], "processes of the stopped run are still alive")
+
+        def left():
+            found = []
+            for pid in os.listdir("/proc"):
+                if pid.isdigit():
+                    for part in ("cmdline", "environ"):       # a run in flight names the folder only in its HOME
+                        try:
+                            with open(f"/proc/{pid}/{part}", "rb") as f:
+                                if parent.encode() in f.read():
+                                    found.append(pid)
+                                    break
+                        except OSError:
+                            pass
+            return found
+        self.assertEqual(left(), [], "processes of the stopped run are still alive")
         self.assertEqual(os.listdir(parent), [], "the stopped run left its folder behind")
+        time.sleep(3)                                       # and nothing comes back to write in it later
+        self.assertEqual(left(), [], "a process of the stopped run came back")
+        self.assertEqual(os.listdir(parent), [], "something of the stopped run wrote in its folder afterwards")
 
 
 class Invariants(unittest.TestCase):
