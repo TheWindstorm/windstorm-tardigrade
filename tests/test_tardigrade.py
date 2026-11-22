@@ -1177,6 +1177,59 @@ class Windows(Base):
             # typed into its tab before the first session had even been started: to its waiting screen
             self.assertLess(out.index(f"herdr {nm} Lane: the attach was typed into its tab"), first_start, out)
 
+    def lost_workspaces(self, places, extra_state):
+        """sessions whose Herdr workspaces are gone after a reboot; returns (what herdr was asked, revive's log)"""
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in places:
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], places[r["tmux_session"]]
+        jdump(t, p)
+        self.reboot()
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        jdump(dict({"workspaces": [{"workspace_id": "w1", "label": "Team"}], "tabs": [], "panes": [],
+                    "process_info": {}, "visible": {}}, **extra_state), os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "herdr_default_workspace": "Team"})
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + len(places))
+        return [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()], out
+
+    SHELL = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+
+    def test_G4_5_a_workspace_that_is_gone_is_made_again_under_its_old_name(self):
+        runs, out = self.lost_workspaces({"alpha": "Gone", "beta": "Gone", "gamma": "Cannot Make"}, {
+            "ws_fail": ["Cannot Make"], "process_info": {"wsp-Gone": {"shell_pid": 100, "foreground_processes": self.SHELL}},
+            "visible": {"wsp-Gone": "you@box:~$ \n"}})
+        made = [r for r in runs if "create_ws" in r]
+        self.assertEqual(sorted(r["create_ws"] for r in made), ["Cannot Make", "Gone"], out)   # once per workspace
+        self.assertTrue(all(r["no_focus"] for r in made))              # the person's view is never moved
+        creates = [r for r in runs if "create" in r]
+        self.assertIn({"create": "Beta Lane", "workspace": "wn-Gone", "no_focus": True}, creates)
+        self.assertIn({"create": "Gamma Lane", "workspace": "w1", "no_focus": True}, creates)    # only then the default
+        self.assertIn("workspace 'Gone' was gone; made again under its old name", out)
+        self.assertIn("workspace 'Cannot Make' was gone; could NOT be made again", out)
+        self.assertEqual(len([r for r in runs if "cmd" in r]), 3, out)  # each session got its tab
+
+    def test_G4_7_the_tab_a_workspace_made_again_comes_with_is_used_not_left_blank(self):
+        runs, out = self.lost_workspaces({"alpha": "Gone", "delta": "Busy Gone"}, {"process_info": {
+            "wsp-Gone": {"shell_pid": 100, "foreground_processes": self.SHELL},
+            "wsp-Busy Gone": {"shell_pid": 100, "foreground_processes": self.SHELL + [{"pid": 7, "argv": ["vim"]}]}},
+            "visible": {"wsp-Gone": "you@box:~$ \n", "wsp-Busy Gone": "you@box:~$ vim\n"}})
+        self.assertIn({"rename": "wst-Gone", "label": "Alpha Lane"}, runs)          # its first tab, renamed
+        self.assertEqual([r["pane"] for r in runs if "cmd" in r and r["cmd"].endswith("'=alpha'")], ["wsp-Gone"], out)
+        self.assertNotIn({"create": "Alpha Lane", "workspace": "wn-Gone", "no_focus": True}, runs)
+        # a first tab that is not blank by then is left as it is, and a new tab is made
+        self.assertNotIn("wsp-Busy Gone", [r.get("pane") for r in runs])
+        self.assertNotIn("wst-Busy Gone", [r.get("rename") for r in runs])
+        self.assertIn({"create": "Delta Lane", "workspace": "wn-Busy Gone", "no_focus": True}, runs)
+        self.assertIn("the first tab of the workspace made again is not blank (it is running something else)", out)
+
     def test_G4_2_a_herdr_tab_gets_its_session_back_only_at_an_idle_shell_with_an_empty_prompt(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))
         for n in ("alpha", "beta", "gamma", "delta"):
@@ -1210,7 +1263,7 @@ class Windows(Base):
         self.assertEqual(sorted(r["pane"] for r in typed), ["new-1", "p0"], out)      # Beta and Gamma: left alone
         for r in typed:
             self.assertRegex(r["cmd"], r"^env -u TMUX \S+ -S \S+ attach -t '=(alpha|delta)'$")   # quoted: zsh reads a bare =word as a command path   # only the attach, ever
-        self.assertEqual([r for r in runs if "create" in r], [{"create": "Delta Lane", "workspace": "w1"}])
+        self.assertEqual([r for r in runs if "create" in r], [{"create": "Delta Lane", "workspace": "w1", "no_focus": True}])
         self.assertIn("Beta Lane: its tab has text typed after the prompt; left alone", out)
         self.assertIn("Gamma Lane: its tab is running something else; left alone", out)
 

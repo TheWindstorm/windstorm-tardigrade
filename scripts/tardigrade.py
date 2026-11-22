@@ -1611,6 +1611,56 @@ def q_target(name):
     return "'=" + name.replace("'", "'\\''") + "'"
 
 
+MADE = {}      # workspace label -> what this run made again: {"ws", "tab", "pane", "used"}
+
+
+def idle_shell(pane):
+    """(the pane holds an idle shell with nothing typed after its prompt, why not)"""
+    pi = (herdr("pane", "process-info", "--pane", pane) or {}).get("process_info") or {}
+    fg = pi.get("foreground_processes") or []
+    if not (len(fg) == 1 and fg[0].get("pid") == pi.get("shell_pid")):
+        return False, "it is running something else"
+    rc, out = run([CFG["herdr"], "pane", "read", pane, "--source", "visible"], timeout=40)
+    last = [ln for ln in out.splitlines() if ln.strip()][-1:] or [""]
+    if not re.search(r"[$%#❯]\s*$", last[0]):
+        return False, "it has text typed after the prompt"
+    return True, ""
+
+
+def place_in_lost_workspace(r):
+    """G4.5, G4.7: a session whose workspace is gone. Its workspace is made again under its old label, once
+    per run, not focused. The tab a new workspace comes with is used for the first session placed there,
+    if it still holds an idle shell, so no blank tab is left; otherwise a new tab is made and that one is
+    left as it is. Only if the workspace cannot be made: herdr_default_workspace. Returns (pane, what)."""
+    lab = r.get("herdr_workspace") or ""
+    if lab and lab not in MADE:
+        res = herdr("workspace", "create", "--label", lab, "--cwd", r["cwd"] if os.path.isdir(r["cwd"]) else HOME,
+                    "--no-focus") or {}
+        wid = (res.get("workspace") or {}).get("workspace_id")
+        MADE[lab] = {"ws": wid, "tab": (res.get("tab") or {}).get("tab_id"),
+                     "pane": (res.get("root_pane") or {}).get("pane_id"), "used": False} if wid else None
+        log(f"herdr: workspace '{lab}' was gone; " + ("made again under its old name" if wid else "could NOT be made again"))
+    m = MADE.get(lab)
+    if m and not m["used"] and m["tab"] and m["pane"]:
+        m["used"] = True
+        ok, why = idle_shell(m["pane"])
+        if ok:
+            herdr("tab", "rename", m["tab"], r["herdr_tab"])
+            return m["pane"], f"tab '{r['herdr_tab']}' in workspace '{lab}', made again"
+        log(f"herdr {display(r)}: the first tab of the workspace made again is not blank ({why}); left as it is")
+    wid = m["ws"] if m else None
+    where_ = f"workspace '{lab}', made again"
+    if not wid and CFG.get("herdr_default_workspace"):
+        dl = [w for w in (herdr("workspace", "list") or {}).get("workspaces", [])
+              if clean_label(w.get("label")) == CFG["herdr_default_workspace"]]
+        wid = dl[0]["workspace_id"] if dl else None
+        where_ = f"the default workspace '{CFG['herdr_default_workspace']}'"
+    if not wid:
+        return None, ""
+    res = herdr("tab", "create", "--workspace", wid, "--label", r["herdr_tab"], "--no-focus") or {}
+    return (res.get("root_pane") or {}).get("pane_id"), f"new tab '{r['herdr_tab']}' in {where_}"
+
+
 def attach_tabs(rows, wait=True):
     """Herdr only: put each revived session back in the tab that carries its label. The one thing typed
     into a Herdr pane is the `tmux attach` for that session, and only when the pane holds an idle shell
@@ -1637,18 +1687,19 @@ def attach_tabs(rows, wait=True):
         if ws:
             cand = [t for t in cand if t.get("workspace_id") == ws[0]["workspace_id"]] or cand
         if not cand:
-            if not ws:
-                log(f"herdr {display(r)}: no tab '{r['herdr_tab']}' and no workspace '{r.get('herdr_workspace')}'; "
-                    "it runs in tmux with no tab")
-                done.add(r["session_id"])
+            if ws:
+                res = herdr("tab", "create", "--workspace", ws[0]["workspace_id"], "--label", r["herdr_tab"], "--no-focus")
+                pane, what = ((res or {}).get("root_pane") or {}).get("pane_id"), f"new tab '{r['herdr_tab']}'"
+            else:
+                pane, what = place_in_lost_workspace(r)
+            done.add(r["session_id"])
+            if not pane:
+                log(f"herdr {display(r)}: no tab '{r['herdr_tab']}', and its workspace '{r.get('herdr_workspace')}' "
+                    "is gone and could not be made again; it runs in tmux with no tab")
                 continue
-            res = herdr("tab", "create", "--workspace", ws[0]["workspace_id"], "--label", r["herdr_tab"])
-            pane = ((res or {}).get("root_pane") or {}).get("pane_id")
-            if pane:
-                time.sleep(2)
-                herdr("pane", "run", pane, att)
-                typed.append((r, f"new tab '{r['herdr_tab']}'"))
-                done.add(r["session_id"])
+            time.sleep(0 if TESTING else 2)
+            herdr("pane", "run", pane, att)
+            typed.append((r, what))
             continue
         tp = [p for p in pns if p.get("tab_id") == cand[0]["tab_id"]]
         if not tp:
@@ -1659,13 +1710,9 @@ def attach_tabs(rows, wait=True):
         done.add(r["session_id"])           # from here on, whatever happens, the tab is done for this run
         if any(attach_of(p.get("argv")) == (sock, s) for p in fg):
             continue
-        if not (len(fg) == 1 and fg[0].get("pid") == pi.get("shell_pid")):
-            log(f"herdr {display(r)}: its tab is running something else; left alone")
-            continue
-        rc, out = run([CFG["herdr"], "pane", "read", pid, "--source", "visible"], timeout=40)
-        last = [ln for ln in out.splitlines() if ln.strip()][-1:] or [""]
-        if not re.search(r"[$%#❯]\s*$", last[0]):
-            log(f"herdr {display(r)}: its tab has text typed after the prompt; left alone")
+        ok, why = idle_shell(pid)
+        if not ok:
+            log(f"herdr {display(r)}: its tab {why.replace('it is ', 'is ').replace('it has ', 'has ')}; left alone")
             continue
         herdr("pane", "run", pid, att)
         typed.append((r, f"tab '{r['herdr_tab']}'"))
