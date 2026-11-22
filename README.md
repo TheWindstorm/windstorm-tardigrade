@@ -194,6 +194,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `wake_text` | | Your own words for the note. `{when}` is the time it came back. |
 | `notes_per_min` | `6` | At most this many notes typed in one minute, so many sessions do not all take a turn at once. |
 | `stagger_s` | `3` | Seconds between two session starts. |
+| `retry_gap_s` | `60` | Seconds between retry rounds for a start that did not come up. A start that is only a little late is looked at in every pass meanwhile. |
 | `starts_at_once` | `4` | At most this many sessions started and not yet seen up. The wait after each start overlaps with the next starts; the decision to start is still made one session at a time. Lower it on a small machine. |
 | `boot_window_min` | `40` | The boot service acts only on a machine up for less than this. |
 | `boot_wait_s` | `45` | Seconds the boot service waits before its run. Run setup again after changing it. |

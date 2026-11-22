@@ -56,7 +56,7 @@ class Base(unittest.TestCase):
         os.makedirs(os.path.join(self.tmp, "x11"))
         with open(os.path.join(self.tmp, "x11", "X10"), "w") as f:      # this "machine" has a desktop on display :10
             f.write("")
-        self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1,
+        self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1, "retry_gap_s": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
         self.pids, self.loose = [], []
@@ -784,6 +784,21 @@ class Revive(Base):
         self.assertEqual((rep["started"], rep["fresh"], rep["failed"], rep["needs_you"]),
                          (["Alpha Lane"], ["Alpha Lane"], [], []), out)
         self.assertEqual(self.typed(), [])
+
+    def test_G2_44_a_start_that_is_up_a_little_late_is_looked_after_at_once(self):
+        # seen on a Mac: the first start after login waited on the network for its login and missed the 8 s look
+        self.cfg({"settle_s": 1, "retry_gap_s": 60, "claude_command": "sleep 3; claude"})
+        self.recorded_then_rebooted()
+        n = len(self.launches())
+        t0 = time.time()
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertIn("Alpha Lane: not running yet (attempt 1); will retry", out)
+        self.assertIn("Alpha Lane: up (came up late)", out)
+        self.assertLess(time.time() - t0, 45, "it waited for the retry round, 60 s away")
+        self.assertEqual(len(self.launches()), n + 1)               # one start, never a second copy
+        self.assertEqual(len(self.wait_typed(1)), 1)                # and it is looked after: its note is typed
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["failed"]), (["Alpha Lane"], []), out)
 
     def test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser(self):
         a = self.start_lane("alpha", "Alpha Lane", flags="--permission-mode acceptEdits")

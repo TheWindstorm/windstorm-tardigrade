@@ -9,6 +9,8 @@ T13). Every row due in 0.1.8 is built and named in the plan next to its test.
 
 The first minutes after a reboot:
 
+- **A start that is a little late is looked after at once** (G2.44), not at the next retry round 60 s later. On a
+  Mac, the first start after login waits on the network for its login and missed the first look.
 - **Several sessions start at a time** (G2.34): at most `starts_at_once` (default 4) started and not yet seen up.
   Each start is still decided on its own, right before it, with a fresh process list.
 - **A waiting screen holds each place from the first minute** (G4.4). Each session to be started gets its tmux

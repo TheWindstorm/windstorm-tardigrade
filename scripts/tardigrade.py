@@ -69,6 +69,7 @@ CFG = {
     "settle_s": 8,            # wait this long before checking that a start worked
     "starts_at_once": 4,      # at most this many sessions started and not yet seen up; the waits overlap
     "retry_min": 25,          # keep retrying failed starts this long (the network may lag at boot)
+    "retry_gap_s": 60,        # between retry rounds; a late start is looked at in every pass meanwhile (G2.44)
     "wake": "note",           # "note": tell each revived session what happened; "idle": say nothing
     "wake_names": [],         # patterns: sessions whose name matches get the note even with "wake": "idle"
     "wake_skip": [],          # patterns: sessions whose name matches never get the note
@@ -1792,6 +1793,31 @@ def _revive(boot):
         prog["sessions"][sid]["state"] = "up"
         write_progress(prog)
 
+    def came_late(sid, r, pid):
+        nonlocal last_up
+        log(f"  {display(r)}: up (came up late)")
+        report["started"].append(display(r))
+        came.append(r)
+        last_up = time.time()
+        if note and same_login(r, pid) and not r.get("fresh") and wants_note(r):
+            note_for[sid] = note
+        del pending[sid]
+        prog["back"] += 1
+        prog["sessions"][sid]["state"] = "up"
+        write_progress(prog)
+
+    def late_ones():
+        """G2.44: a start that was not up at its settle look is looked at in every pass, not only at the next
+        retry round, so a session that came up a little late is counted and looked after at once."""
+        if not pending:
+            return
+        P = procs()
+        for sid, (r, n) in list(pending.items()):
+            if n and sid not in inflight:
+                pid = came_up(r, P)
+                if pid:
+                    came_late(sid, r, pid)
+
     def no_conversation_late():
         """G2.43: a session with no conversation can take longer than settle_s to say so and end (a Mac whose
         start fetches a login first). It was counted up; it went down. If its own pane, in a tmux session this
@@ -1850,6 +1876,7 @@ def _revive(boot):
                     log(f"  {display(r)}: not running yet (attempt {pending[sid][1]}); will retry")
             # with many sessions the starts take minutes: the ones already up are looked after meanwhile
             if time.time() - w.last_look >= (0 if TESTING else 15):
+                late_ones()
                 w.look(came)
                 no_conversation_late()
             end_due()
@@ -1868,16 +1895,7 @@ def _revive(boot):
                 P = procs()            # taken fresh for each session, right before the decision to start it
                 late = came_up(r, P) if n else None
                 if late:
-                    log(f"  {nm}: up (came up late)")
-                    report["started"].append(nm)
-                    came.append(r)
-                    last_up = time.time()
-                    if note and same_login(r, late) and not r.get("fresh") and wants_note(r):
-                        note_for[sid] = note
-                    del pending[sid]
-                    prog["back"] += 1
-                    prog["sessions"][sid]["state"] = "up"
-                    write_progress(prog)
+                    came_late(sid, r, late)
                     continue
                 if sid in running_sids(P):
                     there = holder_text(sid, P)
@@ -1904,7 +1922,7 @@ def _revive(boot):
                     log(f"  {nm}: not running yet (attempt {pending[sid][1]}); will retry")
                 time.sleep(float(CFG["stagger_s"]))
             settle(wait_all=True)
-            next_try = time.time() + (1 if TESTING else 60)
+            next_try = time.time() + float(CFG["retry_gap_s"])
         if not tries_done and (not pending or time.time() >= deadline):
             tries_done = True
             for sid, (r, n) in pending.items():
@@ -1922,6 +1940,7 @@ def _revive(boot):
         # the sessions that are up are looked after in every pass, also while another start is being retried
         if inflight:
             settle()
+        late_ones()
         waiting = w.look(came)
         no_conversation_late()
         waiting += len(inflight)

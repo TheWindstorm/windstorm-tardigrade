@@ -401,6 +401,34 @@
    "issue": 29,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T29",
+   "seen": "2026-11-22, a clean reboot of a Mac test machine on 0.1.7: the first session started after login was 'not running yet' at the 8-second look, because its start goes through the machine's login wrapper, which fetches a token over the network, and the first network call after a boot took longer than that. It came up seconds later but was looked at again only in the retry round after the whole pass plus 60 seconds, 4.5 minutes later, with no trust answer and no note in between. It is the first session after every boot that pays this; on a fleet machine that is somebody's lane sitting unwatched.",
+   "promise": "A session that was started but not yet seen up is looked at in every watch pass, not only at the next retry round; once it is up it is counted and looked after (trust answer, note, tab) at once.",
+   "codon": "G2.44",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G2_44_a_start_that_is_up_a_little_late_is_looked_after_at_once",
+   "proven": "",
+   "issue": 30,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T30",
+   "seen": "2026-11-22, a clean reboot of a Mac test machine on 0.1.7: another skill's test session had been started with a variable set by hand, the folder where that skill keeps its state. It came back without it, because carry_env did not name it, and nothing said so; the skill's hooks then wrote to the default folder and its start-up reminder disagreed with the state in the other folder. That skill has fixed its own side: the folder now lives in the project's own settings, so any restart keeps it.",
+   "promise": "Before a reboot, record and census name (names only, never values) the variables a running session has that its own start would not give back, so the person learns it beforehand. Tardigrade does not guess which ones matter and does not carry them by itself; carry_env stays the person's switch.",
+   "codon": "G3.15",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 31,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
