@@ -1190,6 +1190,7 @@ class Revive(Base):
         self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["noted"], rep["note_not_typed"]), ([], ["Alpha Lane"]))
+        self.assertIn("this machine's own login is at its usage limit", out)       # live evidence (G2.45)
         # the forms it takes, or may take; and ordinary words are not mistaken for one
         import importlib.util
         spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
@@ -1202,6 +1203,12 @@ class Revive(Base):
             self.assertTrue(tg.OTHER_DIALOG.search(text), text)
         for text in ("❯ ", "  ⏵⏵ bypass permissions on", "● Done. The tests pass.", "Context left until auto-compact: 12%"):
             self.assertFalse(tg.OTHER_DIALOG.search(text), text)
+        # live evidence that a login is AT its limit (G2.45); a warning that it is near is not
+        for text in ("⚠ Usage limit reached · limit resets 12pm", "You've hit your weekly limit · resets 12pm",
+                     "set to continue automatically at 12pm", "You have reached your plan's usage limit."):
+            self.assertTrue(tg.AT_LIMIT.search(text), text)
+        for text in ("Approaching usage limit", "/usage-credits to continue now", "Context left until auto-compact: 12%"):
+            self.assertFalse(tg.AT_LIMIT.search(text), text)
         # and the same rule holds the trust answer (G2.12): one pattern for both
         src = fread(SCRIPT)
         call = src.index("type_note(r, self.note_for")
@@ -1212,8 +1219,9 @@ class Revive(Base):
         d = os.path.join(self.home, ".claude", "projects", "-work")
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, sid + ".jsonl"), "w") as f:
-            for e in ({"type": "user", "message": {"content": "carry on"}},
-                      {"type": "assistant", "isApiErrorMessage": True, "error": "rate_limit", "message": {
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 3 * 86400)) + ".000Z"   # 3 days old
+            for e in ({"type": "user", "timestamp": stamp, "message": {"content": "carry on"}},
+                      {"type": "assistant", "timestamp": stamp, "isApiErrorMessage": True, "error": "rate_limit", "message": {
                           "model": "<synthetic>", "content": [{"type": "text", "text":
                               "You've hit your weekly limit \u00b7 resets 12pm (America/New_York)"}]}},
                       {"type": "system", "subtype": "informational", "level": "notice"}, {"type": "cost-state"}) + tuple(then):
@@ -1221,18 +1229,41 @@ class Revive(Base):
 
     def test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named(self):
         # seen on a real machine: a note typed at the weekly limit is not lost; Claude Code holds it and runs it
-        # by itself at the reset, hours later. Alpha's conversation ended on the limit reply: no note.
-        a = self.recorded_then_rebooted()
+        # by itself at the reset, hours later. Alpha's conversation ended on a limit reply 3 days ago: no note for
+        # it. That reply is no evidence that the login is at its limit NOW, so Beta and Gamma, on the same
+        # login, still get theirs.
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")
         self.limit_reply(a)
+        self.reboot()
         n = len(self.launches())
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
-        self.wait_launches(n + 1)
-        self.assertEqual(self.typed(), [], out)
+        self.wait_launches(n + 3)
+        self.assertNotIn(a, [x["sid"] for x in self.typed()], out)
+        self.assertEqual(len(self.typed()), 2, out)
         self.assertIn("Alpha Lane: its conversation last ended on a usage or limit reply (\"You've hit your weekly limit "
                       "\u00b7 resets 12pm (America/New_York)\"); the wake-up note is not typed", out)
         self.assertIn("Alpha Lane: loaded, but its conversation last ended on a usage or limit reply; the wake-up note "
                       "was not typed", out)
-        self.assertEqual(jload(self.state("last-revive.json"))["note_not_typed"], ["Alpha Lane"])
+        self.assertNotIn("is at its usage limit", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((sorted(rep["noted"]), rep["note_not_typed"]), (["Beta Lane", "Gamma Lane"], ["Alpha Lane"]))
+        # the same again, but now the login IS at its limit: the first note typed is seen held for the reset (live
+        # evidence), and the other session on that login gets none
+        self.reboot()
+        open(os.path.join(self.home, "limitqueue"), "w").close()
+        n, t = len(self.launches()), len(self.typed())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 3)
+        self.assertEqual(len(self.typed()) - t, 1, out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual(len(rep["noted"]), 1, out)
+        self.assertEqual(rep["note_queued"], rep["noted"])
+        other = ({"Beta Lane", "Gamma Lane"} - set(rep["noted"])).pop()
+        self.assertEqual(rep["note_held_login_at_limit"], [other], out)
+        self.assertEqual(sorted(rep["note_not_typed"]), sorted(["Alpha Lane", other]))
         # a limit reply that the person went on past is not the end of the conversation; nor is an ordinary error
         import importlib.util
         spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)

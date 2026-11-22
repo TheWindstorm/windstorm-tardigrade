@@ -1492,8 +1492,12 @@ QUESTION = re.compile(r"trust this folder|No, exit|❯\s*\d\.\s|usage credits|St
 # why a note is held for the rest of the run (G2.45); a notice on the screen may yet go, these do not
 HELD_CONV = "its conversation last ended on a usage or limit reply"
 HELD_ACCOUNT = "its login is at its usage limit"
+HELD_SCREEN = "a usage or limit notice is on its screen"
 # what Claude Code shows when a message met a limit and is held for the reset (G2.45)
 QUEUED = re.compile(r"continue automatically|continuing automatically", re.I)
+# live evidence, on a screen now, that a login is at its limit; "approaching" a limit is not (G2.45)
+AT_LIMIT = re.compile(r"limit reached|hit your (weekly |daily |session )?limit|reached your (plan'?s? )?(usage )?limit|"
+                      r"continue automatically|continuing automatically", re.I)
 
 
 def tmp_emptied():
@@ -1577,6 +1581,7 @@ class Watch:
         self.gone_new = []              # sessions seen going down in a pass, for the run to look at (G2.43)
         self.queued = []                # sessions whose note met a limit and waits for the reset (G2.45)
         self.at_limit = set()           # logins known to be at their usage limit in this run (G2.45)
+        self.conv_read = set()          # sessions whose conversation was looked at for a limit reply
 
     def take_gone(self):
         out, self.gone_new = self.gone_new, []
@@ -1589,17 +1594,14 @@ class Watch:
         return len(self.note_times) < max(1, int(float(CFG.get("notes_per_min") or 6)))
 
     def login_at_limit(self, r, started):
-        """A usage limit belongs to the login, not to one conversation: once one session shows it, no note is
+        """A usage limit belongs to the login, not to one conversation: once one session shows it LIVE in this
+        run (a note just held, or the notice on its screen now; never an old reply in its conversation), no note is
         typed into any other session on the same login for the rest of this run, or every one of them would
         wait in Claude Code's queue and all run at once at the reset (G2.45)."""
         k = login_key(r)
         if k in self.at_limit:
             return
-        self.at_limit.add(k)
-        rest = [x for x in started if login_key(x) == k and x["session_id"] != r["session_id"]
-                and x["session_id"] in self.note_for and x["session_id"] not in self.noted_ids]
-        for x in rest:
-            self.held[x["session_id"]] = HELD_ACCOUNT
+        self.at_limit.add(k)            # each other session on it is held at its own turn, its own reasons first
         log(f"{login_words(r)} is at its usage limit: no more notes are typed into sessions on it in this run, so "
             "they do not all wait in Claude Code's queue and run at once at the reset")
 
@@ -1638,20 +1640,24 @@ class Watch:
                 continue
             final = (HELD_CONV, HELD_ACCOUNT)
             if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final:
-                if login_key(r) in self.at_limit:
+                # its own reasons first: an old limit reply in its conversation (looked at once), its screen now
+                limit = "" if sid in self.conv_read else ended_on_limit(r)
+                self.conv_read.add(sid)
+                if limit:
+                    self.held[sid] = HELD_CONV
+                    log(f"  {display(r)}: its conversation last ended on a usage or limit reply (\"{limit}\"); the "
+                        "wake-up note is not typed: Claude Code would hold it and run it by itself at the reset")
+                    # that reply may be days old and the limit long reset: it holds this session's note only
+                elif login_key(r) in self.at_limit and self.held.get(sid) != HELD_SCREEN:
                     self.held[sid] = HELD_ACCOUNT
-                else:
-                    limit = ended_on_limit(r)
-                    if limit:
-                        self.held[sid] = HELD_CONV
-                        log(f"  {display(r)}: its conversation last ended on a usage or limit reply (\"{limit}\"); the "
-                            "wake-up note is not typed: Claude Code would hold it and run it by itself at the reset")
-                        self.login_at_limit(r, started)
-            if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final:
+            if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final \
+                    and not (self.held.get(sid) == HELD_SCREEN and login_key(r) in self.at_limit):
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
                 if OTHER_DIALOG.search(bottom(screen, 15)):
-                    self.held[sid] = "a usage or limit notice is on its screen"
+                    self.held[sid] = HELD_SCREEN
+                    if AT_LIMIT.search(bottom(screen, 15)):
+                        self.login_at_limit(r, started)         # live: on its screen now
                 if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(styled) \
                         and not OTHER_DIALOG.search(bottom(screen, 15)) and self.may_note():
                     self.note_times.append(time.time())
@@ -1662,11 +1668,12 @@ class Watch:
                     time.sleep(1.5 if TESTING else 4)      # looked at once more: did it meet a limit?
                     after = SGR.sub("", tmux(r["tmux_socket"], "capture-pane", "-p", "-t",
                                              f"={r['tmux_session']}:", timeout=6)[1])
-                    if QUEUED.search(bottom(after, 15)) or OTHER_DIALOG.search(bottom(after, 15)):
+                    if QUEUED.search(bottom(after, 15)):
                         self.queued.append(display(r))
                         log(f"  {display(r)}: the note met a usage limit; Claude Code holds it and will run it by "
                             "itself at the reset (press Esc in that session to drop it)")
-                        self.login_at_limit(r, started)
+                    if AT_LIMIT.search(bottom(after, 15)):
+                        self.login_at_limit(r, started)         # live: the note just met the limit
                 else:
                     waiting += 1
                     continue

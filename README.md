@@ -102,8 +102,9 @@ Code holds it and runs it by itself when the limit resets, perhaps hours later, 
 into a session whose conversation last ended on a usage or limit reply, nor beside a limit notice on its screen. A
 session at its limit that has not yet met it in its own conversation can still get one; Tardigrade looks once more
 after each note, and if it is held for the reset, the log and the counts say so ("note queued until the reset"). A
-limit belongs to the login, not to one conversation: once one session shows it, no other session on the same login
-gets a note in that run, so they do not all wait and run at once at the reset. To drop a held note, press Esc in that
+limit belongs to the login, not to one conversation: once one session shows it now (its note held, or the notice on
+its screen), no other session on the same login gets a note in that run; an old limit reply in a conversation holds
+that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. To drop a held note, press Esc in that
 session. Tardigrade does not press it for you.
 
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
