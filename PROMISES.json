@@ -625,6 +625,20 @@
    "issue": 47,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T45",
+   "seen": "2026-11-22, a clean reboot of a Mac test machine on 0.1.8.1: nine sessions whose conversations last ended on the day before's \"You've hit your weekly limit · resets 12pm (America/New_York)\" got no wake-up note at a restore at 1:03 PM in that zone, an hour after that reset had passed.",
+   "promise": "a limit reply holds the note only while its reset moment is still ahead; that moment comes from the reply's own timestamp and named zone (a date in the reply is used), never today's clock alone; once it has passed with a few minutes' margin, the note is typed and the log says so; a reply whose reset cannot be read stays held; tested with real weekly and 5-hour reply texts, with and without a date; seen on a real machine before its tag.",
+   "codon": "G2.48",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 48,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
