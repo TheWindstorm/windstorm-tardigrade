@@ -1318,6 +1318,25 @@ class Census(Base):
         self.assertNotIn("answered Yes", fread(self.state("tardigrade.log")))     # off unless switched on
 
 
+    def test_G3_12_census_names_each_running_session_that_will_not_come_back_and_why(self):
+        self.start_lane("alpha", "Alpha Lane")
+        self.tg("record", "--force")
+        time.sleep(1.1)
+        self.start_lane("beta", "Beta Lane")                     # a session started by hand after the record
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual([(x["name"], x["why"]) for x in d["not_kept"]],
+                         [("Beta Lane", "started after the last record: the next record takes it")])
+        out = self.tg("census")[1]
+        self.assertIn("RUNNING, BUT WILL NOT COME BACK after a reboot (1):", out)
+        self.cfg({"skip_tmux_sockets": [os.path.basename(self.sock)]})   # another tool brings these back
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual(sorted((x["name"], x["why"]) for x in d["not_kept"]),
+                         [(n, "its tmux socket is on skip_tmux_sockets: another tool brings it back")
+                          for n in ("Alpha Lane", "Beta Lane")])
+        src = fread(SCRIPT)                                      # census and record use one rule, from one place
+        self.assertEqual(src.count("left_out_why(r)"), 3)          # its definition, record and census
+
+
 class Setup(Base):
     def test_G5_1_the_boot_service_revives_once_and_outlives_itself(self):
         rc, out = self.tg("setup", "--print-units")

@@ -715,6 +715,18 @@ def live(with_launch=True):
     return mine, others, helpers
 
 
+def left_out_why(r):
+    """Why record leaves this running session out, or "" when it is kept (G3.12 says it in the census)."""
+    if not r["restorable"]:
+        return "no terminal, and not started from the command line: some program's own session"
+    if r["host"] == "tmux" and os.path.basename(r["tmux_socket"]) in set(CFG.get("skip_tmux_sockets") or []):
+        return "its tmux socket is on skip_tmux_sockets: another tool brings it back"   # one restorer per session
+    if r["host"] != "tmux" and any(re.search(p, r["name"]) for p in (CFG.get("loose_skip") or [])
+                                   if isinstance(p, str)):
+        return "a loose_skip pattern in the settings leaves it out"
+    return ""
+
+
 def running_sids(P=None):
     """every session id held by a live Claude of this user, in any terminal"""
     held = set()
@@ -846,15 +858,9 @@ def record():
         labels = herdr_labels()
     table_labels = tsv_labels() if CFG.get("tsv_path") else {}
     rows, used = [], set()
-    skip = set(CFG.get("skip_tmux_sockets") or [])
-    loose_skip = [p for p in (CFG.get("loose_skip") or []) if isinstance(p, str)]
     for r in mine:
-        if not r["restorable"]:
+        if left_out_why(r):
             continue
-        if r["host"] == "tmux" and os.path.basename(r["tmux_socket"]) in skip:
-            continue           # another tool brings these back: one restorer per session
-        if r["host"] != "tmux" and any(re.search(p, r["name"]) for p in loose_skip):
-            continue           # a plain terminal the person told us to leave alone
         o = old_by.get(r["session_id"], {})
         # labels from, in order: Herdr now, the record before, the table at tsv_path (G5.6)
         tab, ws = (labels[0].get((r["tmux_socket"], r["tmux_session"])) or labels[1].get(r["pid"])
@@ -2080,6 +2086,16 @@ def census_data():
         sid_back = coming_names.get(r["name"])
         if sid_back and sid_back != r["session_id"] and r.get("started_at", 0) >= int(pr.get("began") or 0) > 0:
             r["by_hand"] = sid_back
+    on_record = {r["session_id"] for r in table["lanes"]}
+    rec_at = int(table.get("recorded_at") or 0)
+    not_kept = []
+    for r in mine:
+        why = left_out_why(r)
+        if not why and r["session_id"] not in on_record and r.get("status") != "starting":
+            why = ("started after the last record: the next record takes it" if r.get("started_at", 0) >= rec_at
+                   else "not on the record: run `tardigrade record`")
+        if why:
+            not_kept.append({"name": display(r), "session_id": r["session_id"], "why": why})
     hidden = [r for r in mine if not r["window"]]
     shown = [r for r in mine if r["window"]]
     return {
@@ -2091,7 +2107,7 @@ def census_data():
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
-        "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
+        "not_kept": not_kept, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
                     for r in mine if r.get("by_hand")],
         "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming,
@@ -2195,6 +2211,10 @@ def census():
         print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; not read.")
     if d["helpers"]:
         print(f"Helper sessions started by other sessions: {d['helpers']} (not brought back after a reboot).")
+    if d["not_kept"]:
+        print(f"\nRUNNING, BUT WILL NOT COME BACK after a reboot ({len(d['not_kept'])}):")
+        for x in sorted(d["not_kept"], key=lambda x: x["name"].lower()):
+            print(f"  {x['name']:<34} {x['why']}")
     if d["trust"]:
         print(f"\ntrust? = Claude Code asks whether to trust that session's folder, and the session has not loaded yet "
               f"({d['trust']}). A session in your home folder is asked on every start. Open its window and answer, "

@@ -298,7 +298,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G3_12_census_names_each_running_session_that_will_not_come_back_and_why",
    "proven": "",
    "issue": 22,
    "moved_why": "",

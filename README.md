@@ -82,6 +82,10 @@ DOWN: on the record, not running now
 "Quiet" is the time since the session last did anything. A hidden session that has been quiet for nine days is
 usually one you forgot.
 
+A session that is running but will not come back after a reboot is listed under RUNNING, BUT WILL NOT COME BACK,
+with the reason: it was started after the last record (the next record takes it), a setting leaves it out, or it is
+some program's own session.
+
 ## What comes back, and what does not
 
 **Comes back:** the conversation, the session's name, its folder, its model, effort and permission mode, every
