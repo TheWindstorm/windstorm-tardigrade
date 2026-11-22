@@ -54,6 +54,8 @@ The wake-up note:
   On a real reboot, 0.1.7's note went into two sessions at their weekly limit; Claude Code held it, to run by
   itself at the reset about 9 hours later. A session at its limit that has not met it in its own conversation is
   not covered by the first part; the second part tells you its note is waiting ("note queued until the reset").
+  And a limit belongs to the login: once one session on a login shows it, no other session on that login gets a
+  note in that run, so many sessions sharing one login do not all run stale notes at once at the reset.
 
 A name is not an identity:
 

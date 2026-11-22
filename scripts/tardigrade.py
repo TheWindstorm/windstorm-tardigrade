@@ -1262,6 +1262,18 @@ def login_print(r):
     return r.get("token_print") or ("unknown" if r.get("token_keys") else "")
 
 
+def login_key(r):
+    """which login a session uses, as far as a record knows: its account label, its login fingerprint and its
+    Claude Code folder. Sessions with the same key share one usage limit (G2.45)."""
+    return (str(r.get("account") or ""), login_print(r), str(r.get("config_dir") or ""))
+
+
+def login_words(r):
+    if r.get("account"):
+        return f"the account {r['account']}"
+    return "the login these sessions share" if login_print(r) else "this machine's own login"
+
+
 def same_login(r, pid):
     want = login_print(r)
     return want == "unknown" or env_facts(pid)["token_print"] == want
@@ -1477,6 +1489,9 @@ def answer_trust(r):
 
 
 QUESTION = re.compile(r"trust this folder|No, exit|❯\s*\d\.\s|usage credits|Stop and wait")
+# why a note is held for the rest of the run (G2.45); a notice on the screen may yet go, these do not
+HELD_CONV = "its conversation last ended on a usage or limit reply"
+HELD_ACCOUNT = "its login is at its usage limit"
 # what Claude Code shows when a message met a limit and is held for the reset (G2.45)
 QUEUED = re.compile(r"continue automatically|continuing automatically", re.I)
 
@@ -1561,6 +1576,7 @@ class Watch:
         self.held = {}                  # session id: why its note is held back, when that is known
         self.gone_new = []              # sessions seen going down in a pass, for the run to look at (G2.43)
         self.queued = []                # sessions whose note met a limit and waits for the reset (G2.45)
+        self.at_limit = set()           # logins known to be at their usage limit in this run (G2.45)
 
     def take_gone(self):
         out, self.gone_new = self.gone_new, []
@@ -1571,6 +1587,21 @@ class Watch:
         win = 6 if TESTING else 60
         self.note_times = [t for t in self.note_times if time.time() - t < win]
         return len(self.note_times) < max(1, int(float(CFG.get("notes_per_min") or 6)))
+
+    def login_at_limit(self, r, started):
+        """A usage limit belongs to the login, not to one conversation: once one session shows it, no note is
+        typed into any other session on the same login for the rest of this run, or every one of them would
+        wait in Claude Code's queue and all run at once at the reset (G2.45)."""
+        k = login_key(r)
+        if k in self.at_limit:
+            return
+        self.at_limit.add(k)
+        rest = [x for x in started if login_key(x) == k and x["session_id"] != r["session_id"]
+                and x["session_id"] in self.note_for and x["session_id"] not in self.noted_ids]
+        for x in rest:
+            self.held[x["session_id"]] = HELD_ACCOUNT
+        log(f"{login_words(r)} is at its usage limit: no more notes are typed into sessions on it in this run, so "
+            "they do not all wait in Claude Code's queue and run at once at the reset")
 
     def tabs(self, last=False):
         """Herdr only: attach each tab not yet done, in every pass, from the start of the run (G4.3). The
@@ -1605,13 +1636,18 @@ class Watch:
                     self.answered.append(display(r))
                 waiting += 1
                 continue
-            if sid in self.note_for and sid not in self.noted_ids and sid not in self.held:
-                limit = ended_on_limit(r)
-                if limit:
-                    self.held[sid] = "its conversation last ended on a usage or limit reply"
-                    log(f"  {display(r)}: its conversation last ended on a usage or limit reply (\"{limit}\"); the "
-                        "wake-up note is not typed: Claude Code would hold it and run it by itself at the reset")
-            if sid in self.note_for and sid not in self.noted_ids and not self.held.get(sid, "").startswith("its conv"):
+            final = (HELD_CONV, HELD_ACCOUNT)
+            if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final:
+                if login_key(r) in self.at_limit:
+                    self.held[sid] = HELD_ACCOUNT
+                else:
+                    limit = ended_on_limit(r)
+                    if limit:
+                        self.held[sid] = HELD_CONV
+                        log(f"  {display(r)}: its conversation last ended on a usage or limit reply (\"{limit}\"); the "
+                            "wake-up note is not typed: Claude Code would hold it and run it by itself at the reset")
+                        self.login_at_limit(r, started)
+            if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final:
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
                 if OTHER_DIALOG.search(bottom(screen, 15)):
@@ -1630,6 +1666,7 @@ class Watch:
                         self.queued.append(display(r))
                         log(f"  {display(r)}: the note met a usage limit; Claude Code holds it and will run it by "
                             "itself at the reset (press Esc in that session to drop it)")
+                        self.login_at_limit(r, started)
                 else:
                     waiting += 1
                     continue
@@ -1638,7 +1675,7 @@ class Watch:
 
     def count(self, started):
         res = {"trust_answered": self.answered, "noted": self.noted, "loaded": [], "not_loaded": [],
-               "down_again": [], "note_not_typed": [], "note_queued": self.queued}
+               "down_again": [], "note_not_typed": [], "note_queued": self.queued, "note_held_login_at_limit": []}
         why = {}
         P = procs()
         for r in started:
@@ -1652,6 +1689,8 @@ class Watch:
                 if r["session_id"] in self.note_for and r["session_id"] not in self.noted_ids:
                     res["note_not_typed"].append(display(r))
                     why[display(r)] = self.held.get(r["session_id"], "not idle (a question on its screen?)")
+                    if self.held.get(r["session_id"]) == HELD_ACCOUNT:
+                        res["note_held_login_at_limit"].append(display(r))
         log(f"count: started={len(started)} LOADED={len(res['loaded'])} UP-NOT-LOADED={len(res['not_loaded'])} "
             f"DOWN={len(res['down_again'])}")
         for nm in res["not_loaded"]:
@@ -1662,6 +1701,8 @@ class Watch:
             log(f"  {nm}: loaded, but {why[nm]}; the wake-up note was not typed")
         if self.queued:
             log(f"note queued until the reset: {len(self.queued)} session(s): {', '.join(self.queued)}")
+        if res["note_held_login_at_limit"]:
+            log(f"note not typed, its login at its usage limit: {len(res['note_held_login_at_limit'])} session(s)")
         if self.answered:
             log(f"trust: answered for {len(self.answered)} session(s)")
         return res
@@ -2395,7 +2436,8 @@ def report_cmd():
     need = [("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
             ("not loaded (a question on its screen?)", rep.get("not_loaded")),
             ("loaded, note not typed", rep.get("note_not_typed")),
-            ("note waiting in Claude Code's queue for the limit to reset", rep.get("note_queued")), ("down again", rep.get("down_again")),
+            ("note waiting in Claude Code's queue for the limit to reset", rep.get("note_queued")),
+            ("note not typed (its login is at its usage limit)", rep.get("note_held_login_at_limit")), ("down again", rep.get("down_again")),
             ("ended by its owner, not brought back", rep.get("ended")),
             ("running elsewhere by its turn", rep.get("elsewhere")), ("tab not attached", tabs.get("not")),
             ("a name carried by more than one session", [f"{n}: {', '.join(i)}" for n, i in d["same_name"].items()]),

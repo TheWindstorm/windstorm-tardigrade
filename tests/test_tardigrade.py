@@ -1221,28 +1221,18 @@ class Revive(Base):
 
     def test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named(self):
         # seen on a real machine: a note typed at the weekly limit is not lost; Claude Code holds it and runs it
-        # by itself at the reset, hours later. Alpha's conversation ended on the limit reply: no note. Beta's did
-        # not, but its note meets the limit when typed: it is named as waiting for the reset.
-        a = self.start_lane("alpha", "Alpha Lane")
-        self.start_lane("beta", "Beta Lane")
-        self.tg("record", "--force")
+        # by itself at the reset, hours later. Alpha's conversation ended on the limit reply: no note.
+        a = self.recorded_then_rebooted()
         self.limit_reply(a)
-        self.reboot()
-        open(os.path.join(self.home, "limitqueue"), "w").close()
         n = len(self.launches())
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
-        self.wait_launches(n + 2)
-        self.assertEqual([x["sid"] for x in self.typed()], [x["sid"] for x in self.launches()[n:] if x["sid"] != a], out)
+        self.wait_launches(n + 1)
+        self.assertEqual(self.typed(), [], out)
         self.assertIn("Alpha Lane: its conversation last ended on a usage or limit reply (\"You've hit your weekly limit "
                       "\u00b7 resets 12pm (America/New_York)\"); the wake-up note is not typed", out)
         self.assertIn("Alpha Lane: loaded, but its conversation last ended on a usage or limit reply; the wake-up note "
                       "was not typed", out)
-        self.assertIn("Beta Lane: the note met a usage limit; Claude Code holds it and will run it by itself at the reset", out)
-        self.assertIn("note queued until the reset: 1 session(s): Beta Lane", out)
-        rep = jload(self.state("last-revive.json"))
-        self.assertEqual((rep["noted"], rep["note_queued"], rep["note_not_typed"]), (["Beta Lane"], ["Beta Lane"], ["Alpha Lane"]))
-        rc, out = self.tg("report")
-        self.assertIn("note waiting in Claude Code's queue for the limit to reset", out)
+        self.assertEqual(jload(self.state("last-revive.json"))["note_not_typed"], ["Alpha Lane"])
         # a limit reply that the person went on past is not the end of the conversation; nor is an ordinary error
         import importlib.util
         spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
@@ -1258,6 +1248,38 @@ class Revive(Base):
                               "message": {"content": [{"type": "text", "text": "API Error: 500"}]}}])
         self.assertEqual(tg.ended_on_limit(r), "")
         self.assertEqual(tg.ended_on_limit({"session_id": "no-such-session"}), "")
+        # one login, one limit: what tells logins apart
+        k = tg.login_key
+        self.assertEqual(k({"session_id": "x"}), k({"session_id": "y"}))
+        self.assertNotEqual(k({"account": "A"}), k({"account": "B"}))
+        self.assertNotEqual(k({"token_print": "p1"}), k({"token_print": "p2"}))
+        self.assertNotEqual(k({}), k({"config_dir": "/elsewhere"}))
+
+    def test_G2_45_once_one_note_meets_the_limit_no_other_session_on_that_login_gets_one(self):
+        # a usage limit belongs to the login: five sessions on one login, the first note is held for the reset,
+        # and the other four get none, or all five would run at once at the reset
+        for nm in ("alpha", "beta", "gamma", "delta", "echo"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        open(os.path.join(self.home, "limitqueue"), "w").close()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 5)
+        self.assertEqual(len(self.typed()), 1, out)
+        rep = jload(self.state("last-revive.json"))
+        first = rep["noted"]
+        self.assertEqual((len(first), rep["note_queued"]), (1, first), out)
+        self.assertIn(f"{first[0]}: the note met a usage limit; Claude Code holds it and will run it by itself at the reset", out)
+        self.assertIn("this machine's own login is at its usage limit: no more notes are typed into sessions on it", out)
+        self.assertIn("note not typed, its login at its usage limit: 4 session(s)", out)
+        self.assertIn("note queued until the reset: 1 session(s): " + first[0], out)
+        self.assertEqual(sorted(rep["note_held_login_at_limit"]), sorted(set(rep["started"]) - set(first)))
+        self.assertEqual(sorted(rep["note_not_typed"]), sorted(set(rep["started"]) - set(first)))
+        self.assertIn("loaded, but its login is at its usage limit; the wake-up note was not typed", out)
+        rc, out = self.tg("report")
+        self.assertIn("note waiting in Claude Code's queue for the limit to reset", out)
+        self.assertIn("note not typed (its login is at its usage limit)", out)
 
     def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
         self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')
