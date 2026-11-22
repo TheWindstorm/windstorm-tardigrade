@@ -480,6 +480,15 @@ class Revive(Base):
             f.write("boot-a 999999999\n")                # same boot, but the process that took it is gone
         rc, out = self.tg("revive")
         self.assertIn("taking over", out)
+        self.reboot()
+        os.makedirs(self.state("lock"))                   # a lock with no owner in it, made before this boot
+        old = time.time() - 3600
+        os.utime(self.state("lock"), (old, old))
+        rc, out = self.tg("revive", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertIn("taking over", out)
+        os.makedirs(self.state("lock"))                   # and one made in this boot: that one holds
+        rc, out = self.tg("revive", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertIn("another revive is running", out)
 
     def test_G2_10_only_brings_back_just_that_one(self):
         self.start_lane("alpha", "Alpha Lane")

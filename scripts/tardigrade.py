@@ -1115,7 +1115,9 @@ def revive():
                 o_boot, o_pid = f.read().split()
             stale = o_boot != boot_id() or not alive(int(o_pid))
         except (OSError, ValueError):
-            stale = time.time() - os.path.getmtime(lock) >= 7200     # a lock with no owner written: by age
+            # no owner written (a lock from version 0.1.6 or older): stale if it is older than this boot
+            made = os.path.getmtime(lock)
+            stale = made < time.time() - uptime_s() or time.time() - made >= 7200
         if not stale:
             log("revive: another revive is running (lock); nothing done")
             return 0
