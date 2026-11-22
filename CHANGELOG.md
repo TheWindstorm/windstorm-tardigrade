@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.1.8 (not yet released)
+## 0.1.8 (2026-11-22)
 Built from DNA Strand Master Plan 1.8, from the lessons of the first real reboot with 98 sessions (`PROMISES.json`
 T1 to T21, T24) and four found on real machines while getting ready for the next ones (T25, T26, and two inside
 T13). Every row due in 0.1.8 is built and named in the plan next to its test.
