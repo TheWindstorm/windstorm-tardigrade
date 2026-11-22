@@ -232,6 +232,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
+| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted and nothing else of it is read: not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. |
 
 On a small machine, set `starts_at_once` to 2, and, if the machine must stay usable while sessions come back, a
 `load_max` of about twice its number of cores. Right after a boot most of the load is the boot itself.

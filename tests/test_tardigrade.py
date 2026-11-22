@@ -413,6 +413,53 @@ class Record(Base):
         self.assertEqual(([r["name"] for r in t["lanes"]], t["down"]), (["Alpha Lane"], []))
 
 
+    def test_G1_15_a_process_in_a_folder_to_leave_alone_is_not_read_at_all(self):
+        agents = os.path.join(self.tmp, "agents")
+        os.makedirs(os.path.join(agents, "a1"))
+        a = self.start_lane("alpha", "Alpha Lane")
+        before = len(self.launches())                   # another tool's agent, with something of its own in its environment
+        rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", "agent1", "-c", os.path.join(agents, "a1"),
+                          f"AGENT_OWN_WORDS=not-for-us FAKE_SID={uuid.uuid4()} FAKE_NAME='Agent One' claude --agent-own-flag")
+        self.assertEqual(rc, 0)
+        self.wait_launches(before + 1)
+        agent_pid = self.launches()[-1]["pid"]
+        self.tg("record", "--force")                    # recorded once, before the setting: revive must still leave it
+        self.assertEqual(sorted(r["name"] for r in self.table()["lanes"]), ["Agent One", "Alpha Lane"])
+        old_row = [r for r in self.table()["lanes"] if r["name"] == "Agent One"][0]
+        self.cfg({"skip_cwd_prefix": [agents]})
+        rc, out = self.tg("record", "--force")
+        t = self.table()
+        self.assertEqual([r["name"] for r in t["lanes"]], ["Alpha Lane"], out)
+        self.assertEqual([r["name"] for r in t["down"]], [], "a session left alone is not down: it is not ours")
+        rc, out = self.tg("census")
+        self.assertIn("Left alone in a skip_cwd_prefix folder: 1 Claude process(es). Not read; not brought back.", out)
+        self.assertNotIn("Agent One", out)
+        # nothing of it is read: not its environment, its arguments or its status file
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.HOME, tg.CFG["skip_cwd_prefix"] = self.home, [agents]
+        read = []
+        for fn in ("env_facts", "argv_of", "session_json", "has_tty"):
+            real = getattr(tg, fn)
+            setattr(tg, fn, (lambda real: lambda pid, *x, **k: (read.append(pid), real(pid, *x, **k))[1])(real))
+        tg.live(with_launch=False)
+        tg.running_sids()
+        self.assertNotIn(agent_pid, read)
+        self.assertEqual(tg.LEFT_ALONE[0], 1)
+        # a row for it that was recorded before the setting is never started
+        self.reboot()
+        t = self.table()
+        t["lanes"] = t["lanes"] + [old_row]
+        jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 1)
+        time.sleep(2)
+        self.assertEqual([x["sid"] for x in self.launches()[n:]], [a], out)
+        self.assertIn("skip  Agent One: its folder is in skip_cwd_prefix; left alone, never started", out)
+
     def test_G1_9_a_session_outside_tmux_is_recorded_for_the_socket_and_prefix_in_the_settings(self):
         self.cfg({"loose_socket": "work", "loose_prefix": "pane-", "loose_skip": ["^$", "^scratch"]})
         sid = self.start_loose("Docs Rewrite")

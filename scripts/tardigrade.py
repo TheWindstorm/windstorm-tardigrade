@@ -80,6 +80,7 @@ CFG = {
     "attach_wait_min": 30,    # wait this long for the Herdr server after boot
     "down_keep_days": 14,     # how long a session that went down stays on the "down" list
     "skip_tmux_sockets": [],  # tmux socket names to leave alone, when another tool brings those sessions back
+    "skip_cwd_prefix": [],    # folders to leave alone: a claude process working inside one is not read at all
     "answer_trust": False,    # opt-in (`trust on`): answer "trust this folder?" for a revived session's own folder
     "watch_min": 15,          # after a boot, keep looking at the started sessions this long (slow machines load late)
     "claude_command": "claude",   # the command that starts Claude Code; the flags and --resume are added to it
@@ -795,6 +796,33 @@ def start_flags(a):
 
 
 PANES_NOW = []      # this scan's tmux panes, for one_shot()
+LEFT_ALONE = [0]    # this scan's claude processes in a skip_cwd_prefix folder, not read (G1.15)
+
+
+def proc_cwd(pid):
+    """The folder a process works in, from the system, without reading anything of the process itself."""
+    if not MAC:
+        try:
+            return os.readlink(f"/proc/{pid}/cwd")
+        except OSError:
+            return ""
+    out = run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], timeout=5)[1]
+    return next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
+
+
+def in_skip_folder(path):
+    """Is this folder inside one named in skip_cwd_prefix?"""
+    pre = [os.path.realpath(os.path.expanduser(str(x))).rstrip("/") for x in (CFG.get("skip_cwd_prefix") or []) if x]
+    if not pre or not path:
+        return False
+    path = os.path.realpath(path)
+    return any(path == x or path.startswith(x + "/") for x in pre)
+
+
+def left_alone(pid):
+    """G1.15: is this process working inside a folder named in skip_cwd_prefix? Then nothing more of it is read:
+    not its environment, not its arguments, not its status file or conversation."""
+    return bool(CFG.get("skip_cwd_prefix")) and in_skip_folder(proc_cwd(pid))
 
 
 def has_tty(pid):
@@ -840,6 +868,7 @@ def live(with_launch=True):
     P, PN = procs(), panes()
     PANES_NOW[:] = [PN]
     me, mine, others, helpers = os.getuid(), [], 0, 0
+    LEFT_ALONE[0] = 0
     table = read_json(TABLE, {})
     known = {r["session_id"]: r for r in (table.get("down", []) + table.get("lanes", []))} if isinstance(table, dict) else {}
     for pid, (_, uid, comm) in sorted(P.items()):
@@ -847,6 +876,9 @@ def live(with_launch=True):
             continue
         if uid != me:
             others += 1        # counted, never read
+            continue
+        if left_alone(pid):
+            LEFT_ALONE[0] += 1     # in a folder to leave alone: counted, never read
             continue
         ef = env_facts(pid)
         sj = session_json(pid, ef["config_dir"])
@@ -911,7 +943,7 @@ def running_sids(P=None):
     """every session id held by a live Claude of this user, in any terminal"""
     held = set()
     for pid, (_, uid, comm) in (P or procs()).items():
-        if not is_claude(comm) or uid != os.getuid():
+        if not is_claude(comm) or uid != os.getuid() or left_alone(pid):
             continue
         sid = session_json(pid, env_facts(pid)["config_dir"]).get("sessionId")
         if sid:
@@ -926,7 +958,7 @@ def holder_text(sid, P):
     """where the live process that holds this session id runs: its tmux session, else its process id"""
     PN = panes()
     for pid, (_, uid, comm) in P.items():
-        if not is_claude(comm) or uid != os.getuid():
+        if not is_claude(comm) or uid != os.getuid() or left_alone(pid):
             continue
         if session_json(pid, env_facts(pid)["config_dir"]).get("sessionId") == sid or re.search(
                 r"--resume[ =]" + re.escape(sid), " ".join(argv_of(pid))):
@@ -1088,7 +1120,8 @@ def record():
         return 0
     now, keep = int(time.time()), int(CFG["down_keep_days"]) * 86400
     live_ids = {r["session_id"] for r in rows}
-    down = [d for d in old["down"] if d["session_id"] not in live_ids and now - d.get("down_since", now) < keep]
+    down = [d for d in old["down"] if d["session_id"] not in live_ids and now - d.get("down_since", now) < keep
+            and not in_skip_folder(d.get("cwd", ""))]      # a folder left alone now: forgotten, not down (G1.15)
     known_down = {d["session_id"] for d in down}
     # Sessions that vanish together did not each end by a person's hand: that is a crash (a tmux server
     # that died, a terminal program that was closed with everything in it). They stay on the record as
@@ -1097,7 +1130,7 @@ def record():
     # conversation in the same place, or a session that came back new): it is not down, it is over.
     taken = {(r["tmux_socket"], r["tmux_session"]) for r in rows}
     gone = [r for r in old["lanes"] if r["session_id"] not in live_ids and r["session_id"] not in known_down
-            and (r["tmux_socket"], r["tmux_session"]) not in taken]
+            and (r["tmux_socket"], r["tmux_session"]) not in taken and not in_skip_folder(r.get("cwd", ""))]
     # A session its owner ended with /exit (after a record last saw it running) is over, at once, and never
     # part of a crash count. "Its pane holds the shell it left" counts only for a session that went alone:
     # a memory kill of many sessions leaves shells behind too, and that is a crash.
@@ -1998,6 +2031,13 @@ def _revive(boot):
             if want:
                 return 1
             continue
+        if in_skip_folder(r.get("cwd", "")):
+            # its folder is left alone now: its live process, if any, is not read, so starting it could make a copy
+            log(f"skip  {nm}: its folder is in skip_cwd_prefix; left alone, never started")
+            report["skipped"].append(nm)
+            if want:
+                return 1
+            continue
         ep = print_run(r)
         if ep:
             log(f"skip  {nm}: its conversation is a print-mode or SDK run (entrypoint {ep}), not a session a person "
@@ -2457,13 +2497,13 @@ def census_data():
     table = read_table()
     live_ids = {r["session_id"] for r in mine}
     down = [dict(r, ended="exit") if exited_at(r) else dict(r, ended="print-run") if print_run(r) else r
-            for r in table["lanes"] if r["session_id"] not in live_ids]
+            for r in table["lanes"] if r["session_id"] not in live_ids and not in_skip_folder(r.get("cwd", ""))]
     coming = [r for r in down if r.get("tmux_session") and is_waiting(r["tmux_socket"], r["tmux_session"])]
     down = [r for r in down if r not in coming]
     going = restore_now()
     stopped = [] if going else coming        # a waiting screen left by a restore that is no longer running
     coming = coming if going else []
-    down += [r for r in table["down"] if r["session_id"] not in live_ids]
+    down += [r for r in table["down"] if r["session_id"] not in live_ids and not in_skip_folder(r.get("cwd", ""))]
     # G3.16: a session started new under a new id (Claude Code had no conversation for it) runs in its old tmux
     # session, under its old name. Its old id is not down: the lane is up, and the next record takes the new id.
     taken = {(r.get("tmux_socket"), r.get("tmux_session")): r for r in mine if r.get("tmux_session")}
@@ -2511,6 +2551,7 @@ def census_data():
     return {
         "at": int(time.time()), "uptime_s": int(uptime_s()), "running": len(mine), "with_window": len(shown),
         "hidden": len(hidden), "down": len(down), "other_users": others, "helpers": helpers,
+        "left_alone": LEFT_ALONE[0],
         "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
         "trust": len([r for r in mine if r["status"] == "trust?"]),
         "lost": len([r for r in down if r.get("lost_since") and not r.get("ended")]), "comes_back": comes_back(),
@@ -2628,6 +2669,8 @@ def census():
         print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; not read.")
     if d["helpers"]:
         print(f"Helper sessions started by other sessions: {d['helpers']} (not brought back after a reboot).")
+    if d.get("left_alone"):
+        print(f"Left alone in a skip_cwd_prefix folder: {d['left_alone']} Claude process(es). Not read; not brought back.")
     if d["not_kept"]:
         print(f"\nRUNNING, BUT WILL NOT COME BACK after a reboot ({len(d['not_kept'])}):")
         for x in sorted(d["not_kept"], key=lambda x: x["name"].lower()):

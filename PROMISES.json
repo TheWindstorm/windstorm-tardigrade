@@ -578,7 +578,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
-   "test": "",
+   "test": "test_G1_15_a_process_in_a_folder_to_leave_alone_is_not_read_at_all",
    "proven": "",
    "issue": 44,
    "moved_why": "",
