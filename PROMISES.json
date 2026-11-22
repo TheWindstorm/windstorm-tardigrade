@@ -639,6 +639,20 @@
    "issue": 48,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T46",
+   "seen": "2026-11-22, from the review of the record change (T37) for the machine with the most sessions, not from a failure seen: report names only the sessions gone again at the restore's count, census shows them as ordinary down rows, and a session that dies after the count while the run still waits (for Herdr) is in neither list, so a day later a lane that failed to load looks like one that was ended.",
+   "promise": "a session that goes down during a restore stands out for that boot: census and report say \"down during the restore: NAME (at HH:MM)\", whether it went before the count or after it while the run still waits.",
+   "codon": "G3.17",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "test_G3_17_a_session_that_goes_down_during_a_restore_stands_out_for_that_boot",
+   "proven": "",
+   "issue": 49,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

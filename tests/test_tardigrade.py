@@ -2253,6 +2253,33 @@ class Windows(Base):
         again = {x["sid"] for x in self.launches()[n:]}
         self.assertEqual(again, {rows[nm] for nm in ("beta", "gamma", "delta")}, out)   # the lost ones, not alpha
 
+    def test_G3_17_a_session_that_goes_down_during_a_restore_stands_out_for_that_boot(self):
+        n0 = len(self.launches())
+        run, log = self.herdr_missing_run(1)
+        try:
+            self.until_said(log, "count: started=3", run)
+            now = {x["sid"]: x["pid"] for x in self.launches()[n0:]}
+            rows = {r["tmux_session"]: r["session_id"] for r in self.table()["lanes"]}
+            self.kill(now[rows["beta"]])                     # after the count, while the run waits for Herdr
+            out = self.until_said(log, "Beta Lane: went down while the restore still waits (after the count)", run)
+            self.assertEqual(out.count("went down while the restore still waits"), 1, out)     # said once
+            text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=150)[1]
+            self.assertRegex(text, r"Down during the restore: Beta Lane \(at \d\d:\d\d\): it started, then went down; "
+                                   r"it may have failed to load")
+            self.assertNotIn("Alpha Lane (at", text)
+        finally:
+            run.kill()
+            run.wait(timeout=WAIT)
+        rep = self.tg("report")[1]
+        self.assertRegex(rep, r"down during the restore:\n +Beta Lane \(at \d\d:\d\d\)")
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual([x["name"] for x in d["down_during_restore"]], ["Beta Lane"])
+        # a day later, on another boot, it is an ordinary down row again: only this boot's restore is meant
+        lr = jload(self.state("last-revive.json"))
+        lr["boot"] = "another-boot"
+        jdump(lr, self.state("last-revive.json"))
+        self.assertNotIn("Down during the restore", self.tg("census")[1])
+
     def test_G4_10_when_herdr_never_comes_census_report_and_on_done_say_how_many_tabs_wait(self):
         told = os.path.join(self.home, "told.txt")
         run, log = self.herdr_missing_run(0.05, on_done=f"echo n={{herdr_tabs_not_attached}} e=$TARDIGRADE_HERDR_TABS_NOT_ATTACHED > {told}")

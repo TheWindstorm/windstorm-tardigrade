@@ -1846,6 +1846,7 @@ class Watch:
         self.at_limit = set()           # logins known to be at their usage limit in this run (G2.45)
         self.conv_read = set()          # sessions whose conversation was looked at for a limit reply
         self.stale_limit = set()        # sessions whose last limit reply has reset since (G2.48)
+        self.gone_at = {}               # sid: when the watch saw it go down (G3.17)
         self.after_due = {}             # sid: (when its note was typed, its screen just before, its row) (G2.45)
 
     def take_gone(self):
@@ -1902,6 +1903,7 @@ class Watch:
             if not pid:
                 log(f"  {display(r)}: went down again while being watched")
                 self.gone.add(sid)
+                self.gone_at[sid] = int(time.time())     # G3.17
                 self.gone_new.append(r)
                 continue
             sj = session_json(pid, r.get("config_dir", ""))
@@ -2245,6 +2247,7 @@ def _revive(boot):
                 came.remove(r)
             note_for.pop(sid, None)
             w.gone.discard(sid)
+            w.gone_at.pop(sid, None)       # started new: not down
             prog["back"] -= 1
             prog["sessions"][sid]["state"] = "starting"
             write_progress(prog)
@@ -2362,15 +2365,36 @@ def _revive(boot):
             said = True
         time.sleep(1 if TESTING else 10)
     end_due(all_now=True)
+    down_during = {}
+
+    def went_down(at_count=False):
+        """G3.17: each session this run started and that is not running now: down during the restore, with when"""
+        P, new = procs(), False
+        for r in came:
+            sid = r["session_id"]
+            if sid in down_during or came_up(r, P):
+                continue
+            down_during[sid] = {"name": display(r), "session_id": sid, "at": int(w.gone_at.get(sid) or time.time())}
+            new = True
+            if not at_count:
+                log(f"  {display(r)}: went down while the restore still waits (after the count)")
+        if new:
+            report["down_during"] = sorted(down_during.values(), key=lambda x: x["at"])
+            write_json(os.path.join(STATE, "last-revive.json"), report)
     if came:
         report.update(w.count(came))
         report["counted_at"] = int(time.time())
         write_json(os.path.join(STATE, "last-revive.json"), report)
+        went_down(at_count=True)
+        AFTER_COUNT[0] = went_down          # looked at again while the run waits for Herdr
     prog.update(done=True, ended=int(time.time()))
     write_progress(prog)
     notify(f"Restore done: {len(report['started'])} session(s) brought back, "
            f"{len(report['failed']) + len(report['needs_you'])} need you")
     w.tabs(last=True)
+    if came:
+        went_down()
+    AFTER_COUNT[0] = None
     report["tabs"] = TAB_LOG
     write_json(os.path.join(STATE, "last-revive.json"), report)
     if want:
@@ -2446,6 +2470,7 @@ def q_target(name):
 
 TAB_LOG = {"attached": [], "not": []}     # what this run did about each tab, for `report` (G3.8)
 HERDR_DOWN = {}                            # G4.10: when this run found Herdr not running, and how many tabs wait
+AFTER_COUNT = [None]                       # G3.17: a look for sessions gone, while the run waits after its count
 
 
 def herdr_wait_path():
@@ -2560,6 +2585,8 @@ def attach_tabs(rows, wait=True):
             log("herdr: its server never came up; tabs left as they are")
             TAB_LOG["herdr_not_running"] = HERDR_DOWN.get("tabs", len(want))
             return done
+        if AFTER_COUNT[0]:
+            AFTER_COUNT[0]()
         time.sleep(1 if TESTING else 30)
     herdr_back()
     pl, tl, wl = herdr("pane", "list"), herdr("tab", "list") or {}, herdr("workspace", "list") or {}
@@ -2690,11 +2717,24 @@ def census_data():
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "not_kept": not_kept, "replaced": replaced, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
         "herdr_not_running": herdr_wait_now(),
+        "down_during_restore": down_during_restore(live_ids),
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
                     for r in mine if r.get("by_hand")],
         "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming,
                      "waiting_stopped": stopped},
     }
+
+
+def down_during_restore(live_ids):
+    """G3.17: the sessions this boot's restore started that went down during it and are not running now"""
+    lr = read_json(os.path.join(STATE, "last-revive.json"), {})
+    if not isinstance(lr, dict) or lr.get("boot") != boot_id():
+        return []
+    return [x for x in lr.get("down_during") or [] if isinstance(x, dict) and x.get("session_id") not in live_ids]
+
+
+def clock(t):
+    return time.strftime("%H:%M", time.localtime(t))
 
 
 def restore_now():
@@ -2751,6 +2791,9 @@ def census():
                  "the ones that did load (questions, notes, tabs)."))
         if began_text(pr):
             print(f"  This boot's restore {began_text(pr)}.")
+    for x in d["down_during_restore"]:
+        print(f"Down during the restore: {x['name']} (at {clock(x['at'])}): it started, then went down; it may have "
+              "failed to load. `tardigrade report` has the restore's account.")
     hw = d["herdr_not_running"]
     if hw:
         print(f"Herdr is not running: {hw['tabs']} tab(s) not attached"
@@ -2860,7 +2903,9 @@ def report_cmd():
             ("not loaded (a question on its screen?)", rep.get("not_loaded")),
             ("loaded, note not typed", rep.get("note_not_typed")),
             ("note waiting in Claude Code's queue for the limit to reset", rep.get("note_queued")),
-            ("note not typed (its login is at its usage limit)", rep.get("note_held_login_at_limit")), ("down again", rep.get("down_again")),
+            ("note not typed (its login is at its usage limit)", rep.get("note_held_login_at_limit")),
+            ("down during the restore", [f"{x['name']} (at {clock(x['at'])})" for x in rep.get("down_during") or []]
+             if "down_during" in rep else rep.get("down_again")),
             ("ended by its owner, not brought back", rep.get("ended")),
             ("running elsewhere by its turn", rep.get("elsewhere")), ("tab not attached", tabs.get("not")),
             ("a name carried by more than one session", [f"{n}: {', '.join(i)}" for n, i in d["same_name"].items()]),
