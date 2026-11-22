@@ -156,6 +156,7 @@ Setup tells you this for your machine. It never changes it for you.
 |---|---|---|
 | `wake` | `"note"` | `"note"` tells each revived session what happened. `"idle"` says nothing. |
 | `stagger_s` | `3` | Seconds between two session starts. |
+| `starts_at_once` | `4` | At most this many sessions started and not yet seen up. The wait after each start overlaps with the next starts; the decision to start is still made one session at a time. Lower it on a small machine. |
 | `boot_window_min` | `40` | The boot service acts only on a machine up for less than this. |
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |

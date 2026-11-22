@@ -735,6 +735,7 @@ class Revive(Base):
 
     def test_G2_32_a_question_is_answered_while_later_sessions_are_still_being_started(self):
         self.tg("trust", "on")
+        self.cfg({"starts_at_once": 1})         # one at a time, so "later sessions" are still to be started
         for n in ("alpha", "beta", "gamma"):
             self.start_lane(n, n.title() + " Lane")
         self.tg("record", "--force")
@@ -895,6 +896,36 @@ class Revive(Base):
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["started"], rep["failed"]), (["Alpha Lane"], []), out)
         self.assertEqual(self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split(), ["alpha"])
+
+    def test_G2_34_several_starts_at_once_each_decided_alone(self):
+        import re
+        self.cfg({"settle_s": 3, "starts_at_once": 3, "load_max": 50, "load_wait_s": 0})
+        ids = [self.start_lane(f"lane{i}", f"Lane {i}") for i in range(6)]
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        t0 = time.time()
+        rc, out = self.tg("revive", TARDIGRADE_FAKE_LOAD=99)
+        took = time.time() - t0
+        self.wait_launches(n + 6)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted(ids))
+        # six starts with a 3-second wait each take at least 18 s one after another; the waits overlapped
+        self.assertLess(took, 15, out)
+        flying = [int(m) for m in re.findall(r"started \((\d+) of at most 3 not yet seen up\)", out)]
+        self.assertEqual(len(flying), 6, out)
+        self.assertLessEqual(max(flying), 3)
+        self.assertEqual(out.count("above load_max 50"), 6, "load_max is read again before each start")
+        # two rows with one session id: neither is started
+        t = self.table()
+        t["lanes"].append(dict(t["lanes"][0], tmux_session="lane0-copy"))
+        jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 5)
+        time.sleep(3)
+        self.assertNotIn(t["lanes"][0]["session_id"], [x["sid"] for x in self.launches()[n:]])
+        self.assertIn("the record holds 2 rows with this session id; started none of them", out)
 
     def test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts(self):
         self.cfg({"load_max": 5, "load_wait_s": 2})

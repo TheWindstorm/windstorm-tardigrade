@@ -17,7 +17,7 @@
    "owner": "person",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G2_34_several_starts_at_once_each_decided_alone",
    "proven": "",
    "issue": 2,
    "moved_why": "",

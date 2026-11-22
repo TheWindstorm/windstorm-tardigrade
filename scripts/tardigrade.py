@@ -65,6 +65,7 @@ CFG = {
     "boot_window_min": 40,    # "just booted" means: up for less than this
     "stagger_s": 3,           # pause between two session starts
     "settle_s": 8,            # wait this long before checking that a start worked
+    "starts_at_once": 4,      # at most this many sessions started and not yet seen up; the waits overlap
     "retry_min": 25,          # keep retrying failed starts this long (the network may lag at boot)
     "wake": "note",           # "note": tell each revived session what happened; "idle": say nothing
     "auto_revive": False,     # set by setup: the boot service is installed
@@ -1236,6 +1237,12 @@ def _revive(boot):
                     f"{'running' if r['session_id'] in held else 'not running'}  {r['cwd']}")
             return 1
     log(f"=== revive v{VERSION} (boot={boot}, dry-run={DRY}) uptime={int(uptime_s())} s, {len(rows)} to look at")
+    ids = [r["session_id"] for r in rows]
+    twice = sorted({i for i in ids if ids.count(i) > 1})
+    for i in twice:
+        log(f"skip  {i}: the record holds {ids.count(i)} rows with this session id; started none of them. "
+            "Two starts of one id would be two copies. Run `record --force` while the session runs, then revive.")
+    rows = [r for r in rows if r["session_id"] not in twice]
     held = running_sids()
     note = WAKE_NOTE.format(when=time.strftime("%Y-%m-%d %H:%M %Z")) if CFG["wake"] == "note" else ""
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": []}
@@ -1286,16 +1293,65 @@ def _revive(boot):
     w = Watch(note_for, rows)
     next_try, last_up, tries_done, said = 0.0, time.time(), False, False
 
-    def try_start(r):
-        """one start; the process id of its Claude if it came up"""
-        if not start_lane(r, created):
-            return None
-        time.sleep(float(CFG["settle_s"]))
-        return came_up(r)
+    inflight = {}          # session id -> (row, when it was started): started, not yet seen up
+    at_once = max(1, int(float(CFG.get("starts_at_once") or 1)))
+
+    def up(r, pid):
+        nonlocal last_up
+        sid, nm = r["session_id"], display(r)
+        came.append(r)
+        last_up = time.time()
+        child = ("CLAUDE_CODE_CHILD_SESSION PRESENT (BAD: this session does not save its transcript)"
+                 if env_facts(pid)["child"] else "child marker absent")
+        if same_login(r, pid):
+            log(f"  {nm}: up ({child}" + ("; same login as before)" if login_print(r) else ")"))
+            report["started"].append(nm)
+            if note and not r.get("fresh"):
+                note_for[sid] = note
+        else:
+            log(f"needs you  {nm}: it came back on a different login than it had before. "
+                "It is idle and nothing was typed. Close it and start it your usual way.")
+            report["needs_you"].append(nm)
+        pending.pop(sid, None)
+
+    def settle(wait_all=False):
+        """Look at the starts in flight whose settle time is over. The waits overlap; the decisions do not."""
+        while inflight:
+            for sid, (r, t0) in list(inflight.items()):
+                if time.time() < t0 + float(CFG["settle_s"]):
+                    continue
+                del inflight[sid]
+                pid = came_up(r)
+                if not pid and not r.get("fresh") and not CFG.get("start_command") and "No conversation found" in tmux(
+                        r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]:
+                    # Claude Code keeps no conversation for a session nobody ever wrote in. There is nothing to
+                    # resume and nothing to lose: it comes back as a new session with the same name, folder and flags.
+                    log(f"  {display(r)}: Claude Code has no conversation for it (nobody ever wrote in it). "
+                        "Starting it new, with the same name, folder and flags.")
+                    r["fresh"] = True
+                    report.setdefault("fresh", []).append(display(r))
+                    if start_lane(r, created):
+                        inflight[sid] = (r, time.time())
+                        continue
+                if pid:
+                    up(r, pid)
+                else:
+                    pending[sid][1] += 1
+                    log(f"  {display(r)}: not running yet (attempt {pending[sid][1]}); will retry")
+            # with many sessions the starts take minutes: the ones already up are looked after meanwhile
+            if came and time.time() - w.last_look >= (0 if TESTING else 15):
+                w.look(came, tabs=False)
+            if not wait_all and len(inflight) < at_once:
+                return
+            if inflight:
+                time.sleep(0.2 if TESTING else 1)
 
     while True:
         if pending and not tries_done and time.time() >= next_try:
             for sid, (r, n) in list(pending.items()):
+                if sid in inflight or sid not in pending:
+                    continue
+                settle()               # at most starts_at_once started and not yet seen up
                 nm = display(r)
                 P = procs()            # taken fresh for each session, right before the decision to start it
                 late = came_up(r, P) if n else None
@@ -1313,40 +1369,15 @@ def _revive(boot):
                     report["skipped"].append(nm)
                     del pending[sid]
                     continue
-                pace()
-                pid = try_start(r)
-                if not pid and not r.get("fresh") and not CFG.get("start_command") and "No conversation found" in tmux(
-                        r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]:
-                    # Claude Code keeps no conversation for a session nobody ever wrote in. There is nothing to
-                    # resume and nothing to lose: it comes back as a new session with the same name, folder and flags.
-                    log(f"  {nm}: Claude Code has no conversation for it (nobody ever wrote in it). "
-                        "Starting it new, with the same name, folder and flags.")
-                    r["fresh"] = True
-                    report.setdefault("fresh", []).append(nm)
-                    pid = try_start(r)
-                if pid:
-                    came.append(r)
-                    last_up = time.time()
-                    child = ("CLAUDE_CODE_CHILD_SESSION PRESENT (BAD: this session does not save its transcript)"
-                             if env_facts(pid)["child"] else "child marker absent")
-                    if same_login(r, pid):
-                        log(f"  {nm}: up ({child}" + ("; same login as before)" if login_print(r) else ")"))
-                        report["started"].append(nm)
-                        if note and not r.get("fresh"):
-                            note_for[sid] = note
-                    else:
-                        log(f"needs you  {nm}: it came back on a different login than it had before. "
-                            "It is idle and nothing was typed. Close it and start it your usual way.")
-                        report["needs_you"].append(nm)
-                    del pending[sid]
-                    time.sleep(float(CFG["stagger_s"]))
-                    # with many sessions the starts take minutes: the ones already up are looked after meanwhile
-                    if time.time() - w.last_look >= (0 if TESTING else 15):
-                        w.look(came, tabs=False)
-                    continue
-                pending[sid][1] += 1
-                log(f"  {nm}: not running yet (attempt {pending[sid][1]}); will retry")
+                pace()                 # load_max is read again before each start
+                if start_lane(r, created):
+                    inflight[sid] = (r, time.time())
+                    log(f"  {nm}: started ({len(inflight)} of at most {at_once} not yet seen up)")
+                else:
+                    pending[sid][1] += 1
+                    log(f"  {nm}: not running yet (attempt {pending[sid][1]}); will retry")
                 time.sleep(float(CFG["stagger_s"]))
+            settle(wait_all=True)
             next_try = time.time() + (1 if TESTING else 60)
         if not tries_done and (not pending or time.time() >= deadline):
             tries_done = True
