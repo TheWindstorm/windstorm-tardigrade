@@ -927,6 +927,90 @@ class Revive(Base):
         self.assertNotIn(t["lanes"][0]["session_id"], [x["sid"] for x in self.launches()[n:]])
         self.assertIn("the record holds 2 rows with this session id; started none of them", out)
 
+    def test_G4_4_a_waiting_screen_holds_each_place_until_its_session_comes(self):
+        import re
+        # a machine's own server: started by its server_command, with a boot unit's and a Claude's variables in it
+        self.cfg({"settle_s": 2, "starts_at_once": 1, "wake": "idle",
+                  "server_command": f"INVOCATION_ID=unit-1 JOURNAL_STREAM=9:9 CLAUDE_CODE_CHILD_SESSION=1 {TMUX} -S {{socket}} "
+                                    "new-session -d -s keeper 'sleep 600'; date +%s.%N > $HOME/server-at"})
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma", "delta", "echo")]
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        env = dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100")
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"], env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and self.tmux(self.sock, "has-session", "-t", "=echo")[0] != 0:
+                time.sleep(0.1)
+            screen = self.tmux(self.sock, "capture-pane", "-p", "-t", "=echo:")[1]
+            for _ in range(30):
+                if "of 5 sessions are back" in screen:
+                    break
+                time.sleep(0.2)
+                screen = self.tmux(self.sock, "capture-pane", "-p", "-t", "=echo:")[1]
+            self.assertIn("Windstorm Tardigrade is bringing this session back", screen)
+            self.assertIn('Session:  "Echo Lane"', screen)
+            self.assertIn("of 5 sessions are back", screen)
+            for line in screen.splitlines():                       # nothing a waker could take for a prompt
+                self.assertNotIn("❯", line)
+                self.assertFalse(re.search(r"[$%#>]\s*$", line), line)
+            self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", "=echo:", "@tardigrade_waiting")[1].strip(), "1")
+            self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", "=echo:", "#{pane_title}")[1].strip(),
+                             "Echo Lane (coming back)")
+            self.assertNotIn(self.tmux(self.sock, "display", "-p", "-t", "=echo:", "#{pane_current_command}")[1].strip(),
+                             ("bash", "sh", "zsh"))
+            made = int(self.tmux(self.sock, "display", "-p", "-t", "=alpha:", "#{session_created}")[1])
+            self.assertGreaterEqual(made + 1, float(fread(os.path.join(self.home, "server-at"))), "server first")
+            # typed text, Enter and Ctrl+C do nothing there
+            self.tmux(self.sock, "send-keys", "-t", "=echo:", "-l", "rm -rf hello")
+            self.tmux(self.sock, "send-keys", "-t", "=echo:", "Enter")
+            self.tmux(self.sock, "send-keys", "-t", "=echo:", "C-c")
+            time.sleep(1.2)
+            screen = self.tmux(self.sock, "capture-pane", "-p", "-t", "=echo:")[1]
+            self.assertIn("Windstorm Tardigrade is bringing this session back", screen)
+            self.assertNotIn("rm -rf hello", screen)
+            # meanwhile: census says coming back, never running; record writes nothing
+            d = json.loads(self.tg("census", "--json")[1])
+            self.assertIn("Echo Lane", [r["name"] for r in d["sessions"]["coming_back"]])
+            self.assertNotIn("Echo Lane", [r["name"] for r in d["sessions"]["hidden"] + d["sessions"]["with_window"]])
+            self.assertIn("a revive is running", self.tg("record")[1])
+            # a person starts delta by hand somewhere else during the wait; another closes gamma's waiting screen
+            d_sid = ids[3]
+            self.tmux(self.sock, "new-session", "-d", "-s", "byhand", "-c", self.work, f"claude --resume {d_sid}")
+            self.tmux(self.sock, "kill-session", "-t", "=gamma")
+            out, _ = run.communicate(timeout=180)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        new = self.launches()[n:]
+        self.assertEqual(sorted(x["sid"] for x in new if x["sid"] != d_sid), sorted(ids[:3] + ids[4:]), out)
+        self.assertEqual(len([x for x in new if x["sid"] == d_sid]), 1, "delta was started a second time")
+        self.assertIn("Delta Lane: something else started it meanwhile (tmux default:byhand)", out)
+        self.assertNotEqual(self.tmux(self.sock, "has-session", "-t", "=delta")[0], 0, "its waiting screen ended")
+        self.assertEqual(self.typed(), [], "something typed at a waiting screen reached Claude")
+        for x in [x for x in new if x["sid"] != d_sid]:            # its own starts: none of the unit's or a Claude's variables
+            self.assertNotIn("INVOCATION_ID", x["seen"])
+            self.assertNotIn("JOURNAL_STREAM", x["seen"])
+            self.assertFalse(x["child"])
+        waiters = []                                               # this test's own, by the HOME it gave them
+        for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    cmd = f.read()
+                if b"tardigrade.py\0wait" in cmd:
+                    with open(f"/proc/{pid}/environ", "rb") as f:
+                        if f"HOME={self.home}".encode() in f.read().split(b"\0"):
+                            waiters.append(pid)
+            except OSError:
+                pass
+        self.assertEqual(waiters, [], "a waiting screen outlived its turn")
+        for s in ("alpha", "beta", "gamma", "echo"):
+            self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", f"={s}:", "@tardigrade_waiting")[1].strip(), "")
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual(sorted(rep["loaded"]), ["Alpha Lane", "Beta Lane", "Echo Lane", "Gamma Lane"], out)
+
     def test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts(self):
         self.cfg({"load_max": 5, "load_wait_s": 2})
         self.recorded_then_rebooted()
@@ -1062,6 +1146,37 @@ class Windows(Base):
         self.assertIn("attach -t '=alpha'", out)
 
 
+    def test_G4_3_each_tab_is_attached_at_the_start_not_after_the_last_start(self):
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in ("alpha", "beta", "gamma"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], "Team"
+        jdump(t, p)
+        self.reboot()
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        shell = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": f"t{i}", "label": f"{n} Lane", "workspace_id": "w1"} for i, n in enumerate(("Alpha", "Beta", "Gamma"))],
+               "panes": [{"pane_id": f"p{i}", "tab_id": f"t{i}", "workspace_id": "w1"} for i in range(3)],
+               "process_info": {f"p{i}": {"shell_pid": 100, "foreground_processes": shell} for i in range(3)},
+               "visible": {f"p{i}": "you@box:~$ \n" for i in range(3)}}, os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "starts_at_once": 1, "settle_s": 2})
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        runs = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()]
+        self.assertEqual(sorted(r["pane"] for r in runs if "cmd" in r), ["p0", "p1", "p2"], out)   # each once
+        first_start = out.index("Alpha Lane: started")
+        for nm in ("Alpha", "Beta", "Gamma"):
+            # typed into its tab before the first session had even been started: to its waiting screen
+            self.assertLess(out.index(f"herdr {nm} Lane: the attach was typed into its tab"), first_start, out)
+
     def test_G4_2_a_herdr_tab_gets_its_session_back_only_at_an_idle_shell_with_an_empty_prompt(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))
         for n in ("alpha", "beta", "gamma", "delta"):
@@ -1105,8 +1220,16 @@ class Invariants(unittest.TestCase):
         self.src = fread(SCRIPT)
 
     def test_INV1_it_never_ends_a_session(self):
-        for word in ("kill-server", "kill-session", "kill-pane", "kill-window", "SIGTERM", "SIGKILL", "pkill", "killall"):
+        for word in ("kill-server", "kill-pane", "kill-window", "SIGKILL", "pkill", "killall"):
             self.assertNotIn(word, self.src, word)
+        # the one tmux session it ends is its own waiting screen, from one function, after checking the mark
+        self.assertEqual(self.src.count("kill-session"), 1)
+        end = self.src[self.src.index("def end_waiting_screen("):self.src.index("def write_progress(")]
+        self.assertIn("kill-session", end)
+        self.assertLess(end.index("if is_waiting(sock, name):"), end.index("kill-session"))
+        # SIGTERM appears only where the waiting screen says it ignores it
+        self.assertEqual([ln.strip() for ln in self.src.splitlines() if "SIGTERM" in ln],
+                         ["for sg in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGTSTP):"])
         import re
         self.assertEqual(set(re.findall(r"os\.kill\(([^)]*)\)", self.src)), {"pid, 0"})   # only "is it alive?"
 
@@ -1125,7 +1248,8 @@ class Invariants(unittest.TestCase):
     def test_INV6_standard_library_only_and_no_network(self):
         import re
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
-        self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime"})
+        self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
+                                    "signal", "termios", "select"})   # the waiting screen (G4.4): standard, no network
 
 
 class Promises(unittest.TestCase):
