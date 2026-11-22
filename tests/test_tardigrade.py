@@ -861,6 +861,12 @@ class Revive(Base):
         time.sleep(2)
         self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([a, c]), out)
         self.assertIn("skip  Beta Lane: its conversation is a print-mode or SDK run (entrypoint sdk-cli)", out)
+        # seen on a real machine: it is not "already running"; it is never started at all
+        self.assertIn("revive: 2 started, 0 already running, 0 failed, 0 need you, 1 never started (print-mode runs, "
+                      "folders left alone)", out)
+        src = fread(SCRIPT)                     # and a print-mode run still running is a helper, not a DOWN row
+        cd = src[src.index("def census_data():"):src.index("coming = [r for r in down", src.index("def census_data():"))]
+        self.assertIn('and r["session_id"] not in held_now', cd)
         rc, out = self.tg("revive", "--only", b)
         self.assertEqual(rc, 1, out)
         rc, out = self.tg("census")

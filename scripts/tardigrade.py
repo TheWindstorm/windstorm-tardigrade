@@ -2104,7 +2104,7 @@ def _revive(boot):
     held = running_sids()
     EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held], [True]
     note = wake_note(boot)
-    todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": []}
+    todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": [], "left_out": []}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
     # login than it had (possible where sessions on one machine are pinned to accounts) is listed as
     # "needs you" and gets no note, so nothing runs on the wrong account.
@@ -2127,7 +2127,7 @@ def _revive(boot):
         if in_skip_folder(r.get("cwd", "")):
             # its folder is left alone now: its live process, if any, is not read, so starting it could make a copy
             log(f"skip  {nm}: its folder is in skip_cwd_prefix; left alone, never started")
-            report["skipped"].append(nm)
+            report["left_out"].append(nm)        # not "already running": it is never started at all
             if want:
                 return 1
             continue
@@ -2135,7 +2135,7 @@ def _revive(boot):
         if ep:
             log(f"skip  {nm}: its conversation is a print-mode or SDK run (entrypoint {ep}), not a session a person "
                 "sits in; it is never started (G2.47). The next record moves it to the down list.")
-            report["skipped"].append(nm)
+            report["left_out"].append(nm)
             if want:
                 return 1
             continue
@@ -2363,7 +2363,8 @@ def _revive(boot):
             if boot:
                 write_marker(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
             log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
-                f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
+                f"{len(report['failed'])} failed, {len(report['needs_you'])} need you"
+                + (f", {len(report['left_out'])} never started (print-mode runs, folders left alone)" if report["left_out"] else ""))
         # the sessions that are up are looked after in every pass, also while another start is being retried
         if inflight:
             settle()
@@ -2670,8 +2671,10 @@ def census_data():
     mine, others, helpers = live(with_launch=False)
     table = read_table()
     live_ids = {r["session_id"] for r in mine}
+    held_now = running_sids()          # a print-mode run still running is a helper now, not down (T43)
     down = [dict(r, ended="exit") if exited_at(r) else dict(r, ended="print-run") if print_run(r) else r
-            for r in table["lanes"] if r["session_id"] not in live_ids and not in_skip_folder(r.get("cwd", ""))]
+            for r in table["lanes"] if r["session_id"] not in live_ids and not in_skip_folder(r.get("cwd", ""))
+            and r["session_id"] not in held_now]
     coming = [r for r in down if r.get("tmux_session") and is_waiting(r["tmux_socket"], r["tmux_session"])]
     down = [r for r in down if r not in coming]
     going = restore_now()
@@ -2909,6 +2912,7 @@ def report_cmd():
     print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started, "
           f"{len(rep.get('loaded', []))} loaded, {len(rep.get('not_loaded', []))} not loaded, "
           f"{len(rep.get('down_again', []))} down again, {len(rep.get('skipped', []))} already running"
+          + (f", {len(rep['left_out'])} never started (print-mode runs, folders left alone)" if rep.get("left_out") else "")
           + (f"   ({ago(rep['counted_at'] - booted)} after boot)" if rep.get("boot_run") and rep.get("counted_at") else ""))
     tabs = rep.get("tabs") or {}
     if tabs.get("attached") or tabs.get("not"):
