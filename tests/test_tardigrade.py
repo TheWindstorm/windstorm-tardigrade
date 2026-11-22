@@ -1207,6 +1207,58 @@ class Revive(Base):
         call = src.index("type_note(r, self.note_for")
         self.assertIn("not OTHER_DIALOG.search(bottom(screen, 15))", src[call - 500:call])
 
+    def limit_reply(self, sid, then=()):
+        """a conversation whose last turn is Claude Code's limit reply (as 2.1.330 writes it), then `then`"""
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            for e in ({"type": "user", "message": {"content": "carry on"}},
+                      {"type": "assistant", "isApiErrorMessage": True, "error": "rate_limit", "message": {
+                          "model": "<synthetic>", "content": [{"type": "text", "text":
+                              "You've hit your weekly limit \u00b7 resets 12pm (America/New_York)"}]}},
+                      {"type": "system", "subtype": "informational", "level": "notice"}, {"type": "cost-state"}) + tuple(then):
+                f.write(json.dumps(e) + "\n")
+
+    def test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named(self):
+        # seen on a real machine: a note typed at the weekly limit is not lost; Claude Code holds it and runs it
+        # by itself at the reset, hours later. Alpha's conversation ended on the limit reply: no note. Beta's did
+        # not, but its note meets the limit when typed: it is named as waiting for the reset.
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.limit_reply(a)
+        self.reboot()
+        open(os.path.join(self.home, "limitqueue"), "w").close()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 2)
+        self.assertEqual([x["sid"] for x in self.typed()], [x["sid"] for x in self.launches()[n:] if x["sid"] != a], out)
+        self.assertIn("Alpha Lane: its conversation last ended on a usage or limit reply (\"You've hit your weekly limit "
+                      "\u00b7 resets 12pm (America/New_York)\"); the wake-up note is not typed", out)
+        self.assertIn("Alpha Lane: loaded, but its conversation last ended on a usage or limit reply; the wake-up note "
+                      "was not typed", out)
+        self.assertIn("Beta Lane: the note met a usage limit; Claude Code holds it and will run it by itself at the reset", out)
+        self.assertIn("note queued until the reset: 1 session(s): Beta Lane", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["noted"], rep["note_queued"], rep["note_not_typed"]), (["Beta Lane"], ["Beta Lane"], ["Alpha Lane"]))
+        rc, out = self.tg("report")
+        self.assertIn("note waiting in Claude Code's queue for the limit to reset", out)
+        # a limit reply that the person went on past is not the end of the conversation; nor is an ordinary error
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.HOME = self.home
+        r = {"session_id": a}
+        self.assertTrue(tg.ended_on_limit(r))
+        self.limit_reply(a, [{"type": "user", "message": {"content": "go on"}},
+                             {"type": "assistant", "message": {"model": "claude-haiku-5-5", "content": [{"type": "text", "text": "ok"}]}}])
+        self.assertEqual(tg.ended_on_limit(r), "")
+        self.limit_reply(a, [{"type": "assistant", "isApiErrorMessage": True, "error": "unknown",
+                              "message": {"content": [{"type": "text", "text": "API Error: 500"}]}}])
+        self.assertEqual(tg.ended_on_limit(r), "")
+        self.assertEqual(tg.ended_on_limit({"session_id": "no-such-session"}), "")
+
     def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
         self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')
         self.cfg({"on_done": "tell started={started} loaded={loaded} not_loaded={not_loaded} down={down} failed={failed}",

@@ -8,7 +8,7 @@ question first), `usagebox` (never load: redraw an old conversation that quotes 
 another dialog open under it, and write down every key received), `failonce` (end at once, one time),
 `status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for), `noconvslow` (the same, said only after 6 s),
 `failsid` (session ids whose start always fails), `limitnotice` (show the usage-limit notice under
-the empty box)."""
+the empty box), `limitqueue` (a line typed in meets the weekly limit and is held for the reset)."""
 import ctypes
 import json
 import os
@@ -145,3 +145,7 @@ while time.time() < end:
         break
     with open(os.path.join(home, "typed.jsonl"), "a") as f:
         f.write(json.dumps({"sid": sid, "text": line.rstrip("\r\n")}) + "\n")
+    if os.path.exists(os.path.join(home, "limitqueue")):    # what Claude Code 2.1.330 shows: the message is held
+        sys.stdout.write("  \u23bf  You've hit your weekly limit \u00b7 resets 12pm\r\n\u23fa Usage limit reached \u00b7 "
+                         "set to continue automatically at 12pm\r\n")
+        sys.stdout.flush()

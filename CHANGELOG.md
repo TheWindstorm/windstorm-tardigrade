@@ -50,6 +50,10 @@ The wake-up note:
 - **Never beside a usage or limit notice** (G2.40), whatever its form. 0.1.7 missed Claude Code's "Usage limit
   reached ... /usage-credits" notice under an empty box and would have typed its note there (found on two real
   machines before any reboot).
+- **Never into a conversation that ended on a usage limit, and a note held for the reset is named** (G2.45).
+  On a real reboot, 0.1.7's note went into two sessions at their weekly limit; Claude Code held it, to run by
+  itself at the reset about 9 hours later. A session at its limit that has not met it in its own conversation is
+  not covered by the first part; the second part tells you its note is waiting ("note queued until the reset").
 
 A name is not an identity:
 

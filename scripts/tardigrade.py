@@ -539,12 +539,10 @@ def last_model(sid, since_ms, config_dir=""):
 EXIT_CMD = re.compile(r"<command-name>/(exit|quit)</command-name>")
 
 
-def exited_at(r):
-    """When this session's owner ended it with /exit (or /quit), as a Unix time, or 0. Ended means the last
-    entry of its conversation is that command (Claude Code's own lines after it, its "Bye!" and its
-    bookkeeping, do not count) and it was written after a record last saw the session running. An /exit
-    older than that was followed by a resume (a session moved to another account does exactly that)."""
-    import datetime
+def last_turn(r):
+    """The last entry of this session's conversation that is a turn: a user or assistant line, not Claude
+    Code's own bookkeeping and not what it printed for a command (its "Bye!" for /exit). None if there is
+    no conversation file or no such line."""
     base = r.get("config_dir") or os.path.join(HOME, ".claude")
     for f in glob.glob(os.path.join(base, "projects", "*", f"{r['session_id']}.jsonl")):
         try:
@@ -563,18 +561,42 @@ def exited_at(r):
                 continue
             c = (d.get("message") or {}).get("content") if isinstance(d.get("message"), dict) else None
             if isinstance(c, str) and c.lstrip().startswith(("<local-command-stdout>", "<local-command-stderr>")):
-                continue           # what Claude Code printed for a command, "Bye!" for /exit
-            if not (isinstance(c, str) and EXIT_CMD.search(c)):
-                return 0
-            try:
-                t = datetime.datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
-            except ValueError:
-                t = 0
-            if not t:
-                return 0
-            return t if t > float(r.get("last_seen") or 0) else 0
+                continue
+            return d
+        return None
+    return None
+
+
+def exited_at(r):
+    """When this session's owner ended it with /exit (or /quit), as a Unix time, or 0. Ended means the last
+    turn of its conversation is that command (Claude Code's own lines after it, its "Bye!" and its
+    bookkeeping, do not count) and it was written after a record last saw the session running. An /exit
+    older than that was followed by a resume (a session moved to another account does exactly that)."""
+    import datetime
+    d = last_turn(r)
+    c = (d.get("message") or {}).get("content") if d and isinstance(d.get("message"), dict) else None
+    if not (isinstance(c, str) and EXIT_CMD.search(c)):
         return 0
-    return 0
+    try:
+        t = datetime.datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0
+    return t if t and t > float(r.get("last_seen") or 0) else 0
+
+
+def ended_on_limit(r):
+    """G2.45: the words of the usage or limit reply this session's conversation last ended on, or "". Claude
+    Code writes that reply as an assistant line marked as an error ("You've hit your weekly limit · resets
+    12pm"). A note typed into such a session is not lost: Claude Code holds it and runs it by itself when the
+    limit resets, hours later, with nobody there and its words stale."""
+    d = last_turn(r)
+    if not d or d.get("type") != "assistant" or not d.get("isApiErrorMessage"):
+        return ""
+    c = (d.get("message") or {}).get("content") if isinstance(d.get("message"), dict) else None
+    text = c if isinstance(c, str) else " ".join(str(x.get("text") or "") for x in (c or []) if isinstance(x, dict))
+    if d.get("error") == "rate_limit" or OTHER_DIALOG.search(text):
+        return " ".join(text.split())[:120] or "a usage limit"
+    return ""
 
 
 def launch_facts(pid, sj, config_dir):
@@ -1455,6 +1477,8 @@ def answer_trust(r):
 
 
 QUESTION = re.compile(r"trust this folder|No, exit|❯\s*\d\.\s|usage credits|Stop and wait")
+# what Claude Code shows when a message met a limit and is held for the reset (G2.45)
+QUEUED = re.compile(r"continue automatically|continuing automatically", re.I)
 
 
 def tmp_emptied():
@@ -1536,6 +1560,7 @@ class Watch:
         self.note_times = []
         self.held = {}                  # session id: why its note is held back, when that is known
         self.gone_new = []              # sessions seen going down in a pass, for the run to look at (G2.43)
+        self.queued = []                # sessions whose note met a limit and waits for the reset (G2.45)
 
     def take_gone(self):
         out, self.gone_new = self.gone_new, []
@@ -1580,7 +1605,13 @@ class Watch:
                     self.answered.append(display(r))
                 waiting += 1
                 continue
-            if sid in self.note_for and sid not in self.noted_ids:
+            if sid in self.note_for and sid not in self.noted_ids and sid not in self.held:
+                limit = ended_on_limit(r)
+                if limit:
+                    self.held[sid] = "its conversation last ended on a usage or limit reply"
+                    log(f"  {display(r)}: its conversation last ended on a usage or limit reply (\"{limit}\"); the "
+                        "wake-up note is not typed: Claude Code would hold it and run it by itself at the reset")
+            if sid in self.note_for and sid not in self.noted_ids and not self.held.get(sid, "").startswith("its conv"):
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
                 if OTHER_DIALOG.search(bottom(screen, 15)):
@@ -1592,6 +1623,13 @@ class Watch:
                     self.noted.append(display(r))
                     self.noted_ids.add(sid)
                     log(f"  {display(r)}: loaded and idle; wake-up note typed")
+                    time.sleep(1.5 if TESTING else 4)      # looked at once more: did it meet a limit?
+                    after = SGR.sub("", tmux(r["tmux_socket"], "capture-pane", "-p", "-t",
+                                             f"={r['tmux_session']}:", timeout=6)[1])
+                    if QUEUED.search(bottom(after, 15)) or OTHER_DIALOG.search(bottom(after, 15)):
+                        self.queued.append(display(r))
+                        log(f"  {display(r)}: the note met a usage limit; Claude Code holds it and will run it by "
+                            "itself at the reset (press Esc in that session to drop it)")
                 else:
                     waiting += 1
                     continue
@@ -1600,7 +1638,7 @@ class Watch:
 
     def count(self, started):
         res = {"trust_answered": self.answered, "noted": self.noted, "loaded": [], "not_loaded": [],
-               "down_again": [], "note_not_typed": []}
+               "down_again": [], "note_not_typed": [], "note_queued": self.queued}
         why = {}
         P = procs()
         for r in started:
@@ -1622,6 +1660,8 @@ class Watch:
             log(f"  DOWN {nm}: it started and ended again; its tmux session holds a shell")
         for nm in res["note_not_typed"]:
             log(f"  {nm}: loaded, but {why[nm]}; the wake-up note was not typed")
+        if self.queued:
+            log(f"note queued until the reset: {len(self.queued)} session(s): {', '.join(self.queued)}")
         if self.answered:
             log(f"trust: answered for {len(self.answered)} session(s)")
         return res
@@ -2354,7 +2394,8 @@ def report_cmd():
     d = census_data()
     need = [("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
             ("not loaded (a question on its screen?)", rep.get("not_loaded")),
-            ("loaded, note not typed (not idle)", rep.get("note_not_typed")), ("down again", rep.get("down_again")),
+            ("loaded, note not typed", rep.get("note_not_typed")),
+            ("note waiting in Claude Code's queue for the limit to reset", rep.get("note_queued")), ("down again", rep.get("down_again")),
             ("ended by its owner, not brought back", rep.get("ended")),
             ("running elsewhere by its turn", rep.get("elsewhere")), ("tab not attached", tabs.get("not")),
             ("a name carried by more than one session", [f"{n}: {', '.join(i)}" for n, i in d["same_name"].items()]),

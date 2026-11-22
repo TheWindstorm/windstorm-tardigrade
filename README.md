@@ -97,6 +97,13 @@ session checks its notes and starts again what is still needed. The message is t
 Code reports it loaded and idle, and never into one that shows a question. It costs one turn per session. To bring
 sessions back silent instead, put `"wake": "idle"` in `~/.config/windstorm-tardigrade/config.json`.
 
+**A note at a usage limit waits.** A message typed into a session whose login is at its limit is not lost: Claude
+Code holds it and runs it by itself when the limit resets, perhaps hours later, with nobody there. So no note is typed
+into a session whose conversation last ended on a usage or limit reply, nor beside a limit notice on its screen. A
+session at its limit that has not yet met it in its own conversation can still get one; Tardigrade looks once more
+after each note, and if it is held for the reset, the log and the counts say so ("note queued until the reset"). To
+drop a held note, press Esc in that session. Tardigrade does not press it for you.
+
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
 session with the same name, folder and flags.
 

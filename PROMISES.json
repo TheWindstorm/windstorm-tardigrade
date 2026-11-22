@@ -429,6 +429,20 @@
    "issue": 31,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T31",
+   "seen": "2026-11-22, an ungraceful restart of a Mac test machine on 0.1.7: the note went into two sessions on a login at its weekly limit; Claude Code answered that the limit was hit and held the note, to run by itself as a turn at the reset, about 9 hours later, with nobody there. On one of them the note line comes before the limit lines, so the screen check of G2.40 would not have held it.",
+   "promise": "The wake-up note is never typed into a session whose conversation last ended on a usage or limit reply; the log names it, and the README says a typed note can wait in Claude Code's queue for a reset. After each note the screen is looked at once more, and a note held for the reset is named in the log and in the counts. NOT covered: a session at its limit that has not yet met it in its own conversation still gets the note; Tardigrade then only says it is waiting, and never presses Esc for the person.",
+   "codon": "G2.45",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named",
+   "proven": "",
+   "issue": 32,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
