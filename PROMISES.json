@@ -478,13 +478,13 @@
    "promise": "a workspace Tardigrade has just made gets a short wait, up to 10 s, for its first pane to become an idle shell before that pane is given up as 'running something else': no blank tab is left in a workspace Tardigrade made. A pane that still holds something else after the wait is left alone, as now.",
    "codon": "G4.7",
    "owner": "maintainer",
-   "first_ship_in": "0.1.9",
+   "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
    "test": "test_G4_7_a_new_workspace_tab_whose_shell_is_still_starting_is_waited_for",
    "proven": "",
    "issue": 35,
-   "moved_why": "2026-11-22 staff ruling: making a lost workspace again is new in 0.1.8 and is what a person looks at; it does not ship leaving a blank tab in their layout when the fix is a bounded wait.",
-   "moved_by_person": "Skills Boss (staff ruling)"
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
