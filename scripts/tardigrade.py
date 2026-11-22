@@ -686,7 +686,11 @@ def record():
     # Sessions that vanish together did not each end by a person's hand: that is a crash (a tmux server
     # that died, a terminal program that was closed with everything in it). They stay on the record as
     # sessions to bring back for lost_keep_h hours. `record --force` says: what runs now is the truth.
-    gone = [r for r in old["lanes"] if r["session_id"] not in live_ids and r["session_id"] not in known_down]
+    # A recorded session whose own tmux session now holds another session was replaced there (a new
+    # conversation in the same place, or a session that came back new): it is not down, it is over.
+    taken = {(r["tmux_socket"], r["tmux_session"]) for r in rows}
+    gone = [r for r in old["lanes"] if r["session_id"] not in live_ids and r["session_id"] not in known_down
+            and (r["tmux_socket"], r["tmux_session"]) not in taken]
     fresh = [r for r in gone if not r.get("lost_since")]
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
     lost = []

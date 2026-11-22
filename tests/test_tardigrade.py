@@ -325,6 +325,20 @@ class Record(Base):
         t = self.table()
         self.assertEqual(([r["name"] for r in t["lanes"]], len(t["down"])), (["Alpha Lane"], 3))
 
+    def test_G1_13_a_session_replaced_in_its_own_tmux_session_is_not_listed_as_down(self):
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.kill([x for x in self.launches() if x["sid"] == a][0]["pid"])
+        time.sleep(1.5)
+        a2 = self.start_lane("alpha", "Alpha Lane")        # a new conversation in the same tmux session
+        self.tg("record", "--force")
+        t = self.table()
+        self.assertEqual(sorted(r["session_id"] for r in t["lanes"] if r["name"] == "Alpha Lane"), [a2])
+        self.assertEqual(t["down"], [])
+        rc, out = self.tg("census", "--json")
+        self.assertEqual(json.loads(out)["down"], 0)
+
     def test_G1_12_the_model_recorded_is_the_one_in_use_not_the_one_it_started_with(self):
         sid = self.start_lane("alpha", "Alpha Lane")       # started with --model claude-opus-5-5
         d = os.path.join(self.home, ".claude", "projects", "-work")
