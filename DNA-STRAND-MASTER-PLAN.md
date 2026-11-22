@@ -125,7 +125,16 @@ It worked and it was not good enough, and both halves are lessons.
 - Two things a second kind of user needs, seen the same night: windows that open by themselves after login (G4.6),
   and a way to see who is busy before a planned reboot (G3.9).
 - Not understood yet: on that machine the boot run began 4 minutes 35 seconds after boot; on a laptop it begins
-  after about 2 minutes. Find out why before promising anything.
+  after about 2 minutes. The log does not say what it waited for. So: it says (G5.8).
+- From the agent that runs that machine, who did by hand what the skill did not do. Nobody woke the sessions: all
+  98 came back idle, as that machine was set, their watchers were gone, and 70 minutes later only 9 had done
+  anything (G2.37). `/tmp` is emptied by a reboot, and tools some sessions relied on lived there (G2.37, G3.10).
+  The count reached nobody (G2.38). Retiring the older tool meant finding every caller by hand (G5.7). A workspace
+  made again comes with a blank tab (G4.7). `revive --only` did not say that it had attached a tab (G4.8). A
+  session started by hand outside the record was not flagged as unprotected (G3.12). A second user's result could
+  only be counted from outside (G3.13). Some of that user's own services and timers behaved differently after the
+  reboot (G3.11). A start flag was dropped without a word (G2.39). And the whole round of asking sessions before a
+  reboot and reminding them after it was done by hand (G6.1).
 
 A lesson is easy to write down and easy to leave behind. Each of these is a row in `PROMISES.json` with the
 version it is due in, and the tests refuse that version while the row is not built (see "Promises" below).
@@ -234,6 +243,18 @@ above with the name of its test, and the row's `test` field names the same test.
 | G5.6 | setup's own record keeps every tab and workspace label it can read, and keeps the labels already on the record when Herdr is slow to answer. | T10, due 0.1.8 |
 | G4.6 | On a desktop, a window opens by itself after login for each returned session that had a window, once the restore is done. A setting that setup offers; off where there is no desktop. | T11, due 0.1.9 |
 | G3.9 | `ready` says, before a planned reboot, which sessions are busy and which have background commands that will be cut. | T12, due 0.1.9 |
+| G2.37 | The wake-up note can be switched on for some sessions and not others (patterns in the settings), its words can be set, it says that /tmp was emptied, and on a machine with many sessions the notes are spaced so that they do not all take a turn in the same minute. It is typed only into an idle session with an empty box and no question open, as today. | T13, due 0.1.8 |
+| G3.10 | `ready` names the sessions whose running background commands or scripts live under /tmp, because a reboot empties it. | T14, due 0.1.9 |
+| G2.38 | With `on_done` set, that command is run when a restore ends, with the counts (started, loaded, not loaded, down, failed), so a person or a program is told instead of having to look. | T15, due 0.1.8 |
+| G5.7 | `setup` lists the other things on the machine that would start Claude sessions at boot or login (units, agents, autostart entries, desktop icons), so the person can switch them off: one restorer per session. It changes none of them. | T16, due 0.1.9 |
+| G4.7 | When a workspace is made again (G4.5), its blank first tab is used for the first session placed there, or closed if it holds nothing, so no empty tab is left. | T17, due 0.1.8 |
+| G4.8 | `revive --only` says what it did about the session's tab: attached, already there, or left alone and why. | T18, due 0.1.8 |
+| G3.11 | `ready` lists this user's services and timers that a reboot will change: enabled but stopped now (they will start), running now but not enabled (they will not come back), and timers whose only trigger counts from their own last run (after a reboot they never fire again by themselves). It lists; it does not judge or change them. | T19, due 0.1.9 |
+| G5.8 | The boot run logs how long after boot it began and what it waited for (its own fixed delay, the user's services coming up), and the progress line shows it. | T20, due 0.1.8 |
+| G3.12 | `census` marks each running session that is not on the record and says why (a pattern in the settings leaves it out, it is a helper of another session, it is newer than the last record), because such a session does not come back. | T21, due 0.1.8 |
+| G3.13 | Opt-in, off by default: after a restore the counts alone (started, loaded, down; no names, no folders) are written where other users of the machine can read them, so one person can confirm a restore for another without entering their account. | T22, due 0.1.9 |
+| G6.1 | `prep`: before a planned reboot each session is asked to write down what it must start again; the answers are kept with the record and given back to that session in its wake-up note. Asking a running session is a new kind of typing, so this needs its own invariant before it is built. | T23, due 0.2.0 |
+| G2.39 | A session comes back with the start flags it had, all of them except the ones that name a conversation or pass a first message. A flag that cannot be carried is named in the log when the session is recorded, never dropped silently, and the README lists what is and is not carried. | T24, due 0.1.8 |
 
 ## Promises
 
@@ -241,7 +262,8 @@ above with the name of its test, and the row's `test` field names the same test.
 promise, its codon, and the version it is due in. Four tests keep it honest. A version cannot be released while a
 promise due in it has no test. The version after that cannot be released until the row says on which real machine
 the promise was seen to work. A date moves only with a written reason, and a promise that came from what the
-person saw on his own machine moves only by his word. Rows are never deleted.
+person saw on his own machine moves only by his word. Rows are never deleted. A lesson that was heard and not
+taken is written under `declined` with the reason.
 
 ## Invariants
 

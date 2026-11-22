@@ -233,7 +233,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 64 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 65 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
@@ -260,7 +260,7 @@ The plan this is built from, with each claim and its proof, is
 
 [PROMISES.json](PROMISES.json) lists what real use has shown must change, and the version each change is due in:
 starting several sessions at a time, attaching each tab as its session comes up, saying on the screen that sessions
-are on their way, and nine more. It is not a wish list. The tests refuse a version while a promise due in it is
+are on their way, waking sessions that came back idle, and twenty more. It is not a wish list. The tests refuse a version while a promise due in it is
 not built, and refuse the next one until the promise has been seen to work on a real machine.
 
 ## Where it comes from

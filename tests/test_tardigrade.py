@@ -1046,6 +1046,10 @@ class Promises(unittest.TestCase):
             self.assertIn(r["owner"], ("person", "maintainer"), r["id"])
             self.assertIn(f"| {r['codon']} |", self.plan, f"{r['id']}: codon {r['codon']} is not in the plan")
 
+    def test_PROMISES_a_lesson_not_taken_is_written_down_with_its_reason(self):
+        for d in jload(os.path.join(ROOT, "PROMISES.json")).get("declined", []):
+            self.assertTrue(d.get("heard") and d.get("why"), "a declined lesson needs what was heard and why it was not taken")
+
     def test_PROMISES_no_version_ships_while_a_promise_due_in_it_is_not_built(self):
         for r in self.rows:
             if self.v(r["ship_in"]) <= self.version:

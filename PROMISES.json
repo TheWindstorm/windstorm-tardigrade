@@ -5,7 +5,8 @@
   "When it is built: put the name of its test in 'test'. The test must exist and be named in the plan next to the codon.",
   "When it has been seen to work on a real machine: say which machine, which version and when in 'proven'.",
   "'ship_in' moves only with a reason in 'moved_why'. A row whose owner is 'person' was seen by the person the skill is for, on his own machine: its date moves only by his word, restated in 'moved_by_person'.",
-  "A row is never deleted. A promise that turns out wrong is closed by a row that says why."
+  "A row is never deleted. A promise that turns out wrong is closed by a row that says why.",
+  "A lesson that was heard and not taken goes under 'declined' with the reason, so that nothing is dropped without a word."
  ],
  "rows": [
   {
@@ -175,6 +176,180 @@
    "issue": 13,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T13",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: all 98 sessions came back idle with nothing typed, as that machine was set. Their watchers and timers were gone, so nothing woke them: 70 minutes after boot only 9 had done anything, and the rest had to be messaged by hand. Each session's scratch folder under /tmp was gone too, with tools some of them relied on.",
+   "promise": "The wake-up note can be switched on for some sessions and not others (patterns in the settings), its words can be set, it says that /tmp was emptied, and on a machine with many sessions the notes are spaced so that they do not all take a turn in the same minute. It is typed only into an idle session with an empty box and no question open, as today.",
+   "codon": "G2.37",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "",
+   "proven": "",
+   "issue": 14,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T14",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: a session's own posting tool and watcher lived under /tmp, which a reboot empties. They were gone and had to be rebuilt elsewhere.",
+   "promise": "`ready` names the sessions whose running background commands or scripts live under /tmp, because a reboot empties it.",
+   "codon": "G3.10",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 15,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T15",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: the line with the counts went only to the log. The one responsible for the machine had to poll for it, or be woken from another machine.",
+   "promise": "With `on_done` set, that command is run when a restore ends, with the counts (started, loaded, not loaded, down, failed), so a person or a program is told instead of having to look.",
+   "codon": "G2.38",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "",
+   "proven": "",
+   "issue": 16,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T16",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: switching the machine from its older restore tool meant finding every caller by hand: three units, a folder of scripts, a desktop icon, lines in other tools. The machine's own health check then failed twice because it knew sessions only by the old tool's command lines.",
+   "promise": "`setup` lists the other things on the machine that would start Claude sessions at boot or login (units, agents, autostart entries, desktop icons), so the person can switch them off: one restorer per session. It changes none of them.",
+   "codon": "G5.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 17,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T17",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: making a missing Herdr workspace again opened an empty shell tab in it. Five such tabs were closed by hand, after checking each held nothing.",
+   "promise": "When a workspace is made again (G4.5), its blank first tab is used for the first session placed there, or closed if it holds nothing, so no empty tab is left.",
+   "codon": "G4.7",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "",
+   "proven": "",
+   "issue": 18,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T18",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: `revive --only` for a running session printed only that it was already running, although it had also attached the session's tab.",
+   "promise": "`revive --only` says what it did about the session's tab: attached, already there, or left alone and why.",
+   "codon": "G4.8",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "",
+   "proven": "",
+   "issue": 19,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T19",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: a timer its owner had stopped, but left enabled, started again at boot and had to be stopped before it fired. Another user timer, whose only trigger counted from its own last run, had no next run at all after the reboot until someone ran it once by hand.",
+   "promise": "`ready` lists this user's services and timers that a reboot will change: enabled but stopped now (they will start), running now but not enabled (they will not come back), and timers whose only trigger counts from their own last run (after a reboot they never fire again by themselves). It lists; it does not judge or change them.",
+   "codon": "G3.11",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 20,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T20",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: the boot run began 4 minutes 35 seconds after boot, against about 2 minutes on a laptop, and the log does not say what it waited for.",
+   "promise": "The boot run logs how long after boot it began and what it waited for (its own fixed delay, the user's services coming up), and the progress line shows it.",
+   "codon": "G5.8",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "",
+   "proven": "",
+   "issue": 21,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T21",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: a session started by hand in a plain shell was running, was not on the record, and nothing said that it would not survive a restart.",
+   "promise": "`census` marks each running session that is not on the record and says why (a pattern in the settings leaves it out, it is a helper of another session, it is newer than the last record), because such a session does not come back.",
+   "codon": "G3.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "",
+   "proven": "",
+   "issue": 22,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T22",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: a second user's sessions were restored by his own install. The one responsible for the machine could confirm it only by counting processes from outside; reading the result would have meant entering his account.",
+   "promise": "Opt-in, off by default: after a restore the counts alone (started, loaded, down; no names, no folders) are written where other users of the machine can read them, so one person can confirm a restore for another without entering their account.",
+   "codon": "G3.13",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 23,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T23",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: before the reboot every session was asked by hand, over messages, whether it was ready and what it would have to start again; after it, the ones with something to start again were messaged by hand.",
+   "promise": "`prep`: before a planned reboot each session is asked to write down what it must start again; the answers are kept with the record and given back to that session in its wake-up note. Asking a running session is a new kind of typing, so this needs its own invariant before it is built.",
+   "codon": "G6.1",
+   "owner": "maintainer",
+   "first_ship_in": "0.2.0",
+   "ship_in": "0.2.0",
+   "test": "",
+   "proven": "",
+   "issue": 24,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T24",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: sessions that had been started with a name flag came back without it. Nothing broke, because a session keeps its title, but a start flag had been dropped without a word. Only the permission mode, the model, the effort and the added folders are carried today.",
+   "promise": "A session comes back with the start flags it had, all of them except the ones that name a conversation or pass a first message. A flag that cannot be carried is named in the log when the session is recorded, never dropped silently, and the README lists what is and is not carried.",
+   "codon": "G2.39",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "",
+   "proven": "",
+   "issue": 25,
+   "moved_why": "",
+   "moved_by_person": ""
+  }
+ ],
+ "declined": [
+  {
+   "heard": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: two services of one of the machine's users both carried the same network tunnel, and the second looped on a failure to bind its port.",
+   "why": "Two services fighting over one thing is the machine's own configuration. Tardigrade will list a user's units that a reboot changes (G3.11); it does not judge whether two of them conflict."
   }
  ]
 }
