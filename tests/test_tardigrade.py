@@ -180,9 +180,13 @@ class Base(unittest.TestCase):
         """a session that runs outside tmux, as in a plain terminal window"""
         sid = str(uuid.uuid4())
         before = len(self.launches())
-        p = subprocess.Popen([os.path.join(self.bin, "claude")], cwd=self.work, stdin=subprocess.DEVNULL,
+        import pty
+        master, slave = pty.openpty()          # a terminal window gives the session a terminal
+        p = subprocess.Popen([os.path.join(self.bin, "claude")], cwd=self.work, stdin=slave,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
                              env=dict(self.env, FAKE_SID=sid, FAKE_NAME=name))
+        os.close(slave)
+        self.addCleanup(os.close, master)
         self.loose.append(p)
         self.wait_launches(before + 1)
         time.sleep(0.5)
@@ -209,6 +213,29 @@ class Record(Base):
         self.start_lane("kid", "Child", extra_env={"CLAUDE_CODE_CHILD_SESSION": "1"})
         self.tg("record", "--force")
         self.assertEqual([r["name"] for r in self.table()["lanes"]], ["Alpha Lane"])
+
+    def test_G1_12_a_one_shot_run_is_never_a_lane_wherever_it_runs(self):
+        self.start_lane("alpha", "Alpha Lane")
+        # claude -p in a tmux pane, as a script or a scheduler runs it: marked "interactive" by Claude Code
+        self.start_lane("printrun", "ptry-a1", flags="-p 'say ok' --model claude-haiku-5-5")
+        # a claude whose input is not a terminal
+        self.start_lane("noinput", "No Input", flags="--model claude-opus-5-5 < /dev/null")
+        # a claude started inside another Claude session (its Bash tool, its pane): the parent is a claude
+        outer = os.path.join(self.tmp, "outer")
+        os.makedirs(outer)
+        with open(os.path.join(outer, "claude"), "w") as f:
+            f.write(f'#!/bin/bash\n"{self.bin}/claude" "$@"\n')
+        os.chmod(os.path.join(outer, "claude"), 0o755)
+        before, sid = len(self.launches()), str(uuid.uuid4())
+        rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", "inner", "-c", self.work,
+                          f"FAKE_SID={sid} FAKE_NAME='Inner Run' {outer}/claude --model claude-opus-5-5")
+        self.assertEqual(rc, 0)
+        self.wait_launches(before + 1)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([r["name"] for r in self.table()["lanes"]], ["Alpha Lane"])
+        rc, out = self.tg("revive", "--dry-run", "--all")
+        self.assertNotIn("ptry-a1", out)
 
     def test_G1_3_record_waits_while_the_machine_is_still_starting(self):
         self.start_lane("alpha", "Alpha Lane")

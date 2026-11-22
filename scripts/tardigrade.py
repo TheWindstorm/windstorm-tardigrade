@@ -45,7 +45,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.8"
+VERSION = "0.1.8.1"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -764,6 +764,37 @@ def start_flags(a):
 
 
 
+def has_tty(pid):
+    """Is this process's input a terminal? An interactive Claude Code session always reads one."""
+    if not MAC:
+        try:
+            t = os.readlink(f"/proc/{pid}/fd/0")
+        except OSError:
+            return True            # cannot tell: do not leave a session out on a guess
+        return t.startswith(("/dev/pts/", "/dev/tty", "/dev/console"))
+    t = run(["ps", "-o", "tty=", "-p", str(pid)])[1].strip()
+    return t not in ("", "?", "??")
+
+
+def one_shot(pid, sj, P):
+    """G1.12: a run that is not a session a person sits in is never a lane, wherever it runs: `claude -p` (print
+    mode, which Claude Code still marks "interactive" in its status file), a run through an SDK, a process with
+    no terminal on its input, and a process started inside another Claude session (its Bash tool, its pane)."""
+    a = argv_of(pid)[1:]
+    if any(x in ("-p", "--print") or x.startswith("--print=") for x in a):
+        return True
+    if str(sj.get("entrypoint") or "").startswith("sdk"):
+        return True
+    if not has_tty(pid):
+        return True
+    p, steps = P.get(pid, (0, 0, ""))[0], 0
+    while p in P and p > 1 and steps < 40:
+        if is_claude(P[p][2]):
+            return True
+        p, steps = P[p][0], steps + 1
+    return False
+
+
 def live(with_launch=True):
     """(my live sessions, number of other users' Claude processes, number of helper sessions)"""
     P, PN = procs(), panes()
@@ -794,8 +825,8 @@ def live(with_launch=True):
                       status="starting", sessionId=sid)
         kind, detail = where(pid, P, PN)
         interactive = sj.get("kind", "interactive") == "interactive"
-        if ef["child"] or not interactive:
-            helpers += 1       # started by another session, or not interactive: not a lane
+        if ef["child"] or not interactive or one_shot(pid, sj, P):
+            helpers += 1       # started by another session, not interactive, or a one-shot run: not a lane
             continue
         row = {
             "pid": pid, "session_id": sid, "name": (sj.get("name") or "").strip(),

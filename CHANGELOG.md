@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.8.1 (not yet released)
+A fix to what 0.1.8 counts as a session (G1.12, T40). A `claude -p` run, which Claude Code marks "interactive"
+in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could
+have started it again as an interactive session. Now a print-mode run, a run through an SDK, a process whose
+input is not a terminal, and a process started inside another Claude session are never recorded, listed or
+started; they are counted as helpers.
+
 ## 0.1.8 (2026-11-22)
 Built from DNA Strand Master Plan 1.8, from the lessons of the first real reboot with 98 sessions (`PROMISES.json`
 T1 to T21, T24) and four found on real machines while getting ready for the next ones (T25, T26, and two inside
