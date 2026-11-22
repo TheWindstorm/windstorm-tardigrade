@@ -764,6 +764,9 @@ def start_flags(a):
 
 
 
+PANES_NOW = []      # this scan's tmux panes, for one_shot()
+
+
 def has_tty(pid):
     """Is this process's input a terminal? An interactive Claude Code session always reads one."""
     if not MAC:
@@ -787,10 +790,17 @@ def one_shot(pid, sj, P):
         return True
     if not has_tty(pid):
         return True
+    # Inside another session: a claude among its parents below the place it lives. The walk stops at the first
+    # tmux pane, Herdr, terminal window, editor or ssh login: what lies above that (a Herdr server or a terminal
+    # someone opened from a Claude session) does not make the sessions inside it anyone's helpers.
+    PN = PANES_NOW[0] if PANES_NOW else {}
     p, steps = P.get(pid, (0, 0, ""))[0], 0
     while p in P and p > 1 and steps < 40:
-        if is_claude(P[p][2]):
+        comm = P[p][2]
+        if is_claude(comm):           # a claude that holds a pane itself: this run is inside that session
             return True
+        if p in PN or comm == "herdr" or comm.startswith(TERMINALS + IDES + ("sshd",)):
+            return False
         p, steps = P[p][0], steps + 1
     return False
 
@@ -798,6 +808,7 @@ def one_shot(pid, sj, P):
 def live(with_launch=True):
     """(my live sessions, number of other users' Claude processes, number of helper sessions)"""
     P, PN = procs(), panes()
+    PANES_NOW[:] = [PN]
     me, mine, others, helpers = os.getuid(), [], 0, 0
     table = read_json(TABLE, {})
     known = {r["session_id"]: r for r in (table.get("down", []) + table.get("lanes", []))} if isinstance(table, dict) else {}
