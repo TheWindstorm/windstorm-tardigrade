@@ -227,7 +227,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
 | `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
-| `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. |
+| `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. Tardigrade attaches tabs to a Herdr that is running; it never starts Herdr itself. Have Herdr's server start at login by itself (a launch agent on a Mac, a user service on Linux, running `herdr server`), not only from a terminal window that the desktop may or may not reopen. |
 | `answer_trust` | `false` | Set by `trust on` / `trust off`. Answer "trust this folder?" for a revived session's own folder. |
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |

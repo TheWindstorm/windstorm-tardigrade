@@ -611,6 +611,20 @@
    "issue": 46,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T44",
+   "seen": "2026-11-22, a clean reboot of a Mac test machine on 0.1.8.1: no Herdr server came up (it was started there only by terminal windows the desktop reopens at login, and this time it reopened none). Every session was started, no tab was attached, and nothing said so: the watch attaches only when Herdr answers and logs nothing otherwise; the last pass waits up to attach_wait_min (30 min) before its one line; census, report and on_done said nothing.",
+   "promise": "when the record has tabs and Herdr is not running, the first pass logs \"Herdr is not running: N tab(s) wait for it (up to M minutes)\", and census, report and on_done say \"Herdr is not running: N tab(s) not attached\"; the tabs are still attached when Herdr appears; Tardigrade never starts Herdr; the README says what to have in place so Herdr starts at login.",
+   "codon": "G4.10",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 47,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
