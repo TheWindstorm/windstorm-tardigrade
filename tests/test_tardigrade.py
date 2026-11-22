@@ -1044,6 +1044,9 @@ class Revive(Base):
         self.assertTrue(tg.box_empty(f"old text\n{rule}\n❯ \n{rule}\n  ⏵⏵ bypass permissions on\n"))
         self.assertFalse(tg.box_empty(f"old text\n{rule}\n❯ half a sentence\n{rule}\n"))    # someone is typing
         self.assertFalse(tg.box_empty("loaded\n"))                                           # no box: not known
+        # a session nobody wrote in shows a dim placeholder in its empty box (Claude Code 2.1.330, a real machine)
+        self.assertTrue(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0\x1b[2mTry \"how does <filepath> work?\"\x1b[0m\n{rule}\n"))
+        self.assertFalse(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0hello \x1b[2mtypo\x1b[0m\n{rule}\n"))
 
     def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
         self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')
@@ -1527,7 +1530,7 @@ class Invariants(unittest.TestCase):
         self.assertIn('"answer_trust": False,', self.src)           # off by default
         self.assertEqual(self.src.count("type_note(r, "), 2)        # its definition and one call, in the watch
         call = self.src.index("type_note(r, self.note_for")
-        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15))', self.src[call - 200:call])
+        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15))', self.src[call - 400:call])
 
     def test_INV6_standard_library_only_and_no_network(self):
         import re

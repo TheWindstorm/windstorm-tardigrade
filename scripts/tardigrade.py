@@ -1321,15 +1321,21 @@ def wants_note(r):
 
 
 BOX_EDGE = re.compile(r"^\s*[─━]{8,}")
+SGR = re.compile(r"\x1b\[[0-9;]*m")
+DIM = re.compile(r"\x1b\[2m.*?(?=\x1b\[(?:0|22)?m|$)")
 
 
 def box_empty(screen):
     """Claude Code's input box at the foot of the screen, with nothing typed in it: a line that begins with
-    ❯ and has nothing after it, right under a rule. No box found means: not known to be empty."""
-    lines = [ln for ln in screen.splitlines() if ln.strip()][-15:]
+    ❯ right under a rule, with nothing after the ❯ but its dim placeholder (a session nobody wrote in shows
+    one, such as 'Try "how does <filepath> work?"'). The screen is read with its styles (capture-pane -e),
+    so typed text and the placeholder can be told apart. No box found means: not known to be empty."""
+    lines = [ln for ln in screen.splitlines() if SGR.sub("", ln).strip()][-15:]
     for i in range(len(lines) - 1, 0, -1):
-        if lines[i].lstrip().startswith("❯") and BOX_EDGE.match(lines[i - 1]):
-            return not lines[i].lstrip()[1:].strip()
+        plain = SGR.sub("", lines[i]).lstrip()
+        if plain.startswith("❯") and BOX_EDGE.match(SGR.sub("", lines[i - 1])):
+            after = lines[i][lines[i].index("❯") + 1:]
+            return not SGR.sub("", DIM.sub("", after)).strip()
     return False
 
 
@@ -1395,8 +1401,9 @@ class Watch:
                 waiting += 1
                 continue
             if sid in self.note_for and sid not in self.noted_ids:
-                screen = tmux(r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
-                if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(screen) \
+                styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
+                screen = SGR.sub("", styled)
+                if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(styled) \
                         and self.may_note():
                     self.note_times.append(time.time())
                     type_note(r, self.note_for[sid])
