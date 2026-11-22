@@ -267,7 +267,7 @@ The tests run on a person's own machine, so they must leave it as they found it.
 | Codon | Claim | Proof |
 |---|---|---|
 | G7.1 | A test run that is stopped part-way (a timeout, a closed terminal, a setUp that fails) leaves no tmux server, no process and no folder behind. Each test registers its cleanup the moment its folder exists, every step of it runs even if one fails, and SIGTERM, SIGHUP and exit run the cleanups of the tests still running. | `test_G7_1_a_run_stopped_part_way_leaves_nothing_behind` |
-| G7.2 | (0.1.9) A test that checks a process has gone waits a bounded time for it to exit instead of reading once, and still fails if it stays (T42). | (planned) |
+| G7.2 | A test that checks a process has gone waits a bounded time for it to exit instead of reading once (the waiting screens of G4.4, a stopped run's processes in G7.1), and still fails if it stays (T42). | `test_G7_2_a_check_that_a_process_is_gone_waits_for_its_exit_and_still_catches_one_that_stays` |
 
 ### Planned: what the hundred-session reboot asked for
 

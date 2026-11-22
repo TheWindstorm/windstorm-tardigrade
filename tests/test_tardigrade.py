@@ -29,6 +29,17 @@ def fread(path):
         return f.read()
 
 
+def gone_soon(find, within=5.0):
+    """What find() still lists after waiting up to `within` seconds for it to list nothing (G7.2). A process that was
+    told to end exits a moment later, so a test that reads once can see it still there; one that stays is still caught."""
+    end = time.time() + within
+    while True:
+        left = find()
+        if not left or time.time() >= end:
+            return left
+        time.sleep(0.2)
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "scripts", "tardigrade.py")
 FAKE = os.path.join(ROOT, "tests", "fake_claude.py")
@@ -1313,18 +1324,20 @@ class Revive(Base):
             self.assertNotIn("INVOCATION_ID", x["seen"])
             self.assertNotIn("JOURNAL_STREAM", x["seen"])
             self.assertFalse(x["child"])
-        waiters = []                                               # this test's own, by the HOME it gave them
-        for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
-            try:
-                with open(f"/proc/{pid}/cmdline", "rb") as f:
-                    cmd = f.read()
-                if b"tardigrade.py\0wait" in cmd:
-                    with open(f"/proc/{pid}/environ", "rb") as f:
-                        if f"HOME={self.home}".encode() in f.read().split(b"\0"):
-                            waiters.append(pid)
-            except OSError:
-                pass
-        self.assertEqual(waiters, [], "a waiting screen outlived its turn")
+        def waiters():                                             # this test's own, by the HOME it gave them
+            found = []
+            for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        cmd = f.read()
+                    if b"tardigrade.py\0wait" in cmd:
+                        with open(f"/proc/{pid}/environ", "rb") as f:
+                            if f"HOME={self.home}".encode() in f.read().split(b"\0"):
+                                found.append(pid)
+                except OSError:
+                    pass
+            return found
+        self.assertEqual(gone_soon(waiters), [], "a waiting screen outlived its turn")
         for s in ("alpha", "beta", "gamma", "echo"):
             self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", f"={s}:", "@tardigrade_waiting")[1].strip(), "")
         rep = jload(self.state("last-revive.json"))
@@ -2162,7 +2175,6 @@ class Tests(unittest.TestCase):
         time.sleep(0.5)
         run.send_signal(signal.SIGTERM)
         run.wait(timeout=30)
-        time.sleep(1)
 
         def left():
             found = []
@@ -2177,11 +2189,39 @@ class Tests(unittest.TestCase):
                         except OSError:
                             pass
             return found
-        self.assertEqual(left(), [], "processes of the stopped run are still alive")
+        self.assertEqual(gone_soon(left), [], "processes of the stopped run are still alive")
         self.assertEqual(os.listdir(parent), [], "the stopped run left its folder behind")
         time.sleep(3)                                       # and nothing comes back to write in it later
         self.assertEqual(left(), [], "a process of the stopped run came back")
         self.assertEqual(os.listdir(parent), [], "something of the stopped run wrote in its folder afterwards")
+
+
+    def test_G7_2_a_check_that_a_process_is_gone_waits_for_its_exit_and_still_catches_one_that_stays(self):
+        mark = f"tg-g72-{uuid.uuid4().hex[:8]}"
+        def mine():
+            found = []
+            for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        if mark.encode() in f.read():
+                            found.append(pid)
+                except OSError:
+                    pass
+            return found
+        late = subprocess.Popen(["bash", "-c", f"sleep 1.5; : {mark}-late"])     # told to end; exits a moment later
+        self.addCleanup(lambda: late.poll() is None and late.kill())
+        self.assertNotEqual(mine(), [], "a single read sees it still there")
+        t = time.time()
+        self.assertEqual(gone_soon(mine), [])
+        self.assertLess(time.time() - t, 5)
+        late.wait()
+        stays = subprocess.Popen(["bash", "-c", f"sleep 30; : {mark}-stays"])
+        self.addCleanup(lambda: stays.poll() is None and stays.kill())
+        t = time.time()
+        self.assertEqual(gone_soon(mine, within=1.0), [str(stays.pid)], "one that stays is still caught")
+        self.assertGreaterEqual(time.time() - t, 1.0)
+        stays.kill()
+        stays.wait()
 
 
 class Invariants(unittest.TestCase):

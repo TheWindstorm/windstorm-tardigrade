@@ -592,7 +592,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
-   "test": "",
+   "test": "test_G7_2_a_check_that_a_process_is_gone_waits_for_its_exit_and_still_catches_one_that_stays",
    "proven": "",
    "issue": 45,
    "moved_why": "",
