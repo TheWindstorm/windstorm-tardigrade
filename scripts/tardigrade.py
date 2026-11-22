@@ -45,7 +45,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.8.1"
+VERSION = "0.1.8.2"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -162,6 +162,9 @@ def run(argv, timeout=30, env=None):
         return 99, ""
 
 
+PATH_SET = [False]      # the path setting was given: then it is used exactly as written
+
+
 def load_cfg():
     try:
         with open(os.path.join(CFG_DIR, "config.json"), encoding="utf-8") as f:
@@ -178,6 +181,7 @@ def load_cfg():
     if not CFG["shell"]:
         sh = os.path.basename(os.environ.get("SHELL") or "")
         CFG["shell"] = sh if sh in ("bash", "zsh") else ("zsh" if MAC else "bash")
+    PATH_SET[0] = bool(CFG["path"])
     if not CFG["path"]:
         CFG["path"] = ":".join(dirs + ["/usr/sbin", "/sbin"])
     if "trust_wait_min" in CFG:      # its name in 0.1.6
@@ -446,10 +450,10 @@ def sockets():
     return res
 
 
-def tmux(sock, *a, timeout=10):
+def tmux(sock, *a, timeout=10, env=None):
     if not CFG["tmux"]:
         return 99, ""
-    return run([CFG["tmux"], "-S", sock, *a], timeout=timeout)
+    return run([CFG["tmux"], "-S", sock, *a], timeout=timeout, env=env)
 
 
 def panes():
@@ -1324,6 +1328,13 @@ def server_up(sock):
 def server_env():
     """the environment a tmux server is started with: clean, plus the env_file (a desktop's display and bus)"""
     e = clean_env()
+    if not PATH_SET[0]:
+        # The default comes first, so claude is found where its installer put it (G2.49). After it, every folder
+        # of this process's own PATH that the default lacks: a pane never has less than it would have had. Only
+        # whole paths: an empty or relative entry would mean the pane's own folder, the session's project.
+        have = e["PATH"].split(":")
+        e["PATH"] = ":".join(have + [d for d in dict.fromkeys(os.environ.get("PATH", "").split(":"))
+                                     if d.startswith("/") and d not in have])
     e.update({k: v for k, v in env_file_pairs()[0]})
     return e
 
@@ -1397,7 +1408,9 @@ def start_lane(r, created):
         if is_waiting(sock, name):
             # its turn: Claude replaces the waiting screen in the same pane, through the same start file.
             # The pane gets a new terminal, so nothing typed at the waiting screen reaches Claude.
-            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd)[0]
+            # tmux gives a respawned pane the PATH of the client that asks (tmux 3.4): ask with the clean
+            # environment, as new_session does, or at boot the pane gets the boot service's PATH (G2.49).
+            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
             tmux(sock, "set-option", "-u", "-t", f"={name}:", WAIT_MARK)
             tmux(sock, "clear-history", "-t", f"={name}:")
             return rc == 0
@@ -1406,7 +1419,7 @@ def start_lane(r, created):
         if cur not in SHELLS:
             log(f"  {display(r)}: its tmux session is busy ({cur}); not touching it")
             return False
-        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd)[0]
+        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
     else:
         rc = new_session(sock, name, cwd, cmd)
         created.add((sock, name))

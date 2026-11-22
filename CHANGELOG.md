@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.1.8.2 (2026-11-22)
+A fix to how a session is started at boot (G2.49, T48). **0.1.8 and 0.1.8.1 did not bring sessions back on a Linux
+machine whose service `PATH` lacks the folder Claude Code installs into** (`~/.local/bin` for its own installer), when
+no shell startup file adds that folder: every start said "claude: command not found". A stock Ubuntu machine is
+such a machine. Since 0.1.8 each start at boot replaces its waiting screen through `tmux respawn-pane`, and tmux gives
+that pane the `PATH` of whoever asks, which was the boot service. Now that pane gets the same clean environment as a
+new one. Its `PATH` is the `path` setting exactly as written, or, with none, a standard `PATH` plus `~/.local/bin`
+first and then every other whole folder of the `PATH` of whoever runs the restore (at boot: the boot service), so a
+session never has less than before.
+
+One more change, from the same line: with no `path` setting, a session started in a new pane (not one replacing a
+waiting screen) also gains those other folders now. Before, a new pane had the standard `PATH` plus `~/.local/bin`
+only. The default still comes first, so nothing is lost; a `revive` typed by hand passes on the folders of the shell
+it is typed in.
+
 ## 0.1.8.1 (2026-11-22)
 A fix to what 0.1.8 counts as a session (G1.14, T40). A `claude -p` run, which Claude Code marks "interactive"
 in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could
