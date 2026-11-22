@@ -780,7 +780,7 @@ def has_tty(pid):
 
 
 def one_shot(pid, sj, P):
-    """G1.12: a run that is not a session a person sits in is never a lane, wherever it runs: `claude -p` (print
+    """G1.14: a run that is not a session a person sits in is never a lane, wherever it runs: `claude -p` (print
     mode, which Claude Code still marks "interactive" in its status file), a run through an SDK, a process with
     no terminal on its input, and a process started inside another Claude session (its Bash tool, its pane)."""
     a = argv_of(pid)[1:]

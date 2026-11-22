@@ -3,7 +3,7 @@
 ## Unreleased
 
 ## 0.1.8.1 (2026-11-22)
-A fix to what 0.1.8 counts as a session (G1.12, T40). A `claude -p` run, which Claude Code marks "interactive"
+A fix to what 0.1.8 counts as a session (G1.14, T40). A `claude -p` run, which Claude Code marks "interactive"
 in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could
 have started it again as an interactive session. Now a print-mode run, a run through an SDK, a process whose
 input is not a terminal, and a process started inside another Claude session are never recorded, listed or
@@ -11,9 +11,10 @@ started; they are counted as helpers. "Inside another session" means a claude am
 pane, Herdr, terminal window, editor or ssh login it lives in: a session in a Herdr server or a terminal that
 someone opened from a Claude session is still a session.
 
-Known edge: a record that finds no live session keeps the previous record. On a machine where 0.1.8 wrote a
-print-mode run down and no session is live after the upgrade, that row stays until the next record that sees a
-live session moves it to the down list.
+Known edge: after upgrading on a machine where no session is running, look at the census before the next
+reboot. A record that finds no live session keeps the record before it, so a print-mode run that 0.1.8 wrote
+down can stay on it, and a reboot would start it. With any session running, the next record clears such a
+row by itself (it moves to the down list, which is never started). 0.1.9 adds a guard (T43).
 
 ## 0.1.8 (2026-11-22)
 Built from DNA Strand Master Plan 1.8, from the lessons of the first real reboot with 98 sessions (`PROMISES.json`

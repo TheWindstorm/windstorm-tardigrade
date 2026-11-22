@@ -220,7 +220,7 @@ class Record(Base):
         self.tg("record", "--force")
         self.assertEqual([r["name"] for r in self.table()["lanes"]], ["Alpha Lane"])
 
-    def test_G1_12_a_one_shot_run_is_never_a_lane_wherever_it_runs(self):
+    def test_G1_14_a_one_shot_run_is_never_a_lane_wherever_it_runs(self):
         self.start_lane("alpha", "Alpha Lane")
         # claude -p in a tmux pane, as a script or a scheduler runs it: marked "interactive" by Claude Code
         self.start_lane("printrun", "ptry-a1", flags="-p 'say ok' --model claude-haiku-5-5")
@@ -2162,6 +2162,12 @@ class Strand(unittest.TestCase):
         real = set(re.findall(r"def (test_(?:G|INV)[A-Za-z0-9_]+)\(", fread(os.path.abspath(__file__))))
         self.assertEqual(named - real, set(), "the plan names tests that do not exist")
         self.assertEqual(real - named, set(), "tests with no codon in the plan")
+
+    def test_no_codon_is_used_twice_in_the_plan(self):
+        import re, collections
+        plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
+        seen = collections.Counter(re.findall(r"^\| ((?:G|INV)[0-9.]+) \|", plan, re.M))
+        self.assertEqual([c for c, n in seen.items() if n > 1], [], "a codon is used for two claims")
 
 
 if __name__ == "__main__":
