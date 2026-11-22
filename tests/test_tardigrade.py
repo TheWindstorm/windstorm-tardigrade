@@ -728,7 +728,8 @@ class Revive(Base):
             with open(os.path.join(self.home, name), "w") as f:
                 f.write(text)
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
-        self.assertIn("Beta Lane: GAVE UP", out)
+        self.assertIn("Beta Lane: GAVE UP after", out)
+        self.assertIn("its tmux session holds a shell", out)        # what is in its place now (G4.9)
         self.assertLess(out.index('Alpha Lane: answered Yes to "trust this folder?"'), out.index("Beta Lane: GAVE UP"), out)
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["started"], rep["failed"], rep["loaded"]), (["Alpha Lane"], ["Beta Lane"], ["Alpha Lane"]), out)
@@ -1478,6 +1479,34 @@ class Windows(Base):
         self.assertNotIn("wst-Busy Gone", [r.get("rename") for r in runs])
         self.assertIn({"create": "Delta Lane", "workspace": "wn-Busy Gone", "no_focus": True}, runs)
         self.assertIn("the first tab of the workspace made again is not blank (it is running something else)", out)
+
+    def test_G4_9_after_a_restore_stopped_census_counts_its_waiting_screens_as_stopped(self):
+        self.cfg({"starts_at_once": 1, "wake": "idle"})
+        for nm in ("alpha", "beta", "gamma"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        with open(os.path.join(self.home, "slow"), "w") as f:
+            f.write("30")                                          # each start takes long, so the run is still going
+        env = dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100")
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"], env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            end = time.time() + 20
+            while time.time() < end and self.tmux(self.sock, "has-session", "-t", "=gamma")[0] != 0:
+                time.sleep(0.1)
+            d = json.loads(self.tg("census", "--json")[1])
+            self.assertEqual(d["waiting_stopped"], 0)
+            self.assertIn("Gamma Lane", [r["name"] for r in d["sessions"]["coming_back"]])
+        finally:
+            run.kill()                                             # the restore stops: its own process, by its pid
+            run.wait()
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual(d["coming_back"], 0)
+        self.assertIn("Gamma Lane", [r["name"] for r in d["sessions"]["waiting_stopped"]])
+        out = self.tg("census")[1]
+        self.assertIn("WAITING, STOPPED: a waiting screen holds its place, but no restore is running", out)
+        self.assertIn("Run `tardigrade revive`", out)
 
     def test_G4_8_revive_only_says_what_it_did_about_the_tab(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))

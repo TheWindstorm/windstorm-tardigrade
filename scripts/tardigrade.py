@@ -1165,6 +1165,15 @@ def show_waiting(todo, created):
             tmux(sock, "select-pane", "-t", f"={name}:", "-T", f"{display(r)} (coming back)")
 
 
+def holds_text(r):
+    """what a session's tmux session holds now, said plainly for the log"""
+    if not has_session(r["tmux_socket"], r["tmux_session"]):
+        return "is gone"
+    if is_waiting(r["tmux_socket"], r["tmux_session"]):
+        return "still holds its waiting screen, which now says the restore stopped and to run `tardigrade revive`"
+    return "holds a shell"
+
+
 def end_waiting_screen(sock, name):
     """INV1's one exception for a tmux session: our own waiting screen, when its session turned out to be
     running somewhere else. Only a session that carries the mark and still runs the waiting program."""
@@ -1708,7 +1717,7 @@ def _revive(boot):
         if not tries_done and (not pending or time.time() >= deadline):
             tries_done = True
             for sid, (r, n) in pending.items():
-                log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session holds a shell")
+                log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}")
                 report["failed"].append(display(r))
             report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows), began=prog["began"],
                           uptime_at_start=prog["uptime_at_start"], boot_run=boot, user_up_s=up_s,
@@ -1939,6 +1948,9 @@ def census_data():
     down = [dict(r, ended="exit") if exited_at(r) else r for r in table["lanes"] if r["session_id"] not in live_ids]
     coming = [r for r in down if r.get("tmux_session") and is_waiting(r["tmux_socket"], r["tmux_session"])]
     down = [r for r in down if r not in coming]
+    going = restore_now()
+    stopped = [] if going else coming        # a waiting screen left by a restore that is no longer running
+    coming = coming if going else []
     down += [r for r in table["down"] if r["session_id"] not in live_ids]
     # A name is not an identity (G3.7): a name that more than one session carries, running or on the record,
     # and a session started by hand, under the name of one the last restore was bringing back, after it began.
@@ -1964,10 +1976,11 @@ def census_data():
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
-        "coming_back": len(coming), "restore": restore_now(), "same_name": same_name,
+        "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
                     for r in mine if r.get("by_hand")],
-        "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming},
+        "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming,
+                     "waiting_stopped": stopped},
     }
 
 
@@ -2041,6 +2054,11 @@ def census():
                 mark = "   STARTED BY HAND while its session was coming back" if r.get("by_hand") else ""
                 print(f"  {display(r):<34} {r['status'] or '?':<8} quiet {q:<8} {where_text(r):<30} {r['cwd']}{mark}")
 
+    if stopped := d["sessions"]["waiting_stopped"]:
+        print(f"\nWAITING, STOPPED: a waiting screen holds its place, but no restore is running ({len(stopped)})."
+              " Run `tardigrade revive` to bring them back.")
+        for r in sorted(stopped, key=lambda x: display(x).lower()):
+            print(f"  {display(r):<34} tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}")
     if coming := d["sessions"]["coming_back"]:
         print(f"\nCOMING BACK: a waiting screen holds its place ({len(coming)})")
         for r in sorted(coming, key=lambda x: display(x).lower()):
