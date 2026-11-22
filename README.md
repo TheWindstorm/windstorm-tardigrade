@@ -226,6 +226,9 @@ Setup tells you this for your machine. It never changes it for you.
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
 
+On a small machine, set `starts_at_once` to 2, and, if the machine must stay usable while sessions come back, a
+`load_max` of about twice its number of cores. Right after a boot most of the load is the boot itself.
+
 The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 `~/.local/state/windstorm-tardigrade/tardigrade.log`.
 
