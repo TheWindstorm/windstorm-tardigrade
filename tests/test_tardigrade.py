@@ -36,11 +36,36 @@ FAKE_HERDR = os.path.join(ROOT, "tests", "fake_herdr.py")
 TMUX = shutil.which("tmux")
 WAIT = float(os.environ.get("TARDIGRADE_TEST_WAIT", "40"))
 
+# Zero survivors: a test's tmux servers and stand-ins end even when the run itself is stopped. unittest runs no
+# tearDown or cleanup on SIGTERM (timeout, a stopped job) or SIGHUP (a closed terminal), so the live tests' own
+# cleanups run here first. Each test registers its cleanup the moment its folder exists.
+LIVE = []
+
+
+def _end_live(*_):
+    for t in list(LIVE):
+        t.end_all()
+
+
+def _on_signal(signum, _frame):
+    _end_live()
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+for _sig in (signal.SIGTERM, signal.SIGHUP):
+    signal.signal(_sig, _on_signal)
+import atexit  # noqa: E402
+atexit.register(_end_live)
+
 
 @unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="tg", dir="/tmp")
+        self.pids, self.loose = [], []
+        LIVE.append(self)
+        self.addCleanup(self.end_all)     # runs even when setUp fails after this line, or tearDown raises
         self.home = os.path.join(self.tmp, "h")
         self.bin = os.path.join(self.tmp, "bin")
         self.work = os.path.join(self.tmp, "work")
@@ -59,19 +84,27 @@ class Base(unittest.TestCase):
         self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1, "retry_gap_s": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
-        self.pids, self.loose = [], []
 
-    def tearDown(self):
-        # end only what this test started, each by its exact process id
-        for row in self.launches():
-            self.kill(row["pid"])
-        for pid in self.pids:
-            self.kill(pid)
-        self.end_loose()
+    def end_all(self):
+        """end only what this test started, each by its exact process id; every step runs even if one fails"""
+        if self not in LIVE:
+            return
+        LIVE.remove(self)
+        steps = [lambda: [self.kill(r.get("pid")) for r in self.launch_rows_as_far_as_written()],
+                 lambda: [self.kill(p) for p in self.pids],
+                 self.end_loose]
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                pass
         for s in self.sockets():
-            rc, out = self.tmux(s, "display", "-p", "#{pid}")
-            if rc == 0 and out.strip().isdigit():
-                self.kill(int(out.strip()))
+            try:
+                rc, out = self.tmux(s, "display", "-p", "#{pid}")
+                if rc == 0 and out.strip().isdigit():
+                    self.kill(int(out.strip()))
+            except Exception:
+                pass
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def end_loose(self):
@@ -88,8 +121,8 @@ class Base(unittest.TestCase):
     @staticmethod
     def kill(pid):
         try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
+            os.kill(int(pid), signal.SIGTERM)
+        except (OSError, TypeError, ValueError):
             pass
 
     def cfg(self, d):
@@ -119,6 +152,22 @@ class Base(unittest.TestCase):
             return [json.loads(x) for x in fread(os.path.join(self.home, "launches.jsonl")).splitlines() if x.strip()]
         except OSError:
             return []
+
+    def launch_rows_as_far_as_written(self):
+        """for the cleanup: every whole row, so a stand-in caught mid-write cannot hide the ones before it"""
+        rows = []
+        try:
+            text = fread(os.path.join(self.home, "launches.jsonl"))
+        except OSError:
+            return rows
+        for x in text.splitlines():
+            try:
+                r = json.loads(x)
+            except ValueError:
+                continue
+            if isinstance(r, dict):
+                rows.append(r)
+        return rows
 
     def wait_launches(self, n):
         end = time.time() + WAIT
