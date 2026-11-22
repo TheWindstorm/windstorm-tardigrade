@@ -11,10 +11,10 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.6, a pilot.** It has been through real reboots of a Linux laptop (one of them a sudden reset with
-> no shutdown) and of a Mac, and brought every test session back. Its first Mac reboot brought back none, which is
-> how two faults were found and fixed. See
-> [Tested](#tested) for exactly what is proven and what is not.
+> **Status: 0.1.7, a pilot.** It has been through ten real reboots on two machines (a Linux laptop and a Mac),
+> two of them with no clean shutdown. The first reboots on this version found faults, which is what they were for;
+> after the fixes every session came back every time. It has not yet restarted a machine with a hundred sessions.
+> See [Tested](#tested) for exactly what is proven and what is not.
 
 ## Install
 
@@ -49,6 +49,7 @@ update the plugin.
 | `tardigrade open` | Opens a terminal window for each hidden session. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
+| `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
 | `tardigrade uninstall` | Switches it off. Running sessions and your record are not touched. |
 
@@ -85,15 +86,25 @@ usually one you forgot.
 tmux session under the same name.
 
 **Does not come back:** anything the session had running in the background: timers, watchers, background commands.
-Tardigrade cannot restart those. Instead it tells each revived session, in one opening message, that they are gone,
-so the session checks its notes and starts again what is still needed. That message costs one turn per session. To
-bring sessions back silent instead, put `"wake": "idle"` in `~/.config/windstorm-tardigrade/config.json`.
+Tardigrade cannot restart those. Instead it tells each revived session, in one message, that they are gone, so the
+session checks its notes and starts again what is still needed. The message is typed into the session once Claude
+Code reports it loaded and idle, and never into one that shows a question. It costs one turn per session. To bring
+sessions back silent instead, put `"wake": "idle"` in `~/.config/windstorm-tardigrade/config.json`.
+
+**A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
+session with the same name, folder and flags.
+
+**After a crash:** if more than half of your sessions vanish at the same moment (a tmux server that died, a
+terminal program closed with everything in it), Tardigrade does not take that for you ending them. They stay on
+the record for 12 hours, the census says so, and `tardigrade revive` brings them back.
 
 **The trust question:** Claude Code asks "do you trust this folder?" on every start of a session whose folder is
 your home folder. By default Tardigrade does not answer for you: the census marks such a session `trust?` until you
 open its window and answer. If you would rather have it answered, say `tardigrade trust on`. Then, for a session
 Tardigrade brings back, in the folder that session was already running in, it answers Yes. It answers no other
-question, and it writes each answer in its log.
+question, and it writes each answer in its log. It counts only the dialog that is open at the foot of the screen:
+a conversation that merely quotes the question gets no key, and neither does a screen with a usage or limit
+dialog on it.
 
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
@@ -106,8 +117,10 @@ Setup tells you this for your machine. It never changes it for you.
 - **Linux.** With *lingering* on for your user, sessions come back about a minute after boot with nobody logged in.
   With it off, they come back when you log in. To switch it on, a person runs once:
   `sudo loginctl enable-linger $USER`.
-- **macOS.** Sessions come back when you log in. With FileVault on, a restarted Mac waits at its unlock screen and
-  nothing runs until someone types the password there.
+- **macOS.** Sessions come back when you are logged in at the Mac's own screen. A login over ssh does not count,
+  and neither does another user's login, even if the Mac logs that user in by itself. With FileVault on, a
+  restarted Mac waits at its unlock screen and nothing runs until someone types the password there. The census
+  says which of these your Mac is.
 
 ## Safety
 
@@ -117,13 +130,19 @@ Setup tells you this for your machine. It never changes it for you.
   back that way, with nobody watching, and the opening message gives it one turn. You chose that mode when you
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use
   `"wake": "idle"`.
-- It never ends a session, never types into one, and never answers a dialog for you. If a revived session stops at a
-  question, it waits there for you. The one exception is yours to switch on: `trust on` (above). It is two keys,
-  sent only when the screen shows the cursor on "Yes, I trust".
+- It never ends a session and never answers a dialog for you. If a revived session stops at a question, it waits
+  there for you. The one exception is yours to switch on: `trust on` (above). It is two keys, sent only when the
+  screen shows the cursor on "Yes, I trust".
+- It types one thing of its own, the wake-up message, and only into a session it started itself that is loaded,
+  idle and shows no question. `"wake": "idle"` switches that off.
+- **Nothing but the start command is on a command line.** A command line is visible to every `pkill -f WORD` on the
+  machine, so the message is typed, and a session's settings are in a start file only you can read. Claude Code's
+  own command line is what you would have typed: its flags and `--resume`.
+- **A permission mode comes back word for word.** It is never made looser.
 - It never stores a token or a key. For a login token it keeps the variable's name and an 8-digit one-way
-  fingerprint, and uses it to check that a session came back on the same login. Where sessions on one machine use
-  different logins, a session with a token comes back silent, and if its login changed it is listed as "needs you"
-  with nothing run on the wrong account.
+  fingerprint, and uses it to check that a session came back on the same login. The check comes before anything
+  is typed: a session whose login changed is listed as "needs you", with no message typed and nothing run on the
+  wrong account. A variable whose name looks like a secret's is never recorded or copied, whatever the settings say.
 - On a shared machine it counts other users' Claude processes and reads nothing of theirs.
 - Python standard library only. No network. It prints names, folders and counts, never message text.
 - The record is never overwritten by a machine that is still starting, and never by an empty list.
@@ -142,57 +161,88 @@ Setup tells you this for your machine. It never changes it for you.
 | `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
 | `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. |
 | `answer_trust` | `false` | Set by `trust on` / `trust off`. Answer "trust this folder?" for a revived session's own folder. |
-| `trust_wait_min` | `15` | After a boot, keep looking for that question this long. A slow machine asks late. |
+| `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
+| `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
 
 The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 `~/.local/state/windstorm-tardigrade/tardigrade.log`.
 
+### Fitting it to a machine that has its own ways
+
+Most people need none of these. They are for machines where sessions are started through a wrapper, pinned to
+accounts, or shown in another tool.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `claude_command` | `"claude"` | The command that starts Claude Code. The session's flags and `--resume <id>` are added to it. |
+| `account_env` | | The name of an environment variable that holds a session's account label, if your wrapper sets one. A label, never a secret. |
+| `account_command` | | Used in place of `claude_command` for a session that had a label, for example `"my-wrapper use {account}"`. |
+| `start_command` | | Your own whole start line, in place of the three above. Placeholders: `{session_id}` `{cwd}` `{name}` `{model}` `{effort}` `{mode}` `{account}` `{tmux_session}` and `{flags}` (the session's exact flags). Each is quoted for the shell. |
+| `env_file` | | A file of `NAME=value` lines (or NUL-separated, as `env -0` writes) added to each revived session's environment. For a desktop's display and session bus, which a boot service does not have. Names that look like a secret's are left out, and so are the variables that belong to the starting shell (its folder, user id, terminal). |
+| `tmux_conf` | | A tmux config file for a tmux server that Tardigrade has to start. |
+| `server_command` | | Your own command that starts the tmux server, run once when none is up, for a machine that starts its server a special way. `{socket}` is the socket path. `server_socket` names the one socket it is for. |
+| `carry_env` | `["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]` | Settings variables a session keeps: the value it had is recorded and set again. |
+| `loose_socket` | `"tardigrade"` | The tmux socket name where sessions that were not in tmux come back. |
+| `loose_prefix` | | Put before the tmux name of such a session. |
+| `loose_skip` | `[]` | Patterns. A session outside tmux whose name matches is not recorded. `"^$"` means: no name. |
+| `herdr_default_workspace` | | With Herdr: the workspace for a session that has a tab label and no workspace. |
+| `tsv_path` | | Also write the record as a tab-separated table with eight columns at this path, for tools that read one. `tsv_socket` limits it to one tmux socket name. |
+| `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
+
+Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is exactly what will run.
+
 ## Tested
 
-Proven:
+Proven on 0.1.7, on real machines, 2026-11-21:
 
-- **Two real reboots**, 2026-11-21, an Ubuntu 24.04 laptop, Claude Code 2.1.323: one clean restart and one sudden
-  reset with no shutdown. Three sessions were running: one with permission checks on, one with them off, and one in
-  a plain terminal window. Both times all three came back as the same sessions, with their names and folders, in
-  under three minutes, with nothing typed by anyone. After the reset the record on disk was intact. A second tool
-  restored a fourth session on the same machine in the same second, and neither touched the other's
-  (`skip_tmux_sockets`).
-- **A third reboot** of that laptop on the released version after a plugin update: three of three again.
-- **One real reboot of a Mac** (Intel, macOS 13, logs in by itself, FileVault off), version 0.1.3: the launchd
-  agent ran 166 seconds after boot and both test sessions came back as themselves. On that Mac the `claude` command
-  supplies the login token, and each session's login was checked. The reboot before it, on 0.1.2, brought back
-  none of them; 0.1.3 and 0.1.4 are the fixes.
-- **`trust on` through a real reboot** of that laptop, version 0.1.6: four sessions, one of them in the home folder.
-  All four came back. The one in the home folder was asked "do you trust this folder?", Tardigrade answered Yes
-  five seconds later and logged it, and the session loaded. It answered nothing else: all four then stopped at the
-  account's "limit reached" question and waited.
-- **Opening windows** on that laptop's real desktop: three hidden sessions, three windows.
-- **Acting on the opening message**: one real session on Linux, Claude Code 2.1.330. It was recorded, ended and
-  brought back, and it read its notes and answered.
-- The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
-  tool's list, 98 of 98.
-- 33 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
-  a second copy, once per boot, a clean environment, the census, and the rules under Safety.
+- **Seven real reboots of a Linux laptop** (Ubuntu 24.04, Claude Code 2.1.330) with seven sessions: one of a team's
+  own working sessions with its Herdr tab, one with permission checks off, one that accepts edits, one in the home
+  folder, one that had been in a plain desktop window, and two that nobody had ever written in. The first two
+  reboots found three faults (see the changelog); they were fixed and the reboots repeated. On the five after
+  that, one of them a sudden reset with no shutdown, all seven were running again within four minutes of boot and
+  all seven loaded, with nothing typed by anyone. Each time: the two home-folder sessions were asked "trust this folder?" and
+  answered (`trust on`), the Herdr tab was attached again, the two empty sessions came back new under their names,
+  and every command line was Claude Code's flags and `--resume`, nothing else.
+- **A restart in the middle of a revive** left a lock behind, and the next boot brought back nothing. That was
+  the fault. After the fix, the boot run was started again by hand on that machine, took the lock over and brought
+  all seven back. A second real reboot landing in the middle of a run of the fixed version is covered by a test,
+  not yet by a machine.
+- **Three real reboots of a Mac** (Intel, macOS 13, logs in by itself, FileVault off), one of them an ungraceful
+  quick restart, with four sessions, two of them a team's working sessions in the home folder with Herdr tabs.
+  All four were loaded between three and four minutes after boot each time, and each session's login was checked. The first two
+  showed that the Herdr tabs were not really attached on a Mac (its shell reads `=name` its own way); after the
+  fix both tabs were attached, and the log now checks that instead of assuming it.
+- **The typed message, on a real session** (Linux, Claude Code 2.1.330): ended, brought back through its start
+  file, the message typed once it was idle; the session showed its earlier conversation and answered.
+- **The message withheld**: on a laptop whose account was at its usage limit, five sessions came back to Claude
+  Code's "limit reached" question. Nothing was typed into any of them, and the log named all five.
+- **An env file, a tmux config and a stale session bus** on a real boot: the variables reached the sessions, each
+  session started in its own folder, the config was loaded, and a bus address that no longer existed was replaced
+  by the user's own.
+- **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
+  compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
+  tmux name, folder, model, effort and recorded permission mode. Nothing was started.
+- 60 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+
+Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
 Not yet proven:
 
-- **A session acting on the opening message after a real reboot.** On the test laptop the account had reached its
-  usage limit, so each revived session stopped at Claude Code's own "limit reached" question and waited there. The
-  census showed all of them as "waiting for you". That is the right behaviour, and it is not the same proof.
-- **With nobody logged in at all.** The boot service started before any remote login, but that laptop also logs into
-  its desktop by itself, so lingering alone was not isolated.
-- **A Mac with FileVault on, or one that does not log in by itself**: setup says what will happen; no such Mac was rebooted. Opening windows on a Mac.
-- **Herdr** tab re-attach.
-- Sessions pinned to different accounts by a token: proven with the stand-in only.
+- **About 100 sessions through a real reboot.** The most brought back at once so far is seven.
+- **A session acting on the message after a real reboot.** It is proven after a real end and return of one
+  session, not after a restart of the whole machine: the test machines' account was at its usage limit.
+- **With nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
+- **A Mac with FileVault on, or one that logs in as another user**: setup and the census say what will happen; no
+  such Mac was rebooted. Opening windows on a Mac.
+- **A session pinned to an account by a wrapper**, **a start command of your own** and **a server command of your
+  own**: proven with stand-ins, and by a read-only dry run on a machine that uses them, not through a reboot.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.
 
-On a slow machine Claude Code can take a couple of minutes to load a session after boot. During that time the
-census shows it as "starting".
-
-Two more things the real machines taught us: Claude Code asks "do you trust this folder?" for a new folder even when
-permission checks are off, and a session on an account at its limit comes back to a question. Tardigrade answers
-neither. It leaves them for you and counts them.
+Things the real machines taught us, which the tests now hold: Claude Code asks "do you trust this folder?" on every
+start of a session in the home folder, even with permission checks off; a session on an account at its limit comes
+back to a question; a session nobody ever wrote in cannot be resumed; a slow machine can take minutes to load a
+session; and a line that works in one shell can fail in another.
 
 The plan this is built from, with each claim and its proof, is
 [DNA-STRAND-MASTER-PLAN.md](DNA-STRAND-MASTER-PLAN.md).

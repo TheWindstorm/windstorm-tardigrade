@@ -1,6 +1,6 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.6 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.6.
+Plan version 1.7 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.7.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -74,6 +74,28 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
   exists and its session file does not. Plan 1.3 called such a session "down", and a record taken in that window
   would have dropped it (2026-11-21, a real Mac). So: a recorded session that is still loading counts as running
   (G1.8).
+- The person who asked for this skill decided (2026-11-21, later the same day): the fleet runs one restore tool,
+  and it is this one. The fleet kit's author wrote down everything his kit does, fifteen items, as the list this
+  skill has to pass before the fleet switches. Plan 1.7 is that list. What it taught:
+  - A command line is public: any `pkill -f WORD` on the machine is matched against it, so free text there puts
+    the session in the path of a careless kill. The kit keeps its notice off the command line for that reason.
+    Plan 1.6 passed the wake-up note as an argument. So: nothing but the start command is on a command line; the
+    note is typed (G2.2, G2.19).
+  - A restore tool that maps a permission mode it does not know onto "checks off" brings a session back looser
+    than the person left it. So: the mode comes back word for word, and a test says so (G2.14).
+  - A session can be pinned to an account by a wrapper command. It has to come back through that wrapper, or it
+    comes back on the wrong account (G2.15).
+  - Sessions started from a desktop need the desktop's variables (display, session bus) to open a browser or use
+    the clipboard, and a boot service has none of them (G2.17).
+  - "The process is up" is not "the session is loaded". Count the loaded ones, and name the rest (G2.24).
+- The kit's author then reviewed plan 1.7 line by line and found four faults before any machine ran it. The worst:
+  the trust answer looked for the question anywhere on the screen. A resumed session redraws its old
+  conversation, a conversation can quote that dialog, and a key sent then lands in whatever dialog is really open,
+  which on an account at its limit is the one that offers to switch to paid usage credits. So: only the dialog at
+  the foot of the screen counts, and nothing is sent when a usage or limit dialog is near (G2.25). The others: a
+  machine's tmux server has its own config and its own way to start (G2.26); an environment file copied from a
+  desktop carries that desktop's folder and user id (G2.27); and one process list per session is too many on a
+  machine with 12,000 processes (G2.28).
 - On a Mac reached over ssh, the `claude` command is often a wrapper that supplies a login token, because the
   keychain is not available there. Plan 1.2 refused to start any session that carried a token unless the shell
   set it, and on such a Mac that meant it started nothing (2026-11-21, a real reboot: 0 of 2). So: start through
@@ -92,6 +114,11 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G1.5 | A recorded session that is no longer live moves to the "down" list with the time, and the record before each write is kept as `lanes.json.prev`. | `test_G1_5_a_session_that_went_down_moves_to_the_down_list` |
 | G1.6 | A token or key is never written to the record or the log. What is kept is the name of the variable that held it and an 8-digit one-way fingerprint (SHA-256, cut short), enough to tell whether a session came back on the same login. | `test_G1_6_a_token_is_never_written_down` |
 | G1.8 | A recorded session whose process is there but which Claude Code has not finished loading counts as running. The census shows it as "starting" and `record` keeps it. | `test_G1_8_a_session_that_is_still_starting_is_not_taken_for_down` |
+| G1.9 | A session that is not in tmux is recorded to come back in tmux, on the socket named in `loose_socket` (default `tardigrade`), under its own name with `loose_prefix` before it. A session outside tmux whose name matches a pattern in `loose_skip` is not recorded. | `test_G1_9_a_session_outside_tmux_is_recorded_for_the_socket_and_prefix_in_the_settings` |
+| G1.10 | With `tsv_path` set, each record is also written as a tab-separated table with eight columns (tmux session, session id, folder, model, effort, permission mode, tab label, workspace label), for tools that read such a table. `tsv_socket` limits it to one tmux socket. One writer per table: the person switches the other writer off. | `test_G1_10_the_record_is_also_written_as_an_eight_column_table_when_asked` |
+| G1.11 | When more than half of the recorded sessions (and at least three) vanish between two records, that is a crash, not a person ending them. They stay on the record as sessions to bring back for `lost_keep_h` hours (default 12), and the census says so. `record --force` lets them go. | `test_G1_11_sessions_that_vanish_together_stay_on_the_record` |
+| G1.12 | The model recorded is the one the session is using now, read from its conversation with the full model id, not the one it was started with and not the machine's default. | `test_G1_12_the_model_recorded_is_the_one_in_use_not_the_one_it_started_with` |
+| G1.13 | A recorded session whose own tmux session now holds another session was replaced there. It leaves the record and is not listed as down. | `test_G1_13_a_session_replaced_in_its_own_tmux_session_is_not_listed_as_down` |
 | G1.7 | Sessions on a tmux socket named in `skip_tmux_sockets` are not recorded, so a second tool that already brings them back stays the only one that does. The census still counts them. | `test_G1_7_sessions_on_a_skipped_tmux_socket_are_left_to_the_other_tool` |
 
 ### G2 Revive: bring each one back as itself
@@ -99,8 +126,8 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | Codon | Claim | Proof |
 |---|---|---|
 | G2.1 | `revive` starts each recorded session that is not running with `claude --resume <its id>`, in its folder, with its model, effort and permission mode, in a tmux session of the same name on the same socket. | `test_G2_1_revive_brings_a_session_back_as_itself` |
-| G2.2 | With `"wake": "note"` (the default) the revived session gets one message: the machine restarted, the conversation is intact, background work is gone, check and carry on. | `test_G2_2_the_revived_session_is_told_what_happened` |
-| G2.3 | With `"wake": "idle"` nothing is said and the session waits. | `test_G2_3_wake_idle_types_nothing` |
+| G2.2 | With `"wake": "note"` (the default) the revived session gets one message: the machine restarted, the conversation is intact, background work is gone, check and carry on. The message is typed into the session once Claude Code reports it loaded and idle. It is never on a command line. | `test_G2_2_the_revived_session_is_told_what_happened` |
+| G2.3 | With `"wake": "idle"` nothing is typed and the session waits. | `test_G2_3_wake_idle_types_nothing` |
 | G2.4 | A session id held by any live process of this user is never started. | `test_G2_4_never_a_second_copy` |
 | G2.5 | `revive --boot` acts only on a machine that has just started, and only once per boot. | `test_G2_5_boot_revive_runs_once_per_boot_and_only_after_a_boot` |
 | G2.6 | `--dry-run` says what would start and starts nothing. | `test_G2_6_dry_run_starts_nothing` |
@@ -108,9 +135,29 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G2.8 | Where every session carries the same login token (a machine whose `claude` command or shell supplies it), sessions are brought back as usual, and each one's login is checked against its fingerprint after the start. | `test_G2_8_a_machine_wide_login_token_comes_back_and_is_checked` |
 | G2.9 | Two revives never run at the same time. | `test_G2_9_two_revives_at_once_do_not_both_run` |
 | G2.10 | `revive --only NAME` brings back that one session and no other. | `test_G2_10_only_brings_back_just_that_one` |
-| G2.11 | Where sessions on one machine have different logins, a session with a token comes back silent, with no opening message, and its login is checked. If the login changed it is listed as "needs you", idle, with nothing run on the wrong account. | `test_G2_11_a_pinned_session_comes_back_silent_and_a_changed_login_is_reported` |
-| G2.12 | Opt-in, off by default (`trust on`): when a session this run brought back is asked "trust this folder?" for the folder it was recorded in, Tardigrade answers Yes, and says so in the log. It keeps looking for the question for up to 15 minutes after a boot, because a slow machine asks late. | `test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder` |
-| G2.13 | The answer is two keys, Down and Enter, sent from one function. Enter is sent only when the screen shows the cursor on "Yes, I trust". No other key is ever sent to any session. | `test_G2_13_enter_is_sent_only_with_the_cursor_on_yes` |
+| G2.11 | A session's login is checked before anything is typed into it. Where sessions on one machine have different logins and one comes back on another login than it had, it is listed as "needs you", idle, with no note typed and nothing run on the wrong account. | `test_G2_11_a_pinned_session_comes_back_silent_and_a_changed_login_is_reported` |
+| G2.12 | Opt-in, off by default (`trust on`): when a session this run brought back is asked "trust this folder?" for the folder it was recorded in, Tardigrade answers Yes, and says so in the log. It keeps looking for the question for up to 15 minutes after a boot (`watch_min`), because a slow machine asks late. | `test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder` |
+| G2.13 | The answer is two keys, Down and Enter, sent from one function. Enter is sent only when the screen shows the cursor on "Yes, I trust". | `test_G2_13_enter_is_sent_only_with_the_cursor_on_yes` |
+| G2.25 | The trust answer counts only the dialog that is open at the foot of the screen now: both choices in the last 6 lines that have text, and no word about usage or limits in the 15 lines there. A conversation that quotes the question, with another dialog open under it, gets no key at all. The screen is read again right before Enter. | `test_G2_25_no_key_is_sent_when_the_question_is_only_quoted_and_another_dialog_is_open` |
+| G2.26 | A tmux server that Tardigrade has to start is started the machine's own way: with the config file in `tmux_conf`, or by the person's own `server_command` (run once, when no server is up on that socket), and from a clean environment plus the `env_file`. | `test_G2_26_the_tmux_server_is_started_the_machines_own_way` |
+| G2.27 | An `env_file` never sets the variables that belong to the starting shell (its folder, user id, depth, terminal, tmux pane), and the start file changes to the session's own folder after everything else, so a session starts in its folder whatever the shell's start files do. | `test_G2_27_an_env_file_never_moves_a_session_out_of_its_folder_or_sets_the_shells_own_variables` |
+| G2.28 | On a machine with thousands of processes the process list is read once per pass and handed down, not once per session. | `test_G2_28_one_process_list_per_pass_is_taken_and_handed_down` |
+| G2.29 | The sessions that are up are looked after (trust answer, note, Herdr tab) in every pass, also while another session's start is still being retried. | `test_G2_29_sessions_that_are_up_are_looked_after_while_another_start_is_still_retried` |
+| G2.30 | Claude Code keeps no conversation for a session nobody ever wrote in, so it cannot be resumed. When Claude Code says so, the session comes back as a new one with the same name, folder and flags, is not retried as itself, and gets no note. | `test_G2_30_a_session_nobody_ever_wrote_in_comes_back_new_under_the_same_name` |
+| G2.31 | The lock that keeps two revives apart says which boot and which process took it. A lock left by a revive that a reboot or a power cut cut off is taken over, so a second restart soon after the first still brings the sessions back. | `test_G2_31_a_lock_left_by_a_revive_that_a_reboot_cut_off_does_not_block_the_next_one` |
+| G2.32 | With many sessions the starts take minutes. The sessions already up are looked after during the starts too (at most every 15 seconds), so the first one does not wait at a question until the last one has started. Herdr tabs are done once, when every session is there. | `test_G2_32_a_question_is_answered_while_later_sessions_are_still_being_started` |
+| G2.33 | An `env_file` is written while a desktop is open, and after a reboot that desktop is gone. A local display whose socket is missing is not handed to a session. A session bus whose socket is missing is replaced by the user's own bus when that exists, and left out otherwise. | `test_G2_33_a_display_or_session_bus_that_is_gone_is_not_handed_to_a_session` |
+| G2.14 | The permission mode comes back word for word. A mode is never made looser: a session that ran with checks on does not come back with checks off, whatever the mode was called. | `test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser` |
+| G2.15 | With `account_env` and `account_command` set, a session that carried an account label is started through that command (for example a wrapper that pins it to the account), and no other session is. The label is a name, never a secret. | `test_G2_15_a_session_pinned_to_an_account_starts_through_its_wrapper` |
+| G2.16 | With `start_command` set, that line starts each session in place of Tardigrade's own, with the session's id, folder, name, model, effort, mode, account and exact flags put in, each quoted for the shell. | `test_G2_16_a_start_command_from_the_settings_replaces_the_start_line` |
+| G2.17 | With `env_file` set, its variables reach each revived session (a desktop's display and session bus, for one). A variable whose name looks like a secret's is left out, and the log names it without its value. | `test_G2_17_an_env_file_reaches_the_revived_session_and_a_secret_in_it_does_not` |
+| G2.18 | A settings variable named in `carry_env` (default: the auto-compact window) comes back with the value the session had. A name that looks like a secret's is never recorded, whatever the setting says. | `test_G2_18_a_settings_variable_on_the_carry_list_comes_back_with_its_value` |
+| G2.19 | Nothing but the start command is on a command line. The shell that holds a revived session was started with "read this file", and the file (readable by this user only) holds the settings and the start line. Claude Code's own command line is its flags and `--resume <id>`. | `test_G2_19_nothing_but_the_start_command_is_on_a_command_line` |
+| G2.20 | The note is typed only into a session that Claude Code reports idle and whose screen shows no question. A session that comes back to a question of its own gets no note, and the log names it. | `test_G2_20_the_note_is_not_typed_into_a_session_that_is_not_idle` |
+| G2.21 | `revive --dry-run --all` prints the start line of every recorded session as if none were running, starts nothing and writes no start file. It is the check to run before a planned reboot. | `test_G2_21_dry_run_all_shows_every_start_line_and_starts_nothing` |
+| G2.22 | A start that fails is tried again for up to `retry_min` minutes (the network can lag at boot), in the tmux session the first try made, and only while that session holds a bare shell. | `test_G2_22_a_start_that_fails_is_tried_again_in_the_same_tmux_session` |
+| G2.23 | With `load_max` set, each start waits (up to `load_wait_s`) while the machine's load is above it. Off by default. | `test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts` |
+| G2.24 | After the starts it keeps looking for up to `watch_min` minutes, then counts: LOADED (Claude Code has written the session's own file), UP-NOT-LOADED and DOWN, the last two by name. "A process is up" is not counted as loaded. | `test_G2_24_after_the_starts_it_counts_loaded_and_names_what_is_not` |
 
 ### G3 Census: say what is running and what is not
 
@@ -127,7 +174,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | Codon | Claim | Proof |
 |---|---|---|
 | G4.1 | `open` opens a terminal window for each hidden session. Where it cannot open one, it prints the line to type instead. | `test_G4_1_open_prints_the_attach_line_when_it_cannot_open_a_window` |
-| G4.2 | With Herdr, a revived session is attached again in the tab that carries its label, and a tab that is busy or has typed text is left alone. | Not verified in this packaging. |
+| G4.2 | With Herdr, a revived session is attached again in the tab that carries its label, or in a new tab in its workspace when the tab is gone. The only thing typed into a Herdr pane is the `tmux attach` for that session, and only when the pane holds an idle shell with nothing typed after its prompt. A tab that runs something else, or has typed text, is left alone. | `test_G4_2_a_herdr_tab_gets_its_session_back_only_at_an_idle_shell_with_an_empty_prompt` (with a stand-in for the `herdr` command) |
 
 ### G5 Setup
 
@@ -135,7 +182,7 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 |---|---|---|
 | G5.1 | `setup` installs a boot service that runs `revive --boot` 45 seconds after start and leaves the tmux server running after it ends, and a timer that records every 5 minutes. | `test_G5_1_the_boot_service_revives_once_and_outlives_itself` |
 | G5.2 | `setup --dry-run` installs nothing. | `test_G5_2_setup_dry_run_installs_nothing` |
-| G5.3 | `setup` says who has to log in after a restart: on Linux whether lingering is on, on a Mac whether FileVault is on. It never changes either. | Not verified by a test. |
+| G5.3 | `setup` and the census say who has to log in after a restart. On Linux: whether lingering is on. On a Mac: whether FileVault is on, whether the Mac logs in by itself and as whom, and that the boot agent runs only when this user is logged in at the screen (an ssh login does not start it). Neither is ever changed. | `test_G5_3_setup_and_census_say_who_has_to_log_in_on_a_mac` (the wording, from made-up facts) |
 | G5.5 | `trust on` and `trust off` write the setting, and each says in plain words what Tardigrade will and will not answer. With no word it says which it is. | `test_G5_5_trust_on_and_off_write_the_setting_and_say_what_it_means` |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
@@ -146,8 +193,8 @@ These hold across every gene. A change that breaks one is a plan change first.
 | Invariant | Proof |
 |---|---|
 | INV1 It never ends a Claude session and never ends a tmux session. The one thing it replaces is the leftover shell in a tmux session it made itself, in the same run, when the first start failed. | `test_INV1_it_never_ends_a_session` |
-| INV2 It never types into a session and never answers a dialog. The note in G2.2 is given to `claude` as its opening message, not typed. One exception, which only the person can switch on: the trust answer (G2.12, G2.13). | `test_INV2_it_never_types_into_a_session_or_answers_a_dialog` |
-| INV3 It never stores a secret. A login token leaves only a variable name and an 8-digit fingerprint. | G1.6 |
+| INV2 It types two things only, each from one function, and only into a session it started itself in this run. One: its own wake-up note, once the session is loaded and idle with no question on its screen (G2.2, G2.20); `"wake": "idle"` switches it off. Two, which only the person can switch on: the trust answer (G2.12, G2.13). It answers no other dialog. Into a Herdr pane it types only the `tmux attach` of G4.2. | `test_INV2_it_types_two_things_only_each_from_one_function` |
+| INV3 It never stores a secret. A login token leaves only a variable name and an 8-digit fingerprint. A variable whose name looks like a secret's is never recorded, carried or copied into a start file. | G1.6, G2.17, G2.18 |
 | INV4 Never a second copy of a session. | G2.4, G2.9 |
 | INV5 It reads only this user's processes. | G3.3 |
 | INV6 Python standard library only, and no network. | `test_INV6_standard_library_only_and_no_network` |
@@ -156,6 +203,34 @@ The link between this plan and the tests is itself tested: every proof named her
 test has a codon here.
 
 ## Proven by hand on real machines, not by a test
+
+On 0.1.7 (plan 1.7), 2026-11-21:
+
+- An Ubuntu 24.04 laptop, Claude Code 2.1.330, **seven real reboots**, seven sessions (one of a team's working
+  sessions with its Herdr tab; permission checks off; accept-edits; the home folder; one from a plain desktop
+  window; two that nobody had written in). Reboot 1: five of seven up, and the five were not looked at for 25
+  minutes (G2.29, G2.30 come from it). Reboot 2 landed in the middle of that run and brought back nothing: the lock
+  (G2.31); after the fix the boot run was started again by hand, took the lock over and brought back seven of
+  seven. Then five reboots, one a sudden reset: seven of seven running within four minutes of boot and loaded;
+  the trust question answered for the two home-folder sessions, once within 4 seconds of the start (G2.12, G2.25,
+  G2.32); the Herdr tab attached again and checked (G4.2); every command line clean (G2.19); accept-edits kept its
+  mode (G2.14); the plain-window session came back on the named socket under its prefix (G1.9); the table written
+  (G1.10). One of them with an env file and a tmux config: the variables arrived, each session started in its own
+  folder, a session bus that was gone was replaced, the config was loaded (G2.17, G2.26, G2.27, G2.33). One with
+  the note on and the account at its usage limit: nothing typed into five sessions that came back to a question
+  (G2.20).
+- An Intel Mac, macOS 13, auto-login on, FileVault off, **three real reboots** (one ungraceful), four sessions, two
+  of them a team's working sessions in the home folder with Herdr tabs: four of four loaded between three and
+  four minutes after boot each time, each login checked (G2.8), trust answered for both. Reboots 1 and 2 logged the tabs as
+  attached when they were not: the tab's shell is zsh, which reads a bare `=name` as a command path. After the fix
+  both tabs were attached, and the log line now comes from a check (G4.2).
+- Linux, Claude Code 2.1.330, one real session ended and brought back through its start file with the env file of
+  a real desktop: display and session bus present, no child marker, its own folder; the note was typed once it was
+  idle, and the session answered it (G2.2, G2.19).
+- A shared Linux machine with 98 sessions, read only: `revive --dry-run --all` against the restore tool in use
+  there: 98 in both, none in only one, no difference in tmux name, folder, model, effort or recorded mode (G2.21).
+
+On earlier versions:
 
 - 2026-11-21, an Ubuntu 24.04 laptop, Claude Code 2.1.323, **two real reboots** (one clean, one a sudden reset with
   no shutdown). Setup said "boot service: enabled, record timer: active, lingering is on". Three sessions (permission
@@ -186,12 +261,16 @@ test has a codon here.
   census counted them as waiting (G3.4).
 - **Nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
 - **macOS with FileVault on, or without auto-login.** Setup says what will happen (G5.3); no such Mac was rebooted. `open` was not run on a Mac.
-- **Herdr** (G4.2). The logic comes from the fleet kit, where it is also not yet proven through a reboot.
+- **Herdr on a real machine** (G4.2). The test uses a stand-in for the `herdr` command, so it proves the rule
+  (what is typed, and when not) and not Herdr itself.
+- **A machine with about 100 sessions** through a real reboot. The most brought back at once so far is seven.
+- **G2.15, G2.16 and the `server_command` of G2.26** on a real reboot: stand-ins and a read-only dry run only.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.
 - **Sessions pinned to different accounts by a token** (G2.11) are proven with the stand-in only, not on a real
   machine with two accounts.
-- **G5.3 and G5.4** have no test. G5.3 was read on one Linux machine ("lingering is on").
+- **G5.4** has no test. **G5.3** on a Mac is tested as wording from made-up facts; a Mac with FileVault on, or one
+  that logs in as another user, was not rebooted.
 - **Windows.** Not supported.
 
 ## Not goals

@@ -26,6 +26,7 @@ If neither file exists, this skill was installed without its plugin. Get the scr
 | Windows for the hidden ones | `open` |
 | Bring back what is down | `revive --dry-run`, show it, then `revive` |
 | Bring back one | `revive --only "Name"` |
+| Check before a planned reboot | `revive --dry-run --all` |
 | Have the trust question answered after a restart | `trust on` (see below) |
 | Switch it off | `uninstall` |
 
@@ -55,10 +56,24 @@ be doing exactly what its owner wants.
 `revive` starts every recorded session that is not running. It never starts a session that is already running, so
 it is safe to run twice. Always show `revive --dry-run` first when the person did not name one session.
 
-A session comes back with the permission mode it had. If it ran with permission checks switched off, it comes back
-that way and takes one turn by itself to read the wake-up message. Say this when the dry run lists such sessions
-(`bypass` in the line). For silent returns, the person sets `"wake": "idle"` in
+A session comes back with the permission mode it had, word for word. If it ran with permission checks switched
+off, it comes back that way and takes one turn by itself to read the wake-up message. Say this when the dry run
+lists such sessions (`bypass` in the line). For silent returns, the person sets `"wake": "idle"` in
 `~/.config/windstorm-tardigrade/config.json`.
+
+The wake-up message is typed into a session once it is loaded and idle. A session that comes back to a question
+gets no message; the log and the census name it.
+
+After the starts, `revive` keeps looking for a few minutes and prints a count: LOADED, UP-NOT-LOADED and DOWN.
+Show that line. UP-NOT-LOADED means a question is open on that session's screen: the person opens its window.
+
+Before a planned reboot, run `revive --dry-run --all` and show it: it lists the exact line that will start each
+recorded session, and starts nothing.
+
+A line "Starting it new" means that session never had a conversation, so there was nothing to resume; it came
+back as a new session with the same name. Nothing was lost.
+
+If the census says sessions "vanished together", that was a crash. `revive --dry-run`, show it, then `revive`.
 
 Lines that start with `needs you` name sessions that came back on a different login than they had before. This
 happens only where sessions on one machine are pinned to different accounts. Such a session is idle and nothing
@@ -77,14 +92,17 @@ says which it is.
 ## What it never does
 
 - It never starts a second copy of a running session.
-- It never ends a session, never types into one, and never answers a dialog, except the trust question after the
-  person has said `trust on`.
+- It never ends a session and never answers a dialog, except the trust question after the person has said
+  `trust on`.
+- It types nothing into a session except its own wake-up message, into a session it started, once that session
+  is idle.
 - It never stores a token or a key, and never reads another user's processes.
 - It does not bring back timers, watchers or background commands. It tells the revived session they are gone.
 
 ## If you are a session that was just brought back
 
-You will see a message that begins "Windstorm Tardigrade: this machine restarted". Your conversation is intact.
+You will see a message that begins "Windstorm Tardigrade: this machine restarted". Tardigrade typed it; no
+person did. Your conversation is intact.
 Anything you had running in the background is gone. Read your handoff or notes if you keep them, check what was in
 progress, start again only what is still needed, and carry on. If nothing was in progress, say so in one line and
 wait.
