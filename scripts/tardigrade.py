@@ -132,11 +132,24 @@ SHELLS = ("bash", "zsh", "sh", "-bash", "-zsh", "fish", "dash")
 
 
 # ---------- small tools ----------
+def private_dirs():
+    """Tardigrade's own two folders are this user's only (0700): the record, the log, the start files and the
+    boot agent's output hold start flags word for word, and a home folder is not always closed (a Mac's is 755)."""
+    for d in (STATE, CFG_DIR):
+        try:
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            os.chmod(d, 0o700)
+        except OSError:
+            pass
+
+
 def log(msg):
     os.makedirs(STATE, exist_ok=True)
     line = f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {msg}"
     print(line, flush=True)
-    with open(LOG, "a", encoding="utf-8") as f:
+    fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 
@@ -197,13 +210,20 @@ def save_cfg_key(key, value):
     CFG[key] = value
 
 
-def write_json(path, obj):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def write_private(path, text):
+    """Write a file that this user only can read (0600), whole or not at all. The record holds start flags
+    word for word, and a home folder or ~/.config is not always closed to other users (a Mac's is 755)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".new"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=1, sort_keys=True)
-        f.write("\n")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)                  # a .new left from before keeps its old mode otherwise
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
     os.replace(tmp, path)
+
+
+def write_json(path, obj):
+    write_private(path, json.dumps(obj, indent=1, sort_keys=True) + "\n")
 
 
 def read_json(path, default):
@@ -607,8 +627,15 @@ FLAG_CONVERSATION = {"-r", "--resume", "-c", "--continue", "--session-id", "--fo
 # they would start something other than this session in this place
 FLAG_ELSEWHERE = {"--bg", "--background", "--desktop", "--cloud", "--environment", "-w", "--worktree", "--tmux",
                   "-v", "--version", "-h", "--help"}
-SECRET_VALUE = re.compile(r"sk-[A-Za-z0-9]|TOKEN|SECRET|PASSW|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTHORI[SZ]ATION|"
-                          r"BEARER", re.I)
+# a value that names a secret, or has the shape of a common one (keys and tokens of the usual services, a JWT)
+SECRET_VALUE = re.compile(r"TOKEN|SECRET|PASSW|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTHORI[SZ]ATION|BEARER", re.I)
+SECRET_SHAPE = re.compile(r"sk-[A-Za-z0-9]|sk-ant-|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|"
+                          r"xox[abprs]-[A-Za-z0-9-]{8,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|"
+                          r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}|hf_[A-Za-z0-9]{30,}")
+# they take JSON or a file: only a file's path is carried, never the JSON itself (it can hold anything)
+FLAG_PATH_ONLY = {"--settings", "--mcp-config", "--agents"}
+# carried, and said so in the log, because the session then comes back visibly different from 0.1.7's way
+FLAG_SAID = {"--remote-control": "it comes back with Remote Control on, as it was started"}
 
 
 def start_flags(a):
@@ -647,8 +674,11 @@ def start_flags(a):
         if name in FLAG_ELSEWHERE:
             dropped.append(f"{name} (it would start something other than this session here)")
             continue
-        if any(SECRET_VALUE.search(w) for w in words):
+        if any(SECRET_VALUE.search(w) or SECRET_SHAPE.search(w) for w in words):
             dropped.append(f"{name} (its value looks like it holds a secret)")
+            continue
+        if name in FLAG_PATH_ONLY and any(w.lstrip()[:1] in ("{", "[") for w in (vals or [x.partition("=")[2]])):
+            dropped.append(f"{name} (inline JSON: only a file's path is carried)")
             continue
         extra += words
     return extra, dropped
@@ -887,10 +917,14 @@ def record():
             "account": r["account"], "carry_env": r["carry_env"],
             "last_seen": int(time.time()),
         })
-    was = {r["session_id"]: r.get("dropped") for r in old["lanes"]}
+    was = {r["session_id"]: r for r in old["lanes"]}
     for r in rows:              # a flag that cannot be carried is named once, when it is first seen (G2.39)
-        if r["dropped"] and r["dropped"] != was.get(r["session_id"]):
+        o = was.get(r["session_id"], {})
+        if r["dropped"] and r["dropped"] != o.get("dropped"):
             log(f"record: {display(r)}: start flag(s) not carried: {'; '.join(r['dropped'])}")
+        for f, what in FLAG_SAID.items():
+            if f in r["flags"] and f not in (o.get("flags") or []):
+                log(f"record: {display(r)}: {f} is carried: {what}")
     if not rows and old["lanes"]:
         log(f"record: 0 live sessions; kept the previous record ({len(old['lanes'])} sessions)")
         return 0
@@ -977,10 +1011,7 @@ def write_tsv(rows):
             r["tmux_session"], r["session_id"], r["cwd"], r.get("model"), r.get("effort"), r.get("mode"),
             r.get("herdr_tab"), r.get("herdr_workspace"))))
     try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path + ".new", "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        os.replace(path + ".new", path)
+        write_private(path, "\n".join(lines) + "\n")
     except OSError as e:
         log(f"record: could not write the table {path}: {e.strerror}")
 
@@ -2557,5 +2588,6 @@ if __name__ == "__main__":
     if cmd not in COMMANDS:
         print(f"unknown command: {cmd}\n{__doc__}")
         sys.exit(2)
+    private_dirs()
     load_cfg()
     sys.exit(COMMANDS[cmd]() or 0)

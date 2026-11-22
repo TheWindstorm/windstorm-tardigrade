@@ -28,6 +28,12 @@ What comes back:
 - **Every start flag** (G2.39): `--plugin-dir`, `--settings`, `--name` and the rest, word for word. 0.1.7 carried
   only the permission mode, model, effort and added folders. A flag that cannot be carried is named in the log;
   README lists them. On macOS the argument list is now read from the kernel, so an argument with spaces stays one.
+  **Visible change:** a session started with `--remote-control` now comes back with Remote Control on; 0.1.7
+  brought it back without. The log says so the first time a record sees it. `--settings`, `--mcp-config` and
+  `--agents` are carried as file paths only, never as inline JSON, and a value with the shape of a key or token
+  is never carried.
+- **The record, the table, the progress file and the log are yours only** (G2.42): files 0600, Tardigrade's
+  folders 0700. They hold start flags word for word, and a Mac's home is open to other users by default.
 - **A session its owner ended with `/exit` stays ended** (G2.36), and is not counted in a crash.
 - **A pinned session keeps its account label** (G2.41): the start file sets it, so a login wrapper need not.
 - **Tab and workspace labels** from Herdr, the record before, or the `tsv_path` table (G5.6).

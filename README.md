@@ -122,12 +122,19 @@ A session comes back with the flags it was started with, word for word: `--plugi
   `--resume`;
 - the ones that would start something other than this session in this place (`--worktree`, `--tmux`, `--bg`,
   `--desktop`, `--cloud`, `--environment`);
-- a flag whose value looks like it holds a secret (a key, a token, an authorization header). It stays out of the
-  record and the log;
+- a flag whose value looks like it holds a secret: one that names a key, a token or an authorization header, or
+  has the shape of a common key or token. It stays out of the record and the log;
+- `--settings`, `--mcp-config` and `--agents` given as inline JSON: only a file's path is carried;
 - a flag this version does not know, when the word after it may be its value.
 
 Each flag that is not carried is named in the log the first time a record sees it, with the reason, never dropped
 silently. A first message is never written down.
+
+`--remote-control` is carried. A session started with it comes back with Remote Control on, which 0.1.7 did not
+do, and the log says so the first time a record sees it.
+
+The record, the table at `tsv_path`, the progress file and the log are readable by you only (0600), in folders
+that are yours only (0700), because they hold start flags word for word.
 
 **The first minutes:** a restore starts several sessions at a time (`starts_at_once`), so on a machine with many
 sessions the last can take a while. From the first minute, each place a session will come back to (its tmux
