@@ -45,6 +45,9 @@ What comes back:
   a name, and sessions the restore itself had started new under a new id. Now a session in a tmux session the
   restore made, or with any id coming back under its name, is never marked. While a restore is still watching
   sessions that are all back, `census` says so instead of speaking of others on their way.
+- **`on_done` hands on "needs you" as its own count** (G2.38), `{needs_you}`, not as `failed`: on a real Mac a clean
+  restore with one session on another login was handed on as one failure. The record's copy (`lanes.json.prev`) is
+  0600 like the record (G2.42), and `uninstall` leaves no compiled copy behind.
 - **A lane started new under a new id is not listed as down** (G3.16). On a real Mac, `census` said "down: 14"
   for a clean restore until the next record; now it lists those lanes as started new, with both ids.
 - **A session with no conversation is started new even when it is slow to say so** (G2.43). On a Mac whose

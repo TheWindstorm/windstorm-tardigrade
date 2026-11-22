@@ -981,9 +981,15 @@ class Revive(Base):
         self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
         for d in (self.state(""), cfgd):
             self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
-        for f in (os.path.join(cfgd, "lanes.json"), tsv, self.state("tardigrade.log"), self.state("last-revive.json"),
-                  self.state("progress.json")):
+        self.tg("record", "--force")                        # the record's copy, lanes.json.prev, holds start flags too
+        for f in (os.path.join(cfgd, "lanes.json"), os.path.join(cfgd, "lanes.json.prev"), tsv,
+                  self.state("tardigrade.log"), self.state("last-revive.json"), self.state("progress.json")):
             self.assertEqual(os.stat(f).st_mode & 0o777, 0o600, f)
+        # and uninstall leaves no compiled copy behind (seen on a real Mac); not run here: it talks to the real
+        # systemctl --user of whoever runs the tests
+        src = fread(SCRIPT)
+        u = src[src.index("def uninstall():"):src.index("def trust_cmd():")]
+        self.assertIn('shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)', u)
 
     def test_G2_16_a_start_command_from_the_settings_replaces_the_start_line(self):
         self.script("mystart", '#!/bin/bash\nprintf "%s|" "$@" >> "$HOME/mystart.log"\nexec claude --resume "$1"\n')
@@ -1411,19 +1417,24 @@ class Revive(Base):
         self.assertIn("note not typed (its login is at its usage limit)", out)
 
     def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
-        self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')
-        self.cfg({"on_done": "tell started={started} loaded={loaded} not_loaded={not_loaded} down={down} failed={failed}",
+        self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED $TARDIGRADE_NEEDS_YOU" >> "$HOME/told.log"\n')
+        self.cfg({"on_done": "tell started={started} loaded={loaded} not_loaded={not_loaded} down={down} failed={failed} needs_you={needs_you}",
                   "wake": "idle"})
         for nm in ("alpha", "beta"):
             self.start_lane(nm, nm.title() + " Lane")
+        # gamma had a login of its own, which it does not get back: "needs you", which is not "failed" (seen on a
+        # real Mac: a clean restore was handed on as one failure)
+        self.start_lane("gamma", "Gamma Lane", extra_env={"CLAUDE_CODE_OAUTH_TOKEN": "test-only-not-a-token"})
         self.tg("record", "--force")
         self.reboot()
         n = len(self.launches())
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
-        self.wait_launches(n + 2)
+        self.wait_launches(n + 3)
+        self.assertIn("needs you  Gamma Lane", out)
         self.assertEqual(fread(os.path.join(self.home, "told.log")),
-                         "started=2 loaded=2 not_loaded=0 down=0 failed=0 | 2 2 0\n")
-        self.assertIn("on_done ran (exit 0)", out)
+                         "started=2 loaded=3 not_loaded=0 down=0 failed=0 needs_you=1 | 2 3 0 1\n", out)
+        self.assertIn("on_done ran (exit 0): 2 started, 3 loaded, 0 not loaded, 0 down, 0 failed, 1 need you", out)
+        self.assertIn("revive: 2 started, 0 already running, 0 failed, 1 need you", out)
 
     def test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts(self):
         self.cfg({"load_max": 5, "load_wait_s": 2})

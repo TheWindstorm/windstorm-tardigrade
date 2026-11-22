@@ -257,7 +257,7 @@ accounts, or shown in another tool.
 | `herdr_default_workspace` | | With Herdr: the workspace for a session that has a tab label and no workspace. |
 | `tsv_path` | | Also write the record as a tab-separated table with eight columns at this path, for tools that read one. `tsv_socket` limits it to one tmux socket name. |
 | `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
-| `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` are put in, and the same counts are in `TARDIGRADE_STARTED` and so on. For a machine where someone or something should be told. |
+| `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. For a machine where someone or something should be told. |
 
 Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is exactly what will run.
 

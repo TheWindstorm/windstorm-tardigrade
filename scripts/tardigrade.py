@@ -1049,6 +1049,7 @@ def record():
         return 0
     if os.path.exists(TABLE):
         shutil.copyfile(TABLE, TABLE + ".prev")
+        os.chmod(TABLE + ".prev", 0o600)       # the record's copy holds start flags too (G2.42)
     write_json(TABLE, {"version": 1, "recorded_at": now, "boot": boot_id(), "lanes": rows, "down": down})
     log(f"record: {len(rows)} session(s), {len(down)} down -> {TABLE}")
     write_tsv(rows)
@@ -2177,14 +2178,15 @@ def on_done(report):
         return
     counts = {"started": len(report.get("started", [])), "loaded": len(report.get("loaded", [])),
               "not_loaded": len(report.get("not_loaded", [])), "down": len(report.get("down_again", [])),
-              "failed": len(report.get("failed", [])) + len(report.get("needs_you", []))}
+              "failed": len(report.get("failed", [])), "needs_you": len(report.get("needs_you", []))}
     line = cmd
     for k, v in counts.items():
         line = line.replace("{" + k + "}", str(v))
     env = server_env()
     env.update({"TARDIGRADE_" + k.upper(): str(v) for k, v in counts.items()})
     rc = run(["/bin/sh", "-c", line], timeout=60, env=env)[0]
-    log(f"on_done ran (exit {rc}): " + ", ".join(f"{k} {v}" for k, v in counts.items()))
+    log(f"on_done ran (exit {rc}): " + ", ".join(f"{v} {k.replace('_', ' ').replace('needs', 'need')}"
+                                                 for k, v in counts.items()))
 
 
 def notify(text):
@@ -2823,6 +2825,11 @@ def uninstall():
         run(["systemctl", "--user", "daemon-reload"], env=env)
     try:
         os.remove(os.path.join(INSTALL_DIR, "tardigrade.py"))
+    except OSError:
+        pass
+    shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)
+    try:
+        os.rmdir(INSTALL_DIR)                  # only if nothing else is in it
     except OSError:
         pass
     save_cfg_key("auto_revive", False)

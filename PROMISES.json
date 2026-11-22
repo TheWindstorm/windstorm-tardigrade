@@ -207,7 +207,7 @@
   },
   {
    "id": "T15",
-   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: the line with the counts went only to the log. The one responsible for the machine had to poll for it, or be woken from another machine.",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: the line with the counts went only to the log. The one responsible for the machine had to poll for it, or be woken from another machine. SEEN 2026-11-22 on a real Mac (0.1.8 candidate): on_done ran once with the counts, but handed a session that came back on another login ('needs you') on as 'failed', while the revive line of the same run said '0 failed, 1 need you'. Fixed before the tag: {needs_you} is its own count, in the same words as the revive line.",
    "promise": "With `on_done` set, that command is run when a restore ends, with the counts (started, loaded, not loaded, down, failed), so a person or a program is told instead of having to look.",
    "codon": "G2.38",
    "owner": "maintainer",
