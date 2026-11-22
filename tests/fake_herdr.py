@@ -44,6 +44,9 @@ elif a[:2] == ["workspace", "create"]:
     if lab in state.get("ws_fail", []):
         sys.exit(1)
     out({"workspace": {"workspace_id": f"wn-{lab}"}, "tab": {"tab_id": f"wst-{lab}"}, "root_pane": {"pane_id": f"wsp-{lab}"}})
+elif a[:2] == ["notification", "show"]:
+    note({"notification": a[2], "body": a[a.index("--body") + 1]})
+    out({})
 elif a[:2] == ["tab", "rename"]:
     note({"rename": a[2], "label": " ".join(a[3:])})
     out({})

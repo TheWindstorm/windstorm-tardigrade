@@ -1058,6 +1058,43 @@ class Census(Base):
         self.assertIn("Comes back after a reboot: yes, by itself", self.tg("census", TARDIGRADE_FAKE_LINGER="yes")[1])
         self.assertIn("yes, after you log in (lingering is off)", self.tg("census", TARDIGRADE_FAKE_LINGER="no")[1])
 
+    def test_G3_6_census_and_a_note_say_that_a_restore_is_running(self):
+        import re
+        self.script("notify-send", '#!/bin/sh\necho "$2" >> "$HOME/notes.log"\n')
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        jdump({"workspaces": [], "tabs": [], "panes": [], "process_info": {}, "visible": {}},
+              os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "settle_s": 3, "starts_at_once": 1})
+        for n in ("alpha", "beta"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                               env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100", DISPLAY=":10"),
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and not os.path.exists(self.state("progress.json")):
+                time.sleep(0.1)
+            time.sleep(0.5)
+            rc, text = self.tg("census")
+            self.assertRegex(text, r"A RESTORE IS RUNNING: [01] of 2 sessions back, since \d\d:\d\d")
+            self.assertEqual(json.loads(self.tg("census", "--json")[1])["restore"]["total"], 2)
+            out, _ = run.communicate(timeout=120)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        self.assertNotIn("A RESTORE IS RUNNING", self.tg("census")[1])        # and not once it is over
+        notes = fread(os.path.join(self.home, "notes.log")).splitlines()
+        self.assertEqual(len(notes), 2, out)
+        self.assertTrue(notes[0].startswith("Bringing back 2 session(s)"), notes)
+        self.assertTrue(notes[1].startswith("Restore done: 2 session(s) brought back, 0 need you"), notes)
+        runs = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()]
+        self.assertEqual([r["body"] for r in runs if "notification" in r], notes)
+
     def test_G3_2_census_changes_nothing(self):
         self.start_lane("alpha", "Alpha Lane")
         self.tg("record", "--force")

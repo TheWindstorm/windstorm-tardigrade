@@ -1447,6 +1447,8 @@ def _revive(boot):
             "sessions": {r["session_id"]: {"name": display(r), "state": "waiting"} for r in todo}}
     write_progress(prog)
     show_waiting(todo, created)
+    if todo:
+        notify(f"Bringing back {len(todo)} session(s). Each one's place says when it is back.")
     ending = []            # waiting screens whose session runs elsewhere: (socket, name, when to end it)
 
     def end_due(all_now=False):
@@ -1589,18 +1591,27 @@ def _revive(boot):
         write_json(os.path.join(STATE, "last-revive.json"), report)
     prog.update(done=True, ended=int(time.time()))
     write_progress(prog)
-    notify(f"{len(report['started'])} session(s) brought back, {len(report['failed']) + len(report['needs_you'])} need you")
+    notify(f"Restore done: {len(report['started'])} session(s) brought back, "
+           f"{len(report['failed']) + len(report['needs_you'])} need you")
     w.tabs(last=True)
     return 0
 
 
 def notify(text):
-    """a desktop note, when there is a desktop; never an error"""
+    """A desktop note, when there is a desktop, and a Herdr notification where Herdr is up; never an error.
+    A boot service has no desktop of its own: the env_file's display and bus are used (G2.17, G2.33)."""
     try:
+        e = dict(os.environ)
+        e.update(dict(env_file_pairs()[0]))
         if MAC:
             run(["osascript", "-e", f'display notification "{text}" with title "Windstorm Tardigrade"'], timeout=5)
-        elif shutil.which("notify-send") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-            run(["notify-send", "Windstorm Tardigrade", text], timeout=5)
+        elif shutil.which("notify-send", path=e.get("PATH")) and (e.get("DISPLAY") or e.get("WAYLAND_DISPLAY")):
+            run(["notify-send", "Windstorm Tardigrade", text], timeout=5, env=e)
+    except Exception:
+        pass
+    try:
+        if CFG["herdr"] and CFG["herdr_tabs"] and herdr_up():
+            herdr("notification", "show", "Windstorm Tardigrade", "--body", text, "--sound", "none", timeout=10)
     except Exception:
         pass
 
@@ -1748,9 +1759,17 @@ def census_data():
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
-        "coming_back": len(coming),
+        "coming_back": len(coming), "restore": restore_now(),
         "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming},
     }
+
+
+def restore_now():
+    """the restore running now, from its own progress file, or {} when none is"""
+    pr = read_json(progress_path(), {})
+    if not isinstance(pr, dict) or pr.get("done") or pr.get("boot") != boot_id() or not alive(int(pr.get("pid") or 0)):
+        return {}
+    return {k: pr.get(k) for k in ("began", "total", "back", "uptime_at_start")}
 
 
 def where_text(r):
@@ -1777,6 +1796,11 @@ def census():
         print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
+    pr = d["restore"]
+    if pr:
+        print(f"A RESTORE IS RUNNING: {pr['back']} of {pr['total']} sessions back, since "
+              f"{time.strftime('%H:%M', time.localtime(pr['began']))} ({ago(now - pr['began'])}). "
+              "The others are on their way: do not start them by hand.")
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
