@@ -441,6 +441,24 @@ class Revive(Base):
         self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid)
         rep = jload(self.state("last-revive.json"))
         self.assertEqual(rep["started"], ["Alpha Lane"], out)
+        self.assertEqual(new["path"], f"{self.bin}:/usr/bin:/bin", "a path that is set is used as written")
+        # with no path set: the default first (claude where its installer puts it), then what the boot service's
+        # own PATH had besides, so a pane never has less than before (seen on real machines: /snap/bin, /usr/games)
+        self.cfg({"path": None})
+        local = os.path.join(self.home, ".local", "bin")
+        os.makedirs(local, exist_ok=True)
+        shutil.copy(FAKE, os.path.join(local, "claude"))
+        extra = os.path.join(self.tmp, "snap-bin")
+        os.makedirs(extra)
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-b",
+                          PATH=f"/usr/local/bin::.:rel/bin:/usr/bin:/bin:{extra}:{extra}:")
+        self.assertEqual(rc, 0, out)
+        new = self.wait_launches(n + 1)[-1]
+        # and only whole paths, once each: "", "." or "rel/bin" would mean the session's own project folder
+        self.assertEqual(new["path"].split(":"), [local, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+                                                         "/usr/sbin", "/sbin", extra], out)
 
     def test_G2_2_the_revived_session_is_told_what_happened(self):
         sid = self.recorded_then_rebooted()

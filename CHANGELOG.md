@@ -8,7 +8,9 @@ machine whose service `PATH` lacks the folder Claude Code installs into** (`~/.l
 no shell startup file adds that folder: every start said "claude: command not found". A stock Ubuntu machine is
 such a machine. Since 0.1.8 each start at boot replaces its waiting screen through `tmux respawn-pane`, and tmux gives
 that pane the `PATH` of whoever asks, which was the boot service. Now that pane gets the same clean environment as a
-new one, with the `path` setting (default: a standard `PATH` plus `~/.local/bin`). Nothing else changes.
+new one. Its `PATH` is the `path` setting exactly as written, or, with none, a standard `PATH` plus `~/.local/bin`
+first and then every other whole folder of the boot service's own `PATH`, so a session never has less than before.
+Nothing else changes.
 
 ## 0.1.8.1 (2026-11-22)
 A fix to what 0.1.8 counts as a session (G1.14, T40). A `claude -p` run, which Claude Code marks "interactive"
