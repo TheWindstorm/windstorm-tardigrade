@@ -1021,6 +1021,52 @@ class Invariants(unittest.TestCase):
         self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime"})
 
 
+class Promises(unittest.TestCase):
+    """PROMISES.json holds what real machines, and the people using them, showed must change, and the version
+    each change is due in. A lesson is a gate, not a note: these tests refuse a version while a promise due in it
+    is not built, and the version after it until the promise was seen to work on a real machine."""
+
+    def setUp(self):
+        import re
+        self.rows = jload(os.path.join(ROOT, "PROMISES.json"))["rows"]
+        self.version = self.v(re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1))
+        self.tests = set(re.findall(r"def (test_[A-Za-z0-9_]+)\(", fread(os.path.abspath(__file__))))
+        self.plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
+
+    @staticmethod
+    def v(s):
+        return tuple(int(x) for x in s.split("."))
+
+    def test_PROMISES_every_row_is_whole_and_its_codon_is_in_the_plan(self):
+        ids = [r["id"] for r in self.rows]
+        self.assertEqual(len(ids), len(set(ids)), "two rows share an id")
+        for r in self.rows:
+            for k in ("id", "seen", "promise", "codon", "owner", "first_ship_in", "ship_in"):
+                self.assertTrue(r.get(k), f"{r.get('id')}: '{k}' is empty")
+            self.assertIn(r["owner"], ("person", "maintainer"), r["id"])
+            self.assertIn(f"| {r['codon']} |", self.plan, f"{r['id']}: codon {r['codon']} is not in the plan")
+
+    def test_PROMISES_no_version_ships_while_a_promise_due_in_it_is_not_built(self):
+        for r in self.rows:
+            if self.v(r["ship_in"]) <= self.version:
+                self.assertIn(r.get("test"), self.tests,
+                              f"{r['id']} ({r['promise'][:60]}...) is due in {r['ship_in']} and has no test. "
+                              "Build it, or have its date moved (see how_to_use in PROMISES.json).")
+                self.assertIn(f"`{r['test']}`", self.plan, f"{r['id']}: its test is not named in the plan")
+
+    def test_PROMISES_the_version_after_needs_proof_on_a_real_machine(self):
+        for r in self.rows:
+            if self.v(r["ship_in"]) < self.version:
+                self.assertTrue(r.get("proven"), f"{r['id']} shipped in {r['ship_in']} and no real machine has proven it yet")
+
+    def test_PROMISES_a_date_moves_only_with_a_reason_and_a_persons_row_only_by_his_word(self):
+        for r in self.rows:
+            if r["ship_in"] != r["first_ship_in"]:
+                self.assertTrue(r.get("moved_why"), f"{r['id']}: its date moved with no reason written")
+                if r["owner"] == "person":
+                    self.assertTrue(r.get("moved_by_person"), f"{r['id']}: only the person who saw it can move its date")
+
+
 class Strand(unittest.TestCase):
     def test_every_proof_named_in_the_plan_is_a_real_test_and_every_test_has_a_codon(self):
         import re

@@ -12,9 +12,10 @@ window and the session inside it can keep going for weeks. `census` lists every 
 with no window open.
 
 > **Status: 0.1.7, a pilot.** It has been through ten real reboots on two machines (a Linux laptop and a Mac),
-> two of them with no clean shutdown. The first reboots on this version found faults, which is what they were for;
-> after the fixes every session came back every time. It has not yet restarted a machine with a hundred sessions.
-> See [Tested](#tested) for exactly what is proven and what is not.
+> two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
+> this version found faults, which is what they were for; after the fixes every session came back every time,
+> all 98 included. That last reboot also showed what is still wrong: it took 25 minutes and told nobody what it
+> was doing. See [Tested](#tested) for what is proven, and [PROMISES.json](PROMISES.json) for what it now owes.
 
 ## Install
 
@@ -196,6 +197,15 @@ Before a planned reboot, run `tardigrade revive --dry-run --all` and read the li
 
 Proven on 0.1.7, on real machines, 2026-11-21:
 
+- **A real reboot of a shared Linux machine with 98 sessions**, the first time that machine relied on this skill.
+  All 98 came back by themselves: none failed, none needed a second try, each with its own permission mode, model
+  and folder, through the machine's own command for starting its tmux server and with its desktop's variables.
+  **It took too long and said nothing while it worked:** the starts ran one at a time for 18 minutes, the Herdr
+  tabs were attached only at the end, and all 98 were loaded 25 and a half minutes after boot. Twenty minutes in,
+  the machine's owner saw an empty tab, took his session for lost and started a second copy by hand. 90 of the
+  tabs were attached; six sessions had no tab because their Herdr workspaces had not come back. Each of these is
+  now a promise with a version (see below).
+
 - **Seven real reboots of a Linux laptop** (Ubuntu 24.04, Claude Code 2.1.330) with seven sessions: one of a team's
   own working sessions with its Herdr tab, one with permission checks off, one that accepts edits, one in the home
   folder, one that had been in a plain desktop window, and two that nobody had ever written in. The first two
@@ -223,20 +233,19 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 60 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 64 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
 Not yet proven:
 
-- **About 100 sessions through a real reboot.** The most brought back at once so far is seven.
 - **A session acting on the message after a real reboot.** It is proven after a real end and return of one
   session, not after a restart of the whole machine: the test machines' account was at its usage limit.
 - **With nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
 - **A Mac with FileVault on, or one that logs in as another user**: setup and the census say what will happen; no
   such Mac was rebooted. Opening windows on a Mac.
-- **A session pinned to an account by a wrapper**, **a start command of your own** and **a server command of your
-  own**: proven with stand-ins, and by a read-only dry run on a machine that uses them, not through a reboot.
+- **A session pinned to an account by a wrapper** and **a start command of your own**: proven with stand-ins, and
+  by a read-only dry run on a machine that uses them, not through a reboot.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.
 
 Things the real machines taught us, which the tests now hold: Claude Code asks "do you trust this folder?" on every
@@ -246,6 +255,13 @@ session; and a line that works in one shell can fail in another.
 
 The plan this is built from, with each claim and its proof, is
 [DNA-STRAND-MASTER-PLAN.md](DNA-STRAND-MASTER-PLAN.md).
+
+### What it owes
+
+[PROMISES.json](PROMISES.json) lists what real use has shown must change, and the version each change is due in:
+starting several sessions at a time, attaching each tab as its session comes up, saying on the screen that sessions
+are on their way, and nine more. It is not a wish list. The tests refuse a version while a promise due in it is
+not built, and refuse the next one until the promise has been seen to work on a real machine.
 
 ## Where it comes from
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+- **PROMISES.json**: twelve lessons from the first real reboot with 98 sessions, each with the version it is due
+  in. Four tests (class `Promises`) refuse a version while a promise due in it is not built. No change to the script.
+- README and plan: what that reboot proved, and what it did badly.
+
 ## 0.1.7 (2026-11-21)
 Built from DNA Strand Master Plan 1.7. The fleet this skill came from is moving to it from its own restore kit;
 this release is that kit's author's list of everything the kit does.

@@ -1,6 +1,7 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
 Plan version 1.7 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.7.
+What is promised for the versions after it is under "Planned" below and in `PROMISES.json`.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
 enough to test, with its proof next to it. A proof is a test in `tests/test_tardigrade.py`, named after its codon.
@@ -101,6 +102,34 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
   set it, and on such a Mac that meant it started nothing (2026-11-21, a real reboot: 0 of 2). So: start through
   the person's own shell and command, then check the login (G2.8, G2.11).
 
+**The first reboot with about a hundred sessions** (2026-11-21, a shared machine, 98 sessions, version 0.1.7).
+It worked and it was not good enough, and both halves are lessons.
+
+- What held: all 98 came back by themselves, none failed, none needed a retry, each with its own mode, model and
+  folder, through the machine's own way of starting its tmux server. Loaded and counted 25 and a half minutes
+  after boot. So the rules above are right, and they stay.
+- It was slow. One session at a time, about 11 seconds each, most of it waiting: 18 minutes of starts for 98.
+  So: several at a time, with the decision to start still made one by one (G2.34).
+- It was silent. Tabs were attached in one block at the end, and nothing said that sessions were on their way.
+  The machine's owner looked 20 minutes after boot, saw an empty shell where his session should have been, and
+  started a second copy by hand. The skill's first rule is "never a second copy", and here its own silence caused
+  one. So: each tab as its session comes up (G4.3), and the place a session will appear says it is coming
+  (G4.4, G3.6).
+- A layout can be gone. Five Herdr workspaces did not come back, and six sessions had no tab until a person made
+  the workspaces again. So: make the workspace again under its old name (G4.5).
+- A name is not an identity. The hand-started copy carried the real session's name; `revive --only NAME` matched
+  both and started the copy its owner had just closed. So: refuse an ambiguous name (G2.35), do not bring back
+  what its owner ended (G2.36), and let the census flag both (G3.7).
+- The story of a restore should not need a log reader (G3.8), and switching a machine over should not need labels
+  copied by hand (G5.6).
+- Two things a second kind of user needs, seen the same night: windows that open by themselves after login (G4.6),
+  and a way to see who is busy before a planned reboot (G3.9).
+- Not understood yet: on that machine the boot run began 4 minutes 35 seconds after boot; on a laptop it begins
+  after about 2 minutes. Find out why before promising anything.
+
+A lesson is easy to write down and easy to leave behind. Each of these is a row in `PROMISES.json` with the
+version it is due in, and the tests refuse that version while the row is not built (see "Promises" below).
+
 ## Genes and codons
 
 ### G1 Record: write down what is running, all the time
@@ -186,6 +215,34 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G5.5 | `trust on` and `trust off` write the setting, and each says in plain words what Tardigrade will and will not answer. With no word it says which it is. | `test_G5_5_trust_on_and_off_write_the_setting_and_say_what_it_means` |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
+### Planned: what the hundred-session reboot asked for
+
+Not built yet. Each row is a promise in `PROMISES.json`. When one is built, its codon moves into its gene's table
+above with the name of its test, and the row's `test` field names the same test.
+
+| Codon | Claim | Promise |
+|---|---|---|
+| G2.34 | Sessions are started several at a time. The decision to start stays one by one, with a fresh look at what is running, so never a second copy still holds; only the waiting overlaps. How many at once is a setting, and load_max still applies. | T1, due 0.1.8 |
+| G4.3 | Each Herdr tab is attached as soon as its session is up, in the same pass as the trust answer and the note, not after all the starts. | T2, due 0.1.8 |
+| G4.4 | While a restore is running, the place where a session will appear says that it is on its way and how far the restore is (N of M), so nobody takes a session for lost and starts a second copy. | T3, due 0.1.8 |
+| G3.6 | `census` says when a restore is running and how far it is. A desktop note says so when it starts and when it ends. | T4, due 0.1.8 |
+| G4.5 | A workspace that is gone is made again under its old name, with the tab in it: the person's layout is the thing to keep. A default workspace is used only if that fails. | T5, due 0.1.8 |
+| G2.35 | `revive --only` refuses a name that matches more than one session, lists their ids, and starts nothing. | T6, due 0.1.8 |
+| G2.36 | A session its owner ended is not brought back: its conversation ends with /exit, or its process is gone while its pane still holds the shell it left. A crash (G1.11) is never read as many sessions ended by hand. | T7, due 0.1.8 |
+| G3.7 | `census` names sessions that share a name, and marks a session that was started by hand in the place of one a restore was bringing back. | T8, due 0.1.8 |
+| G3.8 | `report` prints the last restore's timeline and what still needs a person. | T9, due 0.1.8 |
+| G5.6 | setup's own record keeps every tab and workspace label it can read, and keeps the labels already on the record when Herdr is slow to answer. | T10, due 0.1.8 |
+| G4.6 | On a desktop, a window opens by itself after login for each returned session that had a window, once the restore is done. A setting that setup offers; off where there is no desktop. | T11, due 0.1.9 |
+| G3.9 | `ready` says, before a planned reboot, which sessions are busy and which have background commands that will be cut. | T12, due 0.1.9 |
+
+## Promises
+
+`PROMISES.json` holds what real machines, and the people using them, showed must change: what was seen, the
+promise, its codon, and the version it is due in. Four tests keep it honest. A version cannot be released while a
+promise due in it has no test. The version after that cannot be released until the row says on which real machine
+the promise was seen to work. A date moves only with a written reason, and a promise that came from what the
+person saw on his own machine moves only by his word. Rows are never deleted.
+
 ## Invariants
 
 These hold across every gene. A change that breaks one is a plan change first.
@@ -205,6 +262,15 @@ test has a codon here.
 ## Proven by hand on real machines, not by a test
 
 On 0.1.7 (plan 1.7), 2026-11-21:
+
+- **A shared Linux machine with 98 sessions, one real reboot**, its first on this skill (the older restore tool was
+  switched off in the same minute this one was switched on). All 98 came back by themselves: 98 started, none
+  failed, none retried. The boot run began 4 min 35 s after boot, started the machine's tmux server through the
+  machine's own command (G2.26), brought the first session up 8 seconds later and the last 18 minutes after that;
+  all 98 were loaded and counted 25 min 37 s after boot (G2.24). Modes word for word (90 of one spelling, 7 of
+  another, 1 auto) (G2.14). 90 Herdr tabs attached and checked; six sessions had no tab because their workspaces
+  were gone, and one because a person had started a copy in it. No trust question was asked. What it did badly
+  is in the field notes and in `PROMISES.json`.
 
 - An Ubuntu 24.04 laptop, Claude Code 2.1.330, **seven real reboots**, seven sessions (one of a team's working
   sessions with its Herdr tab; permission checks off; accept-edits; the home folder; one from a plain desktop
@@ -263,8 +329,10 @@ On earlier versions:
 - **macOS with FileVault on, or without auto-login.** Setup says what will happen (G5.3); no such Mac was rebooted. `open` was not run on a Mac.
 - **Herdr on a real machine** (G4.2). The test uses a stand-in for the `herdr` command, so it proves the rule
   (what is typed, and when not) and not Herdr itself.
-- **A machine with about 100 sessions** through a real reboot. The most brought back at once so far is seven.
-- **G2.15, G2.16 and the `server_command` of G2.26** on a real reboot: stand-ins and a read-only dry run only.
+- **G2.15 and G2.16** on a real reboot: stand-ins and a read-only dry run only. (The `server_command` of G2.26 and
+  the `env_file` of G2.17 went through the 98-session reboot.)
+- **A second user on the same machine**, installed with the quiet settings: his sessions were started (counted
+  from outside, by program name); whether they came back as he left them is his to say.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.
 - **Sessions pinned to different accounts by a token** (G2.11) are proven with the stand-in only, not on a real
