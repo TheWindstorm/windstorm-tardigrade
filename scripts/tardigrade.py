@@ -463,6 +463,47 @@ def last_model(sid, since_ms, config_dir=""):
     return None, None
 
 
+EXIT_CMD = re.compile(r"<command-name>/(exit|quit)</command-name>")
+
+
+def exited_at(r):
+    """When this session's owner ended it with /exit (or /quit), as a Unix time, or 0. Ended means the last
+    entry of its conversation is that command (Claude Code's own lines after it, its "Bye!" and its
+    bookkeeping, do not count) and it was written after a record last saw the session running. An /exit
+    older than that was followed by a resume (a session moved to another account does exactly that)."""
+    import datetime
+    base = r.get("config_dir") or os.path.join(HOME, ".claude")
+    for f in glob.glob(os.path.join(base, "projects", "*", f"{r['session_id']}.jsonl")):
+        try:
+            with open(f, "rb") as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - 65536))
+                tail = fh.read().decode(errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in reversed(tail):
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(d, dict) or d.get("type") not in ("user", "assistant") or d.get("isMeta"):
+                continue
+            c = (d.get("message") or {}).get("content") if isinstance(d.get("message"), dict) else None
+            if isinstance(c, str) and c.lstrip().startswith(("<local-command-stdout>", "<local-command-stderr>")):
+                continue           # what Claude Code printed for a command, "Bye!" for /exit
+            if not (isinstance(c, str) and EXIT_CMD.search(c)):
+                return 0
+            try:
+                t = datetime.datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                t = 0
+            if not t:
+                return 0
+            return t if t > float(r.get("last_seen") or 0) else 0
+        return 0
+    return 0
+
+
 def launch_facts(pid, sj, config_dir):
     a = argv_of(pid)
 
@@ -691,15 +732,26 @@ def record():
     taken = {(r["tmux_socket"], r["tmux_session"]) for r in rows}
     gone = [r for r in old["lanes"] if r["session_id"] not in live_ids and r["session_id"] not in known_down
             and (r["tmux_socket"], r["tmux_session"]) not in taken]
-    fresh = [r for r in gone if not r.get("lost_since")]
+    # A session its owner ended with /exit (after a record last saw it running) is over, at once, and never
+    # part of a crash count. "Its pane holds the shell it left" counts only for a session that went alone:
+    # a memory kill of many sessions leaves shells behind too, and that is a crash.
+    exits = {r["session_id"]: exited_at(r) for r in gone}
+    fresh = [r for r in gone if not r.get("lost_since") and not exits[r["session_id"]]]
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
     lost = []
     for r in gone:
-        since = r.get("lost_since") or (now if crash else 0)
+        since = 0 if exits[r["session_id"]] else (r.get("lost_since") or (now if crash else 0))
         if since and not force and now - since < float(CFG["lost_keep_h"]) * 3600:
             lost.append(dict(r, lost_since=since))
         else:
-            down.append(dict({k: v for k, v in r.items() if k != "lost_since"}, down_since=now))
+            d = dict({k: v for k, v in r.items() if k != "lost_since"}, down_since=now)
+            if exits[r["session_id"]]:
+                d.update(ended="exit", ended_at=int(exits[r["session_id"]]))
+            elif not crash and has_session(r["tmux_socket"], r["tmux_session"]) and tmux(
+                    r["tmux_socket"], "display", "-p", "-t", f"={r['tmux_session']}:",
+                    "#{pane_current_command}")[1].strip() in SHELLS:
+                d.update(ended="shell")
+            down.append(d)
     if crash:
         log(f"record: {len(fresh)} of {len(old['lanes'])} recorded sessions vanished together (a crash?). They stay "
             f"on the record for {CFG['lost_keep_h']} h: `revive` brings them back; `record --force` lets them go.")
@@ -1166,6 +1218,7 @@ def _revive(boot):
         log("revive: tmux is not installed; nothing can be started. Install tmux, then run setup again.")
         return 1
     rows = read_table()["lanes"]
+    want = ""
     if "--only" in ARGS and ARGS.index("--only") + 1 < len(ARGS):
         want = ARGS[ARGS.index("--only") + 1]
         rows = [r for r in rows if want in (r["name"], r["session_id"], r["tmux_session"])]
@@ -1185,7 +1238,7 @@ def _revive(boot):
     log(f"=== revive v{VERSION} (boot={boot}, dry-run={DRY}) uptime={int(uptime_s())} s, {len(rows)} to look at")
     held = running_sids()
     note = WAKE_NOTE.format(when=time.strftime("%Y-%m-%d %H:%M %Z")) if CFG["wake"] == "note" else ""
-    todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": []}
+    todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": []}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
     # login than it had (possible where sessions on one machine are pinned to accounts) is listed as
     # "needs you" and gets no note, so nothing runs on the wrong account.
@@ -1195,6 +1248,15 @@ def _revive(boot):
         if r["session_id"] in held and not as_if_down:
             log(f"skip  {nm}: already running on this machine")
             report["skipped"].append(nm)
+            continue
+        ex = 0 if as_if_down or want == r["session_id"] else exited_at(r)
+        if ex:
+            # its owner ended it after the last record saw it running: that is not something to bring back
+            log(f"skip  {nm}: its owner ended it with /exit at {time.strftime('%Y-%m-%d %H:%M', time.localtime(ex))}"
+                + (f". To bring it back anyway: revive --only {r['session_id']}" if want else ""))
+            report["ended"].append(nm)
+            if want:
+                return 1
             continue
         if has_session(r["tmux_socket"], r["tmux_session"]) and not as_if_down:
             log(f"skip  {nm}: a tmux session named {r['tmux_session']} already exists")
@@ -1402,7 +1464,7 @@ def census_data():
     mine, others, helpers = live(with_launch=False)
     table = read_table()
     live_ids = {r["session_id"] for r in mine}
-    down = [r for r in table["lanes"] if r["session_id"] not in live_ids]
+    down = [dict(r, ended="exit") if exited_at(r) else r for r in table["lanes"] if r["session_id"] not in live_ids]
     down += [r for r in table["down"] if r["session_id"] not in live_ids]
     hidden = [r for r in mine if not r["window"]]
     shown = [r for r in mine if r["window"]]
@@ -1411,7 +1473,8 @@ def census_data():
         "hidden": len(hidden), "down": len(down), "other_users": others, "helpers": helpers,
         "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
         "trust": len([r for r in mine if r["status"] == "trust?"]),
-        "lost": len([r for r in down if r.get("lost_since")]), "comes_back": comes_back(),
+        "lost": len([r for r in down if r.get("lost_since") and not r.get("ended")]), "comes_back": comes_back(),
+        "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "sessions": {"hidden": hidden, "with_window": shown, "down": down},
@@ -1455,7 +1518,9 @@ def census():
         for r in sorted(rows, key=lambda x: display(x).lower()):
             if down:
                 t = r.get("down_since") or r.get("last_seen") or 0
-                print(f"  {display(r):<34} last seen {ago(now - t)} ago   {r.get('cwd', '')}")
+                how = {"exit": "   ended by its owner (/exit)",
+                       "shell": "   ended (its pane holds the shell it left)"}.get(r.get("ended"), "")
+                print(f"  {display(r):<34} last seen {ago(now - t)} ago   {r.get('cwd', '')}{how}")
             else:
                 q = ago(now - r["updated_at"]) if r["updated_at"] else "?"
                 print(f"  {display(r):<34} {r['status'] or '?':<8} quiet {q:<8} {where_text(r):<30} {r['cwd']}")

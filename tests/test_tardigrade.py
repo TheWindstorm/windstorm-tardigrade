@@ -541,6 +541,63 @@ class Revive(Base):
         time.sleep(2)
         self.assertEqual([x["sid"] for x in self.launches()[n:]], [c])
 
+    def conversation(self, sid, last_command_at):
+        """a conversation whose last entry is /exit, then what Claude Code writes after it"""
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(last_command_at)) + ".000Z"
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            for e in ({"type": "assistant", "timestamp": stamp, "message": {"content": [{"type": "text", "text": "done"}]}},
+                      {"type": "user", "isMeta": True, "timestamp": stamp, "message": {"content": "<local-command-caveat>x"}},
+                      {"type": "user", "timestamp": stamp, "message": {"content":
+                          "<command-name>/exit</command-name>\n<command-message>exit</command-message>"}},
+                      {"type": "user", "timestamp": stamp, "message": {"content": "<local-command-stdout>Bye!</local-command-stdout>"}},
+                      {"type": "cost-state"}):
+                f.write(json.dumps(e) + "\n")
+
+    def test_G2_36_a_session_its_owner_ended_is_not_brought_back_and_a_crash_is_still_a_crash(self):
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma", "delta", "echo")]
+        a, b, c, d, e = ids
+        self.tg("record", "--force")
+        seen = self.table()["lanes"][0]["last_seen"]
+        self.conversation(a, seen + 2)           # alpha's owner typed /exit after the record saw it running
+        self.conversation(e, seen - 100)         # echo's /exit is older: it was resumed after it (moved, say)
+        pids = {x["sid"]: x["pid"] for x in self.launches()}
+        for sid in (a, b, c, d):                 # four gone at once: alpha by its owner, three by a crash
+            self.kill(pids[sid])
+        time.sleep(2)
+        self.tg("record")
+        t = self.table()
+        self.assertEqual(sorted(r["session_id"] for r in t["lanes"] if r.get("lost_since")), sorted([b, c, d]),
+                         "the three that went without /exit are still a crash")
+        self.assertEqual([(r["session_id"], r.get("ended")) for r in t["down"]], [(a, "exit")])
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        new = self.wait_launches(n + 4)
+        time.sleep(3)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([b, c, d, e]))
+        rc, out = self.tg("census")
+        self.assertIn("ended by its owner (/exit)", out)
+        # still on the record (not yet written down as down), a name is not enough to bring it back; its id is
+        self.kill([x for x in self.launches()[n:] if x["sid"] == e][0]["pid"])
+        time.sleep(1.5)
+        rc, out = self.tg("revive")                # its pane holds the shell it left
+        self.assertIn("skip  Echo Lane: a tmux session named echo already exists", out)
+        self.tmux(self.sock, "kill-session", "-t", "=echo")     # and then its owner closed that too
+        self.conversation(e, time.time() + 1)
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.assertIn("skip  Echo Lane: its owner ended it with /exit", out)
+        rc, out = self.tg("revive", "--only", "Echo Lane")
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"revive --only {e}", out)
+        time.sleep(2)
+        self.assertEqual(len(self.launches()), n)
+        rc, out = self.tg("revive", "--only", e)
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 1)
+
     def test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder(self):
         rc, out = self.tg("trust", "on")
         self.assertIn("Trust answering is ON", out)

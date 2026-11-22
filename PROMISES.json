@@ -101,7 +101,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G2_36_a_session_its_owner_ended_is_not_brought_back_and_a_crash_is_still_a_crash",
    "proven": "",
    "issue": 8,
    "moved_why": "",
