@@ -70,6 +70,10 @@ CFG = {
     "starts_at_once": 4,      # at most this many sessions started and not yet seen up; the waits overlap
     "retry_min": 25,          # keep retrying failed starts this long (the network may lag at boot)
     "wake": "note",           # "note": tell each revived session what happened; "idle": say nothing
+    "wake_names": [],         # patterns: sessions whose name matches get the note even with "wake": "idle"
+    "wake_skip": [],          # patterns: sessions whose name matches never get the note
+    "wake_text": "",          # your own words for the note; {when} is the time it came back; "" = the default
+    "notes_per_min": 6,       # at most this many notes typed in any one minute, so they do not all take a turn at once
     "auto_revive": False,     # set by setup: the boot service is installed
     "herdr_tabs": True,       # re-attach Herdr tabs after a revive
     "attach_wait_min": 30,    # wait this long for the Herdr server after boot
@@ -1280,6 +1284,55 @@ def answer_trust(r):
 QUESTION = re.compile(r"trust this folder|No, exit|❯\s*\d\.\s|usage credits|Stop and wait")
 
 
+def tmp_emptied():
+    """Was /tmp emptied by this restart? Only said when it was: nothing in it is older than this boot."""
+    d = os.environ.get("TARDIGRADE_FAKE_TMP", "/tmp") if TESTING else "/tmp"
+    booted = time.time() - uptime_s()
+    try:
+        for e in os.scandir(d):
+            if e.stat(follow_symlinks=False).st_mtime < booted - 5:
+                return False
+    except OSError:
+        return False
+    return True
+
+
+def wake_note(boot):
+    """the note's words: the person's own (wake_text), or the default, which says when /tmp was emptied"""
+    if CFG["wake"] != "note" and not CFG.get("wake_names"):
+        return ""
+    text = str(CFG.get("wake_text") or "") or WAKE_NOTE
+    if not CFG.get("wake_text") and boot and tmp_emptied():
+        text += (" This restart emptied /tmp: scripts, tools or files you kept there are gone; make again only "
+                 "what you still need, somewhere that lasts.")
+    return text.replace("{when}", time.strftime("%Y-%m-%d %H:%M %Z"))
+
+
+def wants_note(r):
+    """G2.37: the note per session. wake_skip patterns never get it; wake_names patterns get it even when
+    "wake" is "idle"; otherwise "wake" decides."""
+    nm = r.get("name") or ""
+    pats = lambda k: [x for x in (CFG.get(k) or []) if isinstance(x, str)]
+    if any(re.search(x, nm) for x in pats("wake_skip")):
+        return False
+    if any(re.search(x, nm) for x in pats("wake_names")):
+        return True
+    return CFG["wake"] == "note"
+
+
+BOX_EDGE = re.compile(r"^\s*[─━]{8,}")
+
+
+def box_empty(screen):
+    """Claude Code's input box at the foot of the screen, with nothing typed in it: a line that begins with
+    ❯ and has nothing after it, right under a rule. No box found means: not known to be empty."""
+    lines = [ln for ln in screen.splitlines() if ln.strip()][-15:]
+    for i in range(len(lines) - 1, 0, -1):
+        if lines[i].lstrip().startswith("❯") and BOX_EDGE.match(lines[i - 1]):
+            return not lines[i].lstrip()[1:].strip()
+    return False
+
+
 def type_note(r, note):
     """The wake-up note is typed, never put on a command line. Called only for a session this run started,
     whose login was checked, once Claude Code reports it idle and its screen shows no question."""
@@ -1301,6 +1354,13 @@ class Watch:
         self.answered, self.noted, self.noted_ids, self.settled, self.gone = [], [], set(), set(), set()
         self.tabs_done = set()
         self.last_look = time.time()
+        self.note_times = []
+
+    def may_note(self):
+        """at most notes_per_min notes in any one minute: on a machine with many sessions they are spaced"""
+        win = 6 if TESTING else 60
+        self.note_times = [t for t in self.note_times if time.time() - t < win]
+        return len(self.note_times) < max(1, int(float(CFG.get("notes_per_min") or 6)))
 
     def tabs(self, last=False):
         """Herdr only: attach each tab not yet done, in every pass, from the start of the run (G4.3). The
@@ -1336,7 +1396,9 @@ class Watch:
                 continue
             if sid in self.note_for and sid not in self.noted_ids:
                 screen = tmux(r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
-                if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)):
+                if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(screen) \
+                        and self.may_note():
+                    self.note_times.append(time.time())
                     type_note(r, self.note_for[sid])
                     self.noted.append(display(r))
                     self.noted_ids.add(sid)
@@ -1448,7 +1510,7 @@ def _revive(boot):
             "Two starts of one id would be two copies. Run `record --force` while the session runs, then revive.")
     rows = [r for r in rows if r["session_id"] not in twice]
     held = running_sids()
-    note = WAKE_NOTE.format(when=time.strftime("%Y-%m-%d %H:%M %Z")) if CFG["wake"] == "note" else ""
+    note = wake_note(boot)
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": []}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
     # login than it had (possible where sessions on one machine are pinned to accounts) is listed as
@@ -1510,6 +1572,8 @@ def _revive(boot):
                 ending.remove(e)
     deadline = time.time() + float(CFG["retry_min"]) * 60
     watch_s = (float(CFG["watch_min"]) if boot else min(float(CFG["watch_min"]), 3)) * 60
+    if note:                   # spaced notes take longer: the watch lasts until each could have its turn
+        watch_s = max(watch_s, len(todo) / max(1, int(float(CFG.get("notes_per_min") or 6))) * (6 if TESTING else 60) + 30)
     w = Watch(note_for, rows)
     w.tabs()                   # each tab at once, to its session's waiting screen
     next_try, last_up, tries_done, said = 0.0, time.time(), False, False
@@ -1527,7 +1591,7 @@ def _revive(boot):
         if same_login(r, pid):
             log(f"  {nm}: up ({child}" + ("; same login as before)" if login_print(r) else ")"))
             report["started"].append(nm)
-            if note and not r.get("fresh"):
+            if note and not r.get("fresh") and wants_note(r):
                 note_for[sid] = note
         else:
             log(f"needs you  {nm}: it came back on a different login than it had before. "
@@ -1585,7 +1649,7 @@ def _revive(boot):
                     report["started"].append(nm)
                     came.append(r)
                     last_up = time.time()
-                    if note and same_login(r, late) and not r.get("fresh"):
+                    if note and same_login(r, late) and not r.get("fresh") and wants_note(r):
                         note_for[sid] = note
                     del pending[sid]
                     prog["back"] += 1

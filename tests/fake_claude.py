@@ -118,6 +118,10 @@ now = int(time.time() * 1000)
 json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": names.get(sid, ""),
            "kind": os.environ.get("FAKE_KIND", "interactive"), "entrypoint": "cli", "startedAt": now,
            "status": status, "updatedAt": now}, open(os.path.join(d, f"{os.getpid()}.json"), "w"))
+# its input box at the foot of the screen, empty, as Claude Code draws it when idle
+if not os.path.exists(os.path.join(home, "nobox")):
+    sys.stdout.write("\r\n" + "─" * 40 + "\r\n❯ \r\n" + "─" * 40 + "\r\n  ⏵⏵ bypass permissions on\r\n")
+    sys.stdout.flush()
 # whatever is typed into this "session" is written down, one line each
 end = time.time() + 900
 while time.time() < end:

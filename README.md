@@ -156,6 +156,9 @@ Setup tells you this for your machine. It never changes it for you.
 | Key | Default | Meaning |
 |---|---|---|
 | `wake` | `"note"` | `"note"` tells each revived session what happened. `"idle"` says nothing. |
+| `wake_names` / `wake_skip` | `[]` | Patterns of session names: `wake_names` get the note even with `"wake": "idle"`; `wake_skip` never get it. |
+| `wake_text` | | Your own words for the note. `{when}` is the time it came back. |
+| `notes_per_min` | `6` | At most this many notes typed in one minute, so many sessions do not all take a turn at once. |
 | `stagger_s` | `3` | Seconds between two session starts. |
 | `starts_at_once` | `4` | At most this many sessions started and not yet seen up. The wait after each start overlaps with the next starts; the decision to start is still made one session at a time. Lower it on a small machine. |
 | `boot_window_min` | `40` | The boot service acts only on a machine up for less than this. |

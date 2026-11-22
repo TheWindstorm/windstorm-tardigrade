@@ -1011,6 +1011,40 @@ class Revive(Base):
         rep = jload(self.state("last-revive.json"))
         self.assertEqual(sorted(rep["loaded"]), ["Alpha Lane", "Beta Lane", "Echo Lane", "Gamma Lane"], out)
 
+    def test_G2_37_the_note_per_session_in_its_own_words_spaced_and_only_into_an_empty_box(self):
+        import importlib.util
+        tmpd = os.path.join(self.tmp, "fresh-tmp")             # a /tmp that the restart emptied
+        os.makedirs(tmpd)
+        self.cfg({"wake": "note", "wake_skip": ["^Gamma"], "notes_per_min": 1})
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma")]
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_TMP=tmpd)
+        self.wait_launches(n + 3)
+        typed = self.wait_typed(2)
+        by = {x["sid"]: x["text"] for x in typed}
+        self.assertEqual(sorted(by), sorted(ids[:2]), out)        # Gamma is on wake_skip
+        for text in by.values():
+            self.assertIn("This restart emptied /tmp", text)
+        lines = [ln for ln in out.splitlines() if "wake-up note typed" in ln]
+        import datetime
+        stamps = [datetime.datetime.strptime(ln[:24], "%Y-%m-%dT%H:%M:%S%z").timestamp() for ln in lines]
+        self.assertEqual(len(stamps), 2, out)
+        self.assertGreaterEqual(stamps[1] - stamps[0], 5, "one note a minute (6 s in tests): they were not spaced")
+        # the rules, one by one
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.CFG.update(wake="idle", wake_names=["^Alpha"], wake_skip=[])
+        self.assertEqual([tg.wants_note({"name": x}) for x in ("Alpha Lane", "Beta Lane")], [True, False])
+        tg.CFG.update(wake_text="Back at {when}. Carry on.")
+        self.assertRegex(tg.wake_note(True), r"^Back at \d{4}-\d\d-\d\d \d\d:\d\d .*\. Carry on\.$")
+        rule = "─" * 40
+        self.assertTrue(tg.box_empty(f"old text\n{rule}\n❯ \n{rule}\n  ⏵⏵ bypass permissions on\n"))
+        self.assertFalse(tg.box_empty(f"old text\n{rule}\n❯ half a sentence\n{rule}\n"))    # someone is typing
+        self.assertFalse(tg.box_empty("loaded\n"))                                           # no box: not known
+
     def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
         self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')
         self.cfg({"on_done": "tell started={started} loaded={loaded} not_loaded={not_loaded} down={down} failed={failed}",

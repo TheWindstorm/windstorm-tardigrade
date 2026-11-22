@@ -185,7 +185,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G2_37_the_note_per_session_in_its_own_words_spaced_and_only_into_an_empty_box",
    "proven": "",
    "issue": 14,
    "moved_why": "",
@@ -236,7 +236,7 @@
   {
    "id": "T17",
    "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: making a missing Herdr workspace again opened an empty shell tab in it. Five such tabs were closed by hand, after checking each held nothing.",
-   "promise": "When a workspace is made again (G4.5), its blank first tab is used for the first session placed there, or closed if it holds nothing, so no empty tab is left.",
+   "promise": "When a workspace is made again (G4.5), which happens only for a session that goes into it, the tab it comes with is used for the first session placed there, so no blank tab is left. A first tab that is not blank by then is left alone and a new tab is made. Tardigrade closes no tab.",
    "codon": "G4.7",
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
@@ -245,7 +245,8 @@
    "proven": "",
    "issue": 18,
    "moved_why": "",
-   "moved_by_person": ""
+   "moved_by_person": "",
+   "note": "wording changed 2026-11-22, accepted by the owner: closes no tab"
   },
   {
    "id": "T18",
