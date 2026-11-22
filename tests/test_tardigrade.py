@@ -767,6 +767,24 @@ class Revive(Base):
         rc, cj = self.tg("census", "--json")
         self.assertEqual([r["name"] for r in json.loads(cj)["sessions"]["hidden"]], ["Alpha Lane"])
 
+    def test_G2_43_a_session_slow_to_say_it_has_no_conversation_is_still_started_new(self):
+        # seen on a Mac: the start fetched a login first, so "No conversation found" came after the settle look
+        self.cfg({"settle_s": 2})
+        sid = self.recorded_then_rebooted()
+        with open(os.path.join(self.home, "noconvslow"), "w") as f:
+            f.write(sid)
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = self.wait_launches(n + 2)[n:]
+        self.assertEqual(new[0]["argv"][-2:], ["--resume", sid])
+        self.assertEqual(new[1]["argv"][-2:], ["--name", "Alpha Lane"], out)          # started new, once
+        self.assertIn("it said so only after it was counted up", out)
+        self.assertEqual(len(self.launches()), n + 2)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["fresh"], rep["failed"], rep["needs_you"]),
+                         (["Alpha Lane"], ["Alpha Lane"], [], []), out)
+        self.assertEqual(self.typed(), [])
+
     def test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser(self):
         a = self.start_lane("alpha", "Alpha Lane", flags="--permission-mode acceptEdits")
         b = self.start_lane("beta", "Beta Lane", flags="--permission-mode bypassPermissions")

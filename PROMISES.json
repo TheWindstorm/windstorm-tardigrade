@@ -334,7 +334,7 @@
   },
   {
    "id": "T24",
-   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: sessions that had been started with a name flag came back without it. Nothing broke, because a session keeps its title, but a start flag had been dropped without a word. Only the permission mode, the model, the effort and the added folders are carried today.",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions, as seen by the agent that runs that machine: sessions that had been started with a name flag came back without it. Nothing broke, because a session keeps its title, but a start flag had been dropped without a word. Only the permission mode, the model, the effort and the added folders are carried today. Seen again 2026-11-22 on a clean reboot of a Mac test machine on 0.1.7: a session started with --name, and one with --plugin-dir and --settings, came back with only --resume (and the permission mode). On that reboot a working session of another skill, started with --plugin-dir pointing at a newer copy of that skill, came back without it and ran the older copy installed for the user, with its older hook, and nothing told the person.",
    "promise": "A session comes back with the start flags it had, all of them except the ones that name a conversation or pass a first message. A flag that cannot be carried is named in the log when the session is recorded, never dropped silently, and the README lists what is and is not carried.",
    "codon": "G2.39",
    "owner": "maintainer",
@@ -371,6 +371,34 @@
    "test": "test_G2_41_the_account_label_is_set_by_the_start_file_not_left_to_the_wrapper",
    "proven": "",
    "issue": 27,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T27",
+   "seen": "2026-11-22, a clean reboot of a Mac test machine on 0.1.7: four sessions of two other skills' tests came back on a different login than they had and were listed 'needs you', and two of them then ended by themselves. They had been started with the bare claude program, with no login token, while that machine's ordinary start goes through a shell function that adds its own token. The record showed this beforehand; nothing said so until after the reboot, and the 'needs you' line said only 'a different login'.",
+   "promise": "record and census say beforehand which running sessions are on a login Tardigrade cannot give back: a login token in the environment with no account label, a label with no account_command, or a session started without a token on a machine whose start adds one. The 'needs you' line says which change it saw: no token before and one now, a token before and none now, or another token.",
+   "codon": "G3.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 28,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T28",
+   "seen": "2026-11-22, a clean reboot of a Mac test machine on 0.1.7: two sessions that had never taken a turn had no conversation, but their start fetches a login first, so Claude Code said 'No conversation found' and ended only after the 8-second look. Each had been counted up (and 'needs you' for the login), then went down again while being watched, and was not started new as G2.30 promises. Two other such sessions ended in time and were started new.",
+   "promise": "A session that goes down while being watched, whose own pane in a tmux session this run made says 'No conversation found', is started new once with the same name, folder and flags, as G2.30 does, and counted again; the counts do not keep it as started or 'needs you'.",
+   "codon": "G2.43",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G2_43_a_session_slow_to_say_it_has_no_conversation_is_still_started_new",
+   "proven": "",
+   "issue": 29,
    "moved_why": "",
    "moved_by_person": ""
   }

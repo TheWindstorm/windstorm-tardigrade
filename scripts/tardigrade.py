@@ -1534,6 +1534,11 @@ class Watch:
         self.last_look = time.time()
         self.note_times = []
         self.held = {}                  # session id: why its note is held back, when that is known
+        self.gone_new = []              # sessions seen going down in a pass, for the run to look at (G2.43)
+
+    def take_gone(self):
+        out, self.gone_new = self.gone_new, []
+        return out
 
     def may_note(self):
         """at most notes_per_min notes in any one minute: on a machine with many sessions they are spaced"""
@@ -1566,6 +1571,7 @@ class Watch:
             if not pid:
                 log(f"  {display(r)}: went down again while being watched")
                 self.gone.add(sid)
+                self.gone_new.append(r)
                 continue
             sj = session_json(pid, r.get("config_dir", ""))
             if not sj.get("sessionId"):
@@ -1786,6 +1792,37 @@ def _revive(boot):
         prog["sessions"][sid]["state"] = "up"
         write_progress(prog)
 
+    def no_conversation_late():
+        """G2.43: a session with no conversation can take longer than settle_s to say so and end (a Mac whose
+        start fetches a login first). It was counted up; it went down. If its own pane, in a tmux session this
+        run made, says "No conversation found", it is started new once, as G2.30 does, and counted again."""
+        for r in w.take_gone():
+            sid, nm = r["session_id"], display(r)
+            if r.get("fresh") or CFG.get("start_command") or (r["tmux_socket"], r["tmux_session"]) not in created:
+                continue
+            if "No conversation found" not in tmux(r["tmux_socket"], "capture-pane", "-p", "-t",
+                                                   f"={r['tmux_session']}:", timeout=6)[1]:
+                continue
+            log(f"  {nm}: Claude Code has no conversation for it (it said so only after it was counted up). "
+                "Starting it new, with the same name, folder and flags.")
+            for k in ("started", "needs_you"):
+                if nm in report[k]:
+                    report[k].remove(nm)
+            if r in came:
+                came.remove(r)
+            note_for.pop(sid, None)
+            w.gone.discard(sid)
+            prog["back"] -= 1
+            prog["sessions"][sid]["state"] = "starting"
+            write_progress(prog)
+            r["fresh"] = True
+            report.setdefault("fresh", []).append(nm)
+            if start_lane(r, created):
+                inflight[sid] = (r, time.time())
+            else:
+                log(f"  {nm}: its new start failed; its tmux session {holds_text(r)}")
+                report["failed"].append(nm)
+
     def settle(wait_all=False):
         """Look at the starts in flight whose settle time is over. The waits overlap; the decisions do not."""
         while inflight:
@@ -1813,6 +1850,7 @@ def _revive(boot):
             # with many sessions the starts take minutes: the ones already up are looked after meanwhile
             if time.time() - w.last_look >= (0 if TESTING else 15):
                 w.look(came)
+                no_conversation_late()
             end_due()
             if not wait_all and len(inflight) < at_once:
                 return
@@ -1881,7 +1919,11 @@ def _revive(boot):
             log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
                 f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
         # the sessions that are up are looked after in every pass, also while another start is being retried
+        if inflight:
+            settle()
         waiting = w.look(came)
+        no_conversation_late()
+        waiting += len(inflight)
         end_due()
         if tries_done and (not waiting or time.time() >= last_up + watch_s):
             break

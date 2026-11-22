@@ -6,7 +6,7 @@ name to "claude").
 Files in HOME change how it behaves: `slow` (seconds to "load"), `trustprompt` (stop at the folder
 question first), `usagebox` (never load: redraw an old conversation that quotes the folder question, with
 another dialog open under it, and write down every key received), `failonce` (end at once, one time),
-`status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for),
+`status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for), `noconvslow` (the same, said only after 6 s),
 `failsid` (session ids whose start always fails), `limitnotice` (show the usage-limit notice under
 the empty box)."""
 import ctypes
@@ -49,6 +49,10 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
                                                            "CLAUDE_CODE_AUTO_COMPACT_WINDOW") if k in os.environ}}) + "\n")
 if "--resume" in a and listed("noconv", sid):
     print(f"No conversation found with session ID: {sid}")     # what Claude Code says for a session nobody wrote in
+    sys.exit(1)
+if "--resume" in a and listed("noconvslow", sid):
+    time.sleep(6)                       # a slow machine: it says so only after the run has counted it up
+    print(f"No conversation found with session ID: {sid}")
     sys.exit(1)
 if listed("failsid", sid):
     sys.exit(1)                         # a session whose start keeps failing
