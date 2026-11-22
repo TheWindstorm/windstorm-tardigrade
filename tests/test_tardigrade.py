@@ -1047,6 +1047,11 @@ class Revive(Base):
         # a session nobody wrote in shows a dim placeholder in its empty box (Claude Code 2.1.330, a real machine)
         self.assertTrue(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0\x1b[2mTry \"how does <filepath> work?\"\x1b[0m\n{rule}\n"))
         self.assertFalse(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0hello \x1b[2mtypo\x1b[0m\n{rule}\n"))
+        # nothing is typed next to Claude Code's usage-limit notice, even under an empty box (a real machine)
+        call = fread(SCRIPT).index("type_note(r, self.note_for")
+        self.assertIn("not OTHER_DIALOG.search(bottom(screen, 15))", fread(SCRIPT)[call - 400:call])
+        self.assertTrue(tg.OTHER_DIALOG.search("  ⚠ Usage limit reached · limit resets 12pm\n    Continuing automatically at "
+                                               "12pm · Esc to cancel · /usage-credits to\n    continue now"))
 
     def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
         self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')

@@ -1235,7 +1235,7 @@ def came_up(r, P=None):
 
 
 YES_LINE = re.compile(r"❯\s*(\d\.\s*)?Yes, I trust")
-OTHER_DIALOG = re.compile(r"usage credits|usage limit|limit reached|Stop and wait|Wait here|Switch to", re.I)
+OTHER_DIALOG = re.compile(r"usage[ -]credits|usage limit|limit reached|Stop and wait|Wait here|Switch to", re.I)
 
 
 def bottom(screen, n):
@@ -1404,7 +1404,7 @@ class Watch:
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
                 if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(styled) \
-                        and self.may_note():
+                        and not OTHER_DIALOG.search(bottom(screen, 15)) and self.may_note():
                     self.note_times.append(time.time())
                     type_note(r, self.note_for[sid])
                     self.noted.append(display(r))
