@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.1.8.1 (not yet released)
+## 0.1.8.1 (2026-11-22)
 A fix to what 0.1.8 counts as a session (G1.12, T40). A `claude -p` run, which Claude Code marks "interactive"
 in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could
 have started it again as an interactive session. Now a print-mode run, a run through an SDK, a process whose
