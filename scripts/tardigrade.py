@@ -1235,7 +1235,11 @@ def came_up(r, P=None):
 
 
 YES_LINE = re.compile(r"❯\s*(\d\.\s*)?Yes, I trust")
-OTHER_DIALOG = re.compile(r"usage[ -]credits|usage limit|limit reached|Stop and wait|Wait here|Switch to", re.I)
+# Claude Code's usage and limit notices, in the forms seen and the forms they may take: a key or a note must
+# never land beside one (G2.40). Holding back by mistake costs a note; typing by mistake costs a message.
+OTHER_DIALOG = re.compile(r"usage[ -]credits|extra[ -]usage|usage limit|limit reached|reached your|hit your|"
+                          r"(weekly|daily|hourly|session|5-hour|opus|sonnet|plan'?s?) (usage )?limit|limit resets|"
+                          r"resets at|/upgrade|Stop and wait|Wait here|Switch to", re.I)
 
 
 def bottom(screen, n):
@@ -1361,6 +1365,7 @@ class Watch:
         self.tabs_done = set()
         self.last_look = time.time()
         self.note_times = []
+        self.held = {}                  # session id: why its note is held back, when that is known
 
     def may_note(self):
         """at most notes_per_min notes in any one minute: on a machine with many sessions they are spaced"""
@@ -1403,6 +1408,8 @@ class Watch:
             if sid in self.note_for and sid not in self.noted_ids:
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
+                if OTHER_DIALOG.search(bottom(screen, 15)):
+                    self.held[sid] = "a usage or limit notice is on its screen"
                 if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)) and box_empty(styled) \
                         and not OTHER_DIALOG.search(bottom(screen, 15)) and self.may_note():
                     self.note_times.append(time.time())
@@ -1419,6 +1426,7 @@ class Watch:
     def count(self, started):
         res = {"trust_answered": self.answered, "noted": self.noted, "loaded": [], "not_loaded": [],
                "down_again": [], "note_not_typed": []}
+        why = {}
         P = procs()
         for r in started:
             pid = came_up(r, P)
@@ -1430,6 +1438,7 @@ class Watch:
                 res["loaded"].append(display(r))
                 if r["session_id"] in self.note_for and r["session_id"] not in self.noted_ids:
                     res["note_not_typed"].append(display(r))
+                    why[display(r)] = self.held.get(r["session_id"], "not idle (a question on its screen?)")
         log(f"count: started={len(started)} LOADED={len(res['loaded'])} UP-NOT-LOADED={len(res['not_loaded'])} "
             f"DOWN={len(res['down_again'])}")
         for nm in res["not_loaded"]:
@@ -1437,7 +1446,7 @@ class Watch:
         for nm in res["down_again"]:
             log(f"  DOWN {nm}: it started and ended again; its tmux session holds a shell")
         for nm in res["note_not_typed"]:
-            log(f"  {nm}: loaded, but not idle (a question on its screen?); the wake-up note was not typed")
+            log(f"  {nm}: loaded, but {why[nm]}; the wake-up note was not typed")
         if self.answered:
             log(f"trust: answered for {len(self.answered)} session(s)")
         return res

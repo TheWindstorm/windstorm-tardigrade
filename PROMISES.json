@@ -345,6 +345,20 @@
    "issue": 25,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T25",
+   "seen": "2026-11-22, on two real machines before any reboot: at the weekly limit Claude Code shows 'Usage limit reached ... /usage-credits to continue now' under an ordinary, empty input box. Released 0.1.7 looks for 'usage credits' with a space and so misses the notice: it would type the wake-up note there. Typing it does no harm beyond a wasted message, because the box is the ordinary one and not a list of choices.",
+   "promise": "The wake-up note is never typed into a session whose screen shows a usage or limit notice, whatever its form.",
+   "codon": "G2.40",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.8",
+   "ship_in": "0.1.8",
+   "test": "test_G2_40_no_note_is_typed_beside_a_usage_or_limit_notice",
+   "proven": "",
+   "issue": 26,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

@@ -7,7 +7,8 @@ Files in HOME change how it behaves: `slow` (seconds to "load"), `trustprompt` (
 question first), `usagebox` (never load: redraw an old conversation that quotes the folder question, with
 another dialog open under it, and write down every key received), `failonce` (end at once, one time),
 `status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for),
-`failsid` (session ids whose start always fails)."""
+`failsid` (session ids whose start always fails), `limitnotice` (show the usage-limit notice under
+the empty box)."""
 import ctypes
 import json
 import os
@@ -121,6 +122,9 @@ json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": nam
 # its input box at the foot of the screen, empty, as Claude Code draws it when idle
 if not os.path.exists(os.path.join(home, "nobox")):
     sys.stdout.write("\r\n" + "─" * 40 + "\r\n❯ \r\n" + "─" * 40 + "\r\n  ⏵⏵ bypass permissions on\r\n")
+    if os.path.exists(os.path.join(home, "limitnotice")):     # what Claude Code 2.1.330 shows at the weekly limit
+        sys.stdout.write("  ⚠ Usage limit reached · limit resets 12pm\r\n    Continuing automatically at 12pm · "
+                         "Esc to cancel · /usage-credits to\r\n    continue now\r\n")
     sys.stdout.flush()
 # whatever is typed into this "session" is written down, one line each
 end = time.time() + 900

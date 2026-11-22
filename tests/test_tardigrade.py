@@ -1047,11 +1047,34 @@ class Revive(Base):
         # a session nobody wrote in shows a dim placeholder in its empty box (Claude Code 2.1.330, a real machine)
         self.assertTrue(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0\x1b[2mTry \"how does <filepath> work?\"\x1b[0m\n{rule}\n"))
         self.assertFalse(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0hello \x1b[2mtypo\x1b[0m\n{rule}\n"))
-        # nothing is typed next to Claude Code's usage-limit notice, even under an empty box (a real machine)
-        call = fread(SCRIPT).index("type_note(r, self.note_for")
-        self.assertIn("not OTHER_DIALOG.search(bottom(screen, 15))", fread(SCRIPT)[call - 400:call])
-        self.assertTrue(tg.OTHER_DIALOG.search("  ⚠ Usage limit reached · limit resets 12pm\n    Continuing automatically at "
-                                               "12pm · Esc to cancel · /usage-credits to\n    continue now"))
+
+    def test_G2_40_no_note_is_typed_beside_a_usage_or_limit_notice(self):
+        # seen on two real machines at their weekly limit: the notice sits under an ordinary, empty input box
+        self.recorded_then_rebooted()
+        open(os.path.join(self.home, "limitnotice"), "w").close()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        self.assertEqual(self.typed(), [], out)
+        self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["noted"], rep["note_not_typed"]), ([], ["Alpha Lane"]))
+        # the forms it takes, or may take; and ordinary words are not mistaken for one
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        for text in ("⚠ Usage limit reached · limit resets 12pm", "/usage-credits to continue now", "usage credits",
+                     "You've hit your limit · resets 3pm", "Weekly limit reached", "5-hour limit reached",
+                     "Opus limit reached", "Approaching usage limit", "/extra-usage to keep going",
+                     "You have reached your plan's usage limit.", "1. Stop and wait", "Switch to usage credits"):
+            self.assertTrue(tg.OTHER_DIALOG.search(text), text)
+        for text in ("❯ ", "  ⏵⏵ bypass permissions on", "● Done. The tests pass.", "Context left until auto-compact: 12%"):
+            self.assertFalse(tg.OTHER_DIALOG.search(text), text)
+        # and the same rule holds the trust answer (G2.12): one pattern for both
+        src = fread(SCRIPT)
+        call = src.index("type_note(r, self.note_for")
+        self.assertIn("not OTHER_DIALOG.search(bottom(screen, 15))", src[call - 500:call])
 
     def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
         self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED" >> "$HOME/told.log"\n')
