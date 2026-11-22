@@ -43,7 +43,8 @@ update the plugin.
 
 What a stock machine needs: nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
-first, then the boot service's own (which on Linux usually lacks `~/.local/bin`). If yours is elsewhere, set `path` (see
+first, then the other folders of the `PATH` of whoever runs the restore: at boot, the boot service's (which on
+Linux usually lacks `~/.local/bin`); in a `revive` you type, your shell's. If yours is elsewhere, set `path` (see
 [Settings](#settings)). 0.1.8 and 0.1.8.1 did not bring sessions back on a Linux machine whose service `PATH` lacks
 the folder Claude Code is installed in; fixed in 0.1.8.2.
 
@@ -252,7 +253,7 @@ accounts, or shown in another tool.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `path` | a standard one plus `~/.local/bin` | The `PATH` a revived session starts with. Unset: `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, then every other whole folder of the boot service's own `PATH`. Set: exactly what you write. Set it if `claude` (or your start command) is elsewhere. |
+| `path` | a standard one plus `~/.local/bin` | The `PATH` a revived session starts with. Unset: `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, then every other whole folder of the `PATH` of whoever runs the restore (at boot: the boot service; in a `revive` you type: your shell), once each. Set: exactly what you write. Set it if `claude` (or your start command) is elsewhere. |
 | `claude_command` | `"claude"` | The command that starts Claude Code. The session's flags and `--resume <id>` are added to it. |
 | `account_env` | | The name of an environment variable that holds a session's account label, if your wrapper sets one. A label, never a secret. |
 | `account_command` | | Used in place of `claude_command` for a session that had a label, for example `"my-wrapper use {account}"`. The start file sets the `account_env` variable to the label before it runs this command, so the wrapper need not put it back. |

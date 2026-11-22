@@ -9,8 +9,13 @@ no shell startup file adds that folder: every start said "claude: command not fo
 such a machine. Since 0.1.8 each start at boot replaces its waiting screen through `tmux respawn-pane`, and tmux gives
 that pane the `PATH` of whoever asks, which was the boot service. Now that pane gets the same clean environment as a
 new one. Its `PATH` is the `path` setting exactly as written, or, with none, a standard `PATH` plus `~/.local/bin`
-first and then every other whole folder of the boot service's own `PATH`, so a session never has less than before.
-Nothing else changes.
+first and then every other whole folder of the `PATH` of whoever runs the restore (at boot: the boot service), so a
+session never has less than before.
+
+One more change, from the same line: with no `path` setting, a session started in a new pane (not one replacing a
+waiting screen) also gains those other folders now. Before, a new pane had the standard `PATH` plus `~/.local/bin`
+only. The default still comes first, so nothing is lost; a `revive` typed by hand passes on the folders of the shell
+it is typed in.
 
 ## 0.1.8.1 (2026-11-22)
 A fix to what 0.1.8 counts as a session (G1.14, T40). A `claude -p` run, which Claude Code marks "interactive"
