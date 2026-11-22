@@ -143,7 +143,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table",
    "proven": "",
    "issue": 11,
    "moved_why": "",

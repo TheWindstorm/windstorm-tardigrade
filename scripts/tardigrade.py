@@ -632,10 +632,13 @@ def display(r):
 
 
 # ---------- herdr (optional) ----------
+HERDR_WAIT = {"s": 0}     # setup raises it: on a loaded machine Herdr can be slow to answer (G5.6)
+
+
 def herdr(*a, timeout=40):
     if not CFG["herdr"] or not CFG["herdr_tabs"]:
         return None
-    rc, out = run([CFG["herdr"], *a], timeout=timeout)
+    rc, out = run([CFG["herdr"], *a], timeout=max(timeout, HERDR_WAIT["s"]))
     if rc != 0:
         return None
     try:
@@ -715,6 +718,7 @@ def record():
     labels = ({}, {})
     if "--no-herdr" not in ARGS and CFG["herdr"] and CFG["herdr_tabs"] and herdr_up():
         labels = herdr_labels()
+    table_labels = tsv_labels() if CFG.get("tsv_path") else {}
     rows, used = [], set()
     skip = set(CFG.get("skip_tmux_sockets") or [])
     loose_skip = [p for p in (CFG.get("loose_skip") or []) if isinstance(p, str)]
@@ -726,8 +730,10 @@ def record():
         if r["host"] != "tmux" and any(re.search(p, r["name"]) for p in loose_skip):
             continue           # a plain terminal the person told us to leave alone
         o = old_by.get(r["session_id"], {})
+        # labels from, in order: Herdr now, the record before, the table at tsv_path (G5.6)
         tab, ws = (labels[0].get((r["tmux_socket"], r["tmux_session"])) or labels[1].get(r["pid"])
-                   or (o.get("herdr_tab", ""), o.get("herdr_workspace", "")))
+                   or ((o.get("herdr_tab", ""), o.get("herdr_workspace", "")) if o.get("herdr_tab") else None)
+                   or table_labels.get(r["session_id"]) or ("", ""))
         if r["host"] == "herdr" and not tab:
             tab = r["name"]
         if tab and not ws:
@@ -797,6 +803,23 @@ def record():
     log(f"record: {len(rows)} session(s), {len(down)} down -> {TABLE}")
     write_tsv(rows)
     return 0
+
+
+def tsv_labels():
+    """session id -> (tab label, workspace label) from the table at tsv_path, which may have been written by
+    another tool before this one took over. Read only; a table that is not there gives nothing."""
+    out = {}
+    try:
+        with open(os.path.expanduser(str(CFG.get("tsv_path") or "")), encoding="utf-8") as f:
+            for line in f:
+                c = line.rstrip("\n").split("\t")
+                if line.startswith("#") or len(c) < 8:
+                    continue
+                if c[1] and (c[6] or c[7]):
+                    out[c[1]] = (clean_label(c[6]), clean_label(c[7]))
+    except OSError:
+        pass
+    return out
 
 
 def write_tsv(rows):
@@ -2026,6 +2049,7 @@ def setup():
     with open(marker(), "w") as f:
         f.write("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
     ARGS.append("--force")
+    HERDR_WAIT["s"] = 120          # setup's first record: give a loaded machine's Herdr time to answer
     record()
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")
     for line in who_logs_in():

@@ -25,6 +25,8 @@ elif a[:2] == ["tab", "list"]:
     out({"tabs": state["tabs"]})
 elif a[:2] == ["workspace", "list"]:
     out({"workspaces": state["workspaces"]})
+elif a[:2] == ["pane", "process-info"] and a[a.index("--pane") + 1] in state.get("fail_panes", []):
+    sys.exit(1)                        # a pane whose answer timed out
 elif a[:2] == ["pane", "process-info"]:
     out({"process_info": state["process_info"].get(a[a.index("--pane") + 1], {})})
 elif a[:2] == ["pane", "read"]:

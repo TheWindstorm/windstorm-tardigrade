@@ -1191,6 +1191,42 @@ class Setup(Base):
         self.assertEqual(short, "after you log in at its screen")
         self.assertIn("A login over ssh does not start it", lines[-1])
 
+    def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in ("alpha", "beta", "gamma"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force", "--no-herdr")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        ids = {r["tmux_session"]: r["session_id"] for r in t["lanes"]}
+        for r in t["lanes"]:
+            if r["tmux_session"] == "beta":
+                r["herdr_tab"], r["herdr_workspace"] = "Beta Tab", "Team"        # on the record before
+        jdump(t, p)
+        table = os.path.join(self.home, "older-tool.tsv")                       # what another tool wrote
+        with open(table, "w") as f:
+            f.write("# a table\n" + "\t".join(["gamma", ids["gamma"], self.work, "", "", "", "Gamma Tab", "Old Team"]) + "\n")
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": "t0", "label": "Alpha Tab", "workspace_id": "w1"},
+                        {"tab_id": "t1", "label": "Beta New", "workspace_id": "w1"}],
+               "panes": [{"pane_id": "p0", "tab_id": "t0", "workspace_id": "w1"},
+                         {"pane_id": "p1", "tab_id": "t1", "workspace_id": "w1"}],
+               "fail_panes": ["p1"],                                           # Herdr too slow for this one
+               "process_info": {"p0": {"shell_pid": 1, "foreground_processes": [
+                   {"pid": 2, "argv": [TMUX, "-S", self.sock, "attach", "-t", "=alpha"]}]}}, "visible": {}},
+              os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "tsv_path": table})
+        self.tg("record", "--force")
+        got = {r["tmux_session"]: (r["herdr_tab"], r["herdr_workspace"]) for r in self.table()["lanes"]}
+        self.assertEqual(got, {"alpha": ("Alpha Tab", "Team"), "beta": ("Beta Tab", "Team"),
+                               "gamma": ("Gamma Tab", "Old Team")})
+        src = fread(SCRIPT)
+        setup = src[src.index("def setup():"):src.index("def mac_story(")]
+        self.assertLess(setup.index('HERDR_WAIT["s"] = 120'), setup.index("record()"))   # setup gives Herdr longer
+
     def test_G5_5_trust_on_and_off_write_the_setting_and_say_what_it_means(self):
         rc, out = self.tg("trust")
         self.assertIn("Trust answering is OFF", out)                # off unless switched on
