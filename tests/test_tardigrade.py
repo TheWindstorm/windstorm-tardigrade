@@ -790,6 +790,47 @@ class Revive(Base):
         self.assertEqual(rc, 0, out)
         self.wait_launches(n + 1)
 
+    def print_conversation(self, sid, *entrypoints):
+        """a conversation whose lines name these entrypoints in turn, as Claude Code writes them"""
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            for ep in entrypoints:
+                for kind, text in (("user", "Run the shell command sleep 200"), ("assistant", "ok")):
+                    f.write(json.dumps({"type": kind, "entrypoint": ep, "sessionId": sid,
+                                        "message": {"role": kind, "content": text}}) + "\n")
+
+    def test_G2_47_a_row_whose_conversation_is_a_print_mode_run_is_never_started(self):
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        c = self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")                    # the record 0.1.8 could write: beta and gamma were claude -p runs
+        self.reboot()
+        self.print_conversation(b, "sdk-cli")
+        self.print_conversation(c, "sdk-cli", "cli")    # gamma's was resumed by hand in a terminal later: a session again
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        time.sleep(2)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([a, c]), out)
+        self.assertIn("skip  Beta Lane: its conversation is a print-mode or SDK run (entrypoint sdk-cli)", out)
+        rc, out = self.tg("revive", "--only", b)
+        self.assertEqual(rc, 1, out)
+        rc, out = self.tg("census")
+        self.assertIn("a print-mode run (claude -p), never brought back", out)
+        # with nothing running, the record keeps the record before it, but not the print-mode run
+        self.reboot()
+        rc, out = self.tg("record")
+        self.assertIn("print-mode run(s) moved to the down list: Beta Lane", out)
+        t = self.table()
+        self.assertEqual(sorted(r["session_id"] for r in t["lanes"]), sorted([a, c]))
+        self.assertEqual([(r["session_id"], r.get("ended")) for r in t["down"]], [(b, "print-run")])
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        time.sleep(2)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([a, c]), out)
+
     def test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder(self):
         rc, out = self.tg("trust", "on")
         self.assertIn("Trust answering is ON", out)

@@ -606,7 +606,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
-   "test": "",
+   "test": "test_G2_47_a_row_whose_conversation_is_a_print_mode_run_is_never_started",
    "proven": "",
    "issue": 46,
    "moved_why": "",

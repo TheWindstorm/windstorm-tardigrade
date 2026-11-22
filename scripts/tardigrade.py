@@ -539,6 +539,36 @@ def last_model(sid, since_ms, config_dir=""):
 EXIT_CMD = re.compile(r"<command-name>/(exit|quit)</command-name>")
 
 
+def print_run(r):
+    """G2.47: the entrypoint this session's conversation last names, when it is a print-mode or SDK run's
+    ("sdk-cli", "sdk-ts", ...), else "". A session a person sits in says "cli". The last one counts: a print-mode
+    conversation that someone later resumed by hand in a terminal is a session again."""
+    base = r.get("config_dir") or os.path.join(HOME, ".claude")
+    for f in glob.glob(os.path.join(base, "projects", "*", f"{r['session_id']}.jsonl")):
+        try:
+            with open(f, "rb") as fh:
+                fh.seek(0, 2)
+                n = fh.tell()
+                fh.seek(max(0, n - 65536))
+                chunks = [fh.read()]
+                if n > 65536:
+                    fh.seek(0)
+                    chunks.insert(0, fh.read(65536))
+        except OSError:
+            continue
+        last = ""
+        for chunk in chunks:
+            for line in chunk.decode(errors="replace").splitlines():
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(d, dict) and isinstance(d.get("entrypoint"), str) and d["entrypoint"]:
+                    last = d["entrypoint"]
+        return last if last.startswith("sdk") else ""
+    return ""
+
+
 def last_turn(r):
     """The last entry of this session's conversation that is a turn: a user or assistant line, not Claude
     Code's own bookkeeping and not what it printed for a command (its "Bye!" for /exit). None if there is
@@ -1046,7 +1076,15 @@ def record():
             if f in r["flags"] and f not in (o.get("flags") or []):
                 log(f"record: {display(r)}: {f} is carried: {what}")
     if not rows and old["lanes"]:
-        log(f"record: 0 live sessions; kept the previous record ({len(old['lanes'])} sessions)")
+        # A row for a print-mode run (one 0.1.8 wrote down) is not kept as a session even here (G2.47, T43).
+        pr = [r for r in old["lanes"] if print_run(r)]
+        log(f"record: 0 live sessions; kept the previous record ({len(old['lanes']) - len(pr)} sessions)"
+            + (f"; {len(pr)} print-mode run(s) moved to the down list: {', '.join(display(r) for r in pr)}" if pr else ""))
+        if pr and not DRY:
+            gone = {r["session_id"] for r in pr}
+            now = int(time.time())
+            write_json(TABLE, dict(old, lanes=[r for r in old["lanes"] if r["session_id"] not in gone],
+                                   down=old["down"] + [dict(r, down_since=now, ended="print-run") for r in pr]))
         return 0
     now, keep = int(time.time()), int(CFG["down_keep_days"]) * 86400
     live_ids = {r["session_id"] for r in rows}
@@ -1069,6 +1107,9 @@ def record():
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
     lost = []
     for r in gone:
+        if print_run(r):            # a print-mode run is never kept as lost, crash or not (G2.47)
+            down.append(dict({k: v for k, v in r.items() if k != "lost_since"}, down_since=now, ended="print-run"))
+            continue
         since = 0 if exits[r["session_id"]] else (r.get("lost_since") or (now if crash else 0))
         if since and not force and now - since < float(CFG["lost_keep_h"]) * 3600:
             lost.append(dict(r, lost_since=since))
@@ -1957,6 +1998,14 @@ def _revive(boot):
             if want:
                 return 1
             continue
+        ep = print_run(r)
+        if ep:
+            log(f"skip  {nm}: its conversation is a print-mode or SDK run (entrypoint {ep}), not a session a person "
+                "sits in; it is never started (G2.47). The next record moves it to the down list.")
+            report["skipped"].append(nm)
+            if want:
+                return 1
+            continue
         if has_session(r["tmux_socket"], r["tmux_session"]) and not as_if_down and not is_waiting(
                 r["tmux_socket"], r["tmux_session"]):
             log(f"skip  {nm}: a tmux session named {r['tmux_session']} already exists")
@@ -2407,7 +2456,8 @@ def census_data():
     mine, others, helpers = live(with_launch=False)
     table = read_table()
     live_ids = {r["session_id"] for r in mine}
-    down = [dict(r, ended="exit") if exited_at(r) else r for r in table["lanes"] if r["session_id"] not in live_ids]
+    down = [dict(r, ended="exit") if exited_at(r) else dict(r, ended="print-run") if print_run(r) else r
+            for r in table["lanes"] if r["session_id"] not in live_ids]
     coming = [r for r in down if r.get("tmux_session") and is_waiting(r["tmux_socket"], r["tmux_session"])]
     down = [r for r in down if r not in coming]
     going = restore_now()
@@ -2539,7 +2589,8 @@ def census():
             if down:
                 t = r.get("down_since") or r.get("last_seen") or 0
                 how = {"exit": "   ended by its owner (/exit)",
-                       "shell": "   ended (its pane holds the shell it left)"}.get(r.get("ended"), "")
+                       "shell": "   ended (its pane holds the shell it left)",
+                       "print-run": "   a print-mode run (claude -p), never brought back"}.get(r.get("ended"), "")
                 print(f"  {display(r):<34} last seen {ago(now - t)} ago   {r.get('cwd', '')}{how}")
             else:
                 q = ago(now - r["updated_at"]) if r["updated_at"] else "?"
