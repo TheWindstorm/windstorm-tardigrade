@@ -88,6 +88,14 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
   - Sessions started from a desktop need the desktop's variables (display, session bus) to open a browser or use
     the clipboard, and a boot service has none of them (G2.17).
   - "The process is up" is not "the session is loaded". Count the loaded ones, and name the rest (G2.24).
+- The kit's author then reviewed plan 1.7 line by line and found four faults before any machine ran it. The worst:
+  the trust answer looked for the question anywhere on the screen. A resumed session redraws its old
+  conversation, a conversation can quote that dialog, and a key sent then lands in whatever dialog is really open,
+  which on an account at its limit is the one that offers to switch to paid usage credits. So: only the dialog at
+  the foot of the screen counts, and nothing is sent when a usage or limit dialog is near (G2.25). The others: a
+  machine's tmux server has its own config and its own way to start (G2.26); an environment file copied from a
+  desktop carries that desktop's folder and user id (G2.27); and one process list per session is too many on a
+  machine with 12,000 processes (G2.28).
 - On a Mac reached over ssh, the `claude` command is often a wrapper that supplies a login token, because the
   keychain is not available there. Plan 1.2 refused to start any session that carried a token unless the shell
   set it, and on such a Mac that meant it started nothing (2026-11-21, a real reboot: 0 of 2). So: start through
@@ -129,6 +137,10 @@ The Windstorm's fleet built and has run since 2026-11-05 on a machine with about
 | G2.11 | A session's login is checked before anything is typed into it. Where sessions on one machine have different logins and one comes back on another login than it had, it is listed as "needs you", idle, with no note typed and nothing run on the wrong account. | `test_G2_11_a_pinned_session_comes_back_silent_and_a_changed_login_is_reported` |
 | G2.12 | Opt-in, off by default (`trust on`): when a session this run brought back is asked "trust this folder?" for the folder it was recorded in, Tardigrade answers Yes, and says so in the log. It keeps looking for the question for up to 15 minutes after a boot (`watch_min`), because a slow machine asks late. | `test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder` |
 | G2.13 | The answer is two keys, Down and Enter, sent from one function. Enter is sent only when the screen shows the cursor on "Yes, I trust". | `test_G2_13_enter_is_sent_only_with_the_cursor_on_yes` |
+| G2.25 | The trust answer counts only the dialog that is open at the foot of the screen now: both choices in the last 6 lines that have text, and no word about usage or limits in the 15 lines there. A conversation that quotes the question, with another dialog open under it, gets no key at all. The screen is read again right before Enter. | `test_G2_25_no_key_is_sent_when_the_question_is_only_quoted_and_another_dialog_is_open` |
+| G2.26 | A tmux server that Tardigrade has to start is started the machine's own way: with the config file in `tmux_conf`, or by the person's own `server_command` (run once, when no server is up on that socket), and from a clean environment plus the `env_file`. | `test_G2_26_the_tmux_server_is_started_the_machines_own_way` |
+| G2.27 | An `env_file` never sets the variables that belong to the starting shell (its folder, user id, depth, terminal, tmux pane), and the start file changes to the session's own folder after everything else, so a session starts in its folder whatever the shell's start files do. | `test_G2_27_an_env_file_never_moves_a_session_out_of_its_folder_or_sets_the_shells_own_variables` |
+| G2.28 | On a machine with thousands of processes the process list is read once per pass and handed down, not once per session. | `test_G2_28_one_process_list_per_pass_is_taken_and_handed_down` |
 | G2.14 | The permission mode comes back word for word. A mode is never made looser: a session that ran with checks on does not come back with checks off, whatever the mode was called. | `test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser` |
 | G2.15 | With `account_env` and `account_command` set, a session that carried an account label is started through that command (for example a wrapper that pins it to the account), and no other session is. The label is a name, never a secret. | `test_G2_15_a_session_pinned_to_an_account_starts_through_its_wrapper` |
 | G2.16 | With `start_command` set, that line starts each session in place of Tardigrade's own, with the session's id, folder, name, model, effort, mode, account and exact flags put in, each quoted for the shell. | `test_G2_16_a_start_command_from_the_settings_replaces_the_start_line` |

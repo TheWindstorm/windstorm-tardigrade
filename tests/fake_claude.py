@@ -4,7 +4,9 @@ started and what is typed into it, and waits. It talks to no service. Linux only
 name to "claude").
 
 Files in HOME change how it behaves: `slow` (seconds to "load"), `trustprompt` (stop at the folder
-question first), `failonce` (end at once, one time), `status` (the status it reports, default idle)."""
+question first), `usagebox` (never load: redraw an old conversation that quotes the folder question, with
+another dialog open under it, and write down every key received), `failonce` (end at once, one time),
+`status` (the status it reports, default idle)."""
 import ctypes
 import json
 import os
@@ -34,11 +36,28 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
     f.write(json.dumps({"pid": os.getpid(), "sid": sid, "argv": a, "cwd": os.getcwd(),
                         "child": "CLAUDE_CODE_CHILD_SESSION" in os.environ,
                         "claude_env": sorted(k for k in os.environ if k.startswith("CLAUDE")),
-                        "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME",
+                        "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME", "PWD",
                                                            "CLAUDE_CODE_AUTO_COMPACT_WINDOW") if k in os.environ}}) + "\n")
 if os.path.exists(os.path.join(home, "failonce")):
     os.remove(os.path.join(home, "failonce"))
     sys.exit(1)                         # a start that fails, as when the network is not up yet
+if os.path.exists(os.path.join(home, "usagebox")):
+    # A resumed session redraws its old conversation. This one quoted the folder question, cursor mark and
+    # all. Under it another dialog is open. Every key that arrives is written down; this never "loads".
+    import termios
+    import tty
+    tty.setraw(sys.stdin.fileno())
+    sys.stdout.write("\x1b[2J\x1b[H● earlier in this conversation: the question was \"trust this folder?\"\r\n"
+                     "   No, exit\r\n ❯ 2. Yes, I trust this folder\r\n Enter to confirm · Esc to cancel\r\n\r\n"
+                     " You have reached your plan's usage limit.\r\n What do you want to do?\r\n"
+                     " ❯ 1. Stop and wait\r\n   2. Switch to usage credits\r\n")
+    sys.stdout.flush()
+    while True:
+        ch = os.read(sys.stdin.fileno(), 64)
+        if not ch:
+            break
+        with open(os.path.join(home, "keys.log"), "a") as f:
+            f.write(ch.hex() + "\n")
 if os.path.exists(os.path.join(home, "trustprompt")):
     # Stop at the folder question, as Claude Code does: cursor on "No, exit"; Down moves it; Enter confirms.
     import termios
@@ -48,10 +67,12 @@ if os.path.exists(os.path.join(home, "trustprompt")):
     tty.setraw(fd)
     cur, buf = 0, b""
 
-    def draw():
+    def draw():      # the text Claude Code 2.1.330 shows
         rows = (" ❯ No, exit\r\n   Yes, I trust this folder\r\n" if cur == 0
                 else "   No, exit\r\n ❯ Yes, I trust this folder\r\n")
-        sys.stdout.write("\x1b[2J\x1b[HQuick safety check: Is this a project you created or one you trust?\r\n" + rows)
+        sys.stdout.write("\x1b[2J\x1b[H " + os.getcwd() + "\r\n Quick safety check: Is this a project you created or "
+                         "one you trust?\r\n Claude Code'll be able to read, edit, and execute files here.\r\n"
+                         " Security guide\r\n" + rows + " Enter to confirm · Esc to cancel\r\n")
         sys.stdout.flush()
 
     draw()

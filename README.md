@@ -99,7 +99,9 @@ the record for 12 hours, the census says so, and `tardigrade revive` brings them
 your home folder. By default Tardigrade does not answer for you: the census marks such a session `trust?` until you
 open its window and answer. If you would rather have it answered, say `tardigrade trust on`. Then, for a session
 Tardigrade brings back, in the folder that session was already running in, it answers Yes. It answers no other
-question, and it writes each answer in its log.
+question, and it writes each answer in its log. It counts only the dialog that is open at the foot of the screen:
+a conversation that merely quotes the question gets no key, and neither does a screen with a usage or limit
+dialog on it.
 
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
@@ -174,7 +176,9 @@ accounts, or shown in another tool.
 | `account_env` | | The name of an environment variable that holds a session's account label, if your wrapper sets one. A label, never a secret. |
 | `account_command` | | Used in place of `claude_command` for a session that had a label, for example `"my-wrapper use {account}"`. |
 | `start_command` | | Your own whole start line, in place of the three above. Placeholders: `{session_id}` `{cwd}` `{name}` `{model}` `{effort}` `{mode}` `{account}` `{tmux_session}` and `{flags}` (the session's exact flags). Each is quoted for the shell. |
-| `env_file` | | A file of `NAME=value` lines (or NUL-separated, as `env -0` writes) added to each revived session's environment. For a desktop's display and session bus, which a boot service does not have. Names that look like a secret's are left out. |
+| `env_file` | | A file of `NAME=value` lines (or NUL-separated, as `env -0` writes) added to each revived session's environment. For a desktop's display and session bus, which a boot service does not have. Names that look like a secret's are left out, and so are the variables that belong to the starting shell (its folder, user id, terminal). |
+| `tmux_conf` | | A tmux config file for a tmux server that Tardigrade has to start. |
+| `server_command` | | Your own command that starts the tmux server, run once when none is up, for a machine that starts its server a special way. `{socket}` is the socket path. `server_socket` names the one socket it is for. |
 | `carry_env` | `["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]` | Settings variables a session keeps: the value it had is recorded and set again. |
 | `loose_socket` | `"tardigrade"` | The tmux socket name where sessions that were not in tmux come back. |
 | `loose_prefix` | | Put before the tmux name of such a session. |
@@ -209,7 +213,7 @@ Proven (on the version named in each line; none of the reboots below was on 0.1.
   brought back, and it read its notes and answered.
 - The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
   tool's list, 98 of 98.
-- 50 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
+- 54 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
   a second copy, once per boot, a clean environment, the typed message, the start file, the census, and the rules
   under Safety.
 - On a shared Linux machine with 98 sessions, 0.1.7's `revive --dry-run --all` was compared line by line with the

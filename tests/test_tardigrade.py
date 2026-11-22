@@ -498,9 +498,81 @@ class Revive(Base):
         body = src[src.index("def answer_trust(r):"):src.index("QUESTION = re.compile")]
         self.assertEqual(body.count("send-keys"), 2)                # Down and Enter
         enter = body.index('"Enter"')
-        self.assertLess(body.rindex("if not YES_LINE.search(screen):", 0, enter), enter)   # checked just before
+        check = body.rindex("if not foot or not YES_LINE.search(foot):", 0, enter)
+        self.assertLess(body.rindex("foot = look()", 0, check), check)      # the screen is read again,
+        self.assertLess(check, enter)                                       # and checked, just before Enter
         self.assertIn('if CFG["answer_trust"] and answer_trust(r):', src)   # reached only through the opt-in
         self.assertEqual(src.count("answer_trust(r)"), 2)           # its definition and one call, in the watch
+
+    def test_G2_25_no_key_is_sent_when_the_question_is_only_quoted_and_another_dialog_is_open(self):
+        self.tg("trust", "on")
+        self.recorded_then_rebooted()
+        with open(os.path.join(self.home, "usagebox"), "w") as f:
+            f.write("1")                        # quoted trust text above a dialog that offers usage credits
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        self.assertFalse(os.path.exists(os.path.join(self.home, "keys.log")), "a key was sent into the wrong dialog")
+        self.assertNotIn("answered Yes", out)
+        self.assertIn("count: started=1 LOADED=0 UP-NOT-LOADED=1 DOWN=0", out)
+        rc, cj = self.tg("census", "--json")
+        self.assertEqual(json.loads(cj)["trust"], 0)                 # and the census does not call it trust? either
+        self.assertFalse(os.path.exists(os.path.join(self.home, "keys.log")))
+
+    def test_G2_26_the_tmux_server_is_started_the_machines_own_way(self):
+        conf = os.path.join(self.home, "tmux-own.conf")
+        with open(conf, "w") as f:
+            f.write("set -g history-limit 4242\nset -g status off\n")
+        self.cfg({"tmux_conf": conf})
+        self.recorded_then_rebooted()
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        self.assertEqual(self.tmux(self.sock, "show", "-gv", "history-limit")[1].strip(), "4242")
+        self.assertEqual(self.tmux(self.sock, "show", "-gv", "status")[1].strip(), "off")
+        self.reboot()
+        # a machine's own start command: it starts the server with a keeper session, from the env_file's environment
+        envf = os.path.join(self.home, "desktop.env")
+        with open(envf, "w") as f:
+            f.write("DISPLAY=:10.0\n")
+        self.script("startsrv", f'#!/bin/bash\necho "$DISPLAY" > "$HOME/startsrv.log"\n'
+                                f'exec {TMUX} -S "$1" -f "{conf}" new-session -d -s _keeper "sleep 600"\n')
+        self.cfg({"tmux_conf": "", "env_file": envf, "server_command": "startsrv {socket}", "server_socket": "default"})
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 1)
+        self.assertIn("your server_command ran (exit 0); the server is up", out)
+        self.assertEqual(fread(os.path.join(self.home, "startsrv.log")).strip(), ":10.0")
+        self.assertEqual(sorted(self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split()), ["_keeper", "alpha"])
+        self.assertEqual(self.tmux(self.sock, "show", "-gv", "history-limit")[1].strip(), "4242")
+        self.assertEqual(self.tmux(self.sock, "show-environment", "-g", "DISPLAY")[1].strip(), "DISPLAY=:10.0")
+
+    def test_G2_27_an_env_file_never_moves_a_session_out_of_its_folder_or_sets_the_shells_own_variables(self):
+        envf = os.path.join(self.home, "desktop.env")
+        with open(envf, "wb") as f:
+            f.write(b"PWD=/usr\0OLDPWD=/\0UID=0\0EUID=0\0SHLVL=7\0TERM=dumb\0TMUX=/nowhere,1,0\0DISPLAY=:10.0\0")
+        self.cfg({"env_file": envf})
+        with open(os.path.join(self.home, ".bashrc"), "w") as f:
+            f.write("cd /tmp\n")               # and a start file of the shell that changes folder
+        sid = self.recorded_then_rebooted()
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual((new["cwd"], new["seen"]["PWD"], new["seen"]["DISPLAY"]), (self.work, self.work, ":10.0"))
+        text = fread(self.state(os.path.join("launch", sid + ".sh")))
+        for name in ("PWD", "OLDPWD", "UID", "EUID", "SHLVL", "TERM", "TMUX"):
+            self.assertNotIn(f"export {name}=", text)
+        self.assertEqual(jload(self.state("last-revive.json"))["loaded"], ["Alpha Lane"])
+
+    def test_G2_28_one_process_list_per_pass_is_taken_and_handed_down(self):
+        src = fread(SCRIPT)
+        body = src[src.index("def watch(started, note_for, minutes, tab_rows):"):src.index("def revive():")]
+        self.assertEqual(body.count("procs()"), 2)                  # one per pass of the loop, one for the count
+        self.assertEqual(body.count("came_up(r, P)"), 2)
+        self.assertNotIn("came_up(r)", body)
+        loop = src[src.index("    while pending:"):src.index("    for sid, (r, n) in pending.items():")]
+        self.assertEqual(loop.count("procs()"), 1)                  # fresh for each session, then handed down
+        self.assertIn("running_sids(P)", loop)
 
     def test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser(self):
         a = self.start_lane("alpha", "Alpha Lane", flags="--permission-mode acceptEdits")
@@ -555,7 +627,7 @@ class Revive(Base):
         n = len(self.launches())
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
         seen = self.wait_launches(n + 1)[-1]["seen"]
-        self.assertEqual(seen, {"DISPLAY": ":10.0", "MY_SETTING": "two words"})
+        self.assertEqual(seen, {"DISPLAY": ":10.0", "MY_SETTING": "two words", "PWD": self.work})
         self.assertIn("left out MY_SECRET_TOKEN", out)
         for p in (self.state(os.path.join("launch", sid + ".sh")), self.state("tardigrade.log")):
             self.assertNotIn("sk-do-not-copy", fread(p))
@@ -572,7 +644,7 @@ class Revive(Base):
         self.reboot()
         n = len(self.launches())
         self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
-        new = {x["sid"]: x["seen"] for x in self.wait_launches(n + 2)[n:]}
+        new = {x["sid"]: {k: v for k, v in x["seen"].items() if k != "PWD"} for x in self.wait_launches(n + 2)[n:]}
         self.assertEqual((new[a], new[b]), ({"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "100000"}, {}))
 
     def test_G2_19_nothing_but_the_start_command_is_on_a_command_line(self):
@@ -823,7 +895,7 @@ class Invariants(unittest.TestCase):
         self.assertIn('"answer_trust": False,', self.src)           # off by default
         self.assertEqual(self.src.count("type_note(r, "), 2)        # its definition and one call, in the watch
         call = self.src.index("type_note(r, note_for")
-        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(screen)', self.src[call - 200:call])
+        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15))', self.src[call - 200:call])
 
     def test_INV6_standard_library_only_and_no_network(self):
         import re

@@ -24,6 +24,19 @@ this release is that kit's author's list of everything the kit does.
 - **Herdr tab re-attach has a test** (G4.2), with a stand-in for the `herdr` command.
 - `trust_wait_min` is now `watch_min`; the old name still works.
 
+Found in review by the kit's author, before any machine ran this version:
+
+- **The trust answer could have pressed keys into another dialog** (G2.25). 0.1.6 looked for the question anywhere
+  on the screen. A resumed session redraws its old conversation, which can quote that dialog, and the keys would
+  have gone to whatever dialog was really open. Now only the dialog at the foot of the screen counts, nothing is
+  sent when a usage or limit dialog is near, and the screen is read again right before Enter. If you switched
+  `trust on` under 0.1.6, update.
+- **A machine's own tmux server** (G2.26): `tmux_conf`, or `server_command` for a server that has to be started
+  a special way. The server now also gets the `env_file`'s variables.
+- **An `env_file` no longer carries the starting shell's own variables** (folder, user id, terminal), and each
+  start file ends by changing to the session's own folder (G2.27).
+- **One process list per pass** (G2.28), for machines with thousands of processes.
+
 ## 0.1.6 (2026-11-21)
 Built from DNA Strand Master Plan 1.6.
 

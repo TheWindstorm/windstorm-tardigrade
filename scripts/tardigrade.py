@@ -78,6 +78,9 @@ CFG = {
     "account_command": "",    # used in place of claude_command for a session with a label, e.g. "my-wrapper use {account}"
     "start_command": "",      # your own whole start line, in place of the three above; see the README for {placeholders}
     "env_file": "",           # NAME=value lines (or NUL-separated) added to a revived session's environment
+    "tmux_conf": "",          # a tmux config file for a tmux server that Tardigrade has to start
+    "server_command": "",     # your own command that starts the tmux server, run when none is up; {socket}
+    "server_socket": "",      # the tmux socket name server_command is for; "" = any
     "carry_env": ["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],   # settings variables a session keeps across a revive
     "loose_socket": "tardigrade",   # tmux socket name where sessions that were not in tmux come back
     "loose_prefix": "",       # put before the tmux name of such a session
@@ -108,6 +111,8 @@ CHILD_VARS = ("CLAUDECODE CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_SESSION_ID CLAUD
               "CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_EXECPATH CLAUDE_CODE_SESSION_ATTENDED "
               "CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN")
 COLS = ["session", "session_id", "cwd", "model", "effort", "mode", "tab_label", "workspace_label"]
+# never taken from an env_file: they belong to the shell that is starting, not to the one the file came from
+NEVER_CARRY = {"PWD", "OLDPWD", "UID", "EUID", "PPID", "SHLVL", "_", "TERM", "TMUX", "TMUX_PANE", "BASHOPTS", "SHELLOPTS"}
 TERMINALS = ("gnome-terminal", "konsole", "kitty", "alacritty", "wezterm", "xterm", "tilix", "xfce4-terminal",
              "ptyxis", "kgx", "foot", "ghostty", "terminator", "iTerm", "Terminal", "Warp", "warp", "tabby")
 IDES = ("code", "Code", "cursor", "Cursor", "zed", "idea", "pycharm", "webstorm", "goland", "windsurf")
@@ -526,7 +531,7 @@ def live(with_launch=True):
                 # Has Claude Code stopped at its own "trust this folder?" question? Read the pane to find out.
                 # Nothing from the pane is kept or printed.
                 screen = tmux(detail[0], "capture-pane", "-p", "-t", f"={detail[1]}:", timeout=6)[1]
-                if "trust this folder" in screen:
+                if trust_dialog(screen):
                     row["status"] = "trust?"
         row["window"] = (kind in ("terminal", "ide", "ssh", "herdr")) or (kind == "tmux" and row["attached"] > 0)
         # a session with no terminal of any kind that the CLI did not start is some program's own: not ours to revive
@@ -537,10 +542,10 @@ def live(with_launch=True):
     return mine, others, helpers
 
 
-def running_sids():
+def running_sids(P=None):
     """every session id held by a live Claude of this user, in any terminal"""
     held = set()
-    for pid, (_, uid, comm) in procs().items():
+    for pid, (_, uid, comm) in (P or procs()).items():
         if not is_claude(comm) or uid != os.getuid():
             continue
         sid = session_json(pid, env_facts(pid)["config_dir"]).get("sessionId")
@@ -798,6 +803,8 @@ def env_file_pairs():
             continue
         if not nul and len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
             v = v[1:-1]
+        if k in NEVER_CARRY:
+            continue
         if SECRET_NAME.search(k):
             left.append(k)
         else:
@@ -834,6 +841,8 @@ def write_launch_file(r):
     for k, v in sorted((r.get("carry_env") or {}).items()):
         if k in ok and SAFE_VALUE.fullmatch(str(v)):
             lines.append(f"export {k}={shlex.quote(str(v))}")
+    # the session's own folder, whatever the shell's start files or the env_file said
+    lines.append(f"cd -- {shlex.quote(r['cwd'] if os.path.isdir(r['cwd']) else HOME)} 2>/dev/null")
     lines.append(f'{claude_line(r)}; echo; echo "[session ended; shell kept]"; exec {sh} -l')
     fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -857,6 +866,35 @@ def pace():
         "before the next start")
     while load_now() > mx and time.time() < end:
         time.sleep(1 if TESTING else 5)
+
+
+def server_up(sock):
+    return os.path.exists(sock) and tmux(sock, "list-sessions", timeout=6)[0] == 0
+
+
+def server_env():
+    """the environment a tmux server is started with: clean, plus the env_file (a desktop's display and bus)"""
+    e = clean_env()
+    e.update({k: v for k, v in env_file_pairs()[0]})
+    return e
+
+
+def ensure_server(sock):
+    """With server_command set: when no tmux server is up on this socket, run that command first, once.
+    A machine can need its server started its own way (its own config file, its own cgroup, a keeper
+    session). Without the setting, or if the command leaves no server, tmux starts one at the first session."""
+    name = os.path.basename(sock)
+    cmd, only = str(CFG.get("server_command") or ""), str(CFG.get("server_socket") or "")
+    if not cmd or (only and only != name) or name in SAID.setdefault("server", set()) or server_up(sock):
+        return
+    SAID["server"].add(name)
+    line = cmd.replace("{socket_name}", shlex.quote(name)).replace("{socket}", shlex.quote(sock))
+    rc = run(["/bin/sh", "-c", line], timeout=90, env=server_env())[0]
+    end = time.time() + 20
+    while not server_up(sock) and time.time() < end:
+        time.sleep(1)
+    log(f"  tmux server '{name}': your server_command ran (exit {rc}); the server is "
+        + ("up" if server_up(sock) else "NOT up, so tmux starts one itself at the first session"))
 
 
 def clean_env():
@@ -892,37 +930,67 @@ def start_lane(r, created):
         rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd)[0]
     else:
         os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
-        argv = ["env", "-i"] + [f"{k}={v}" for k, v in clean_env().items()]
-        argv += [CFG["tmux"], "-S", sock, "new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", cwd, cmd]
-        rc = run(argv)[0]
+        ensure_server(sock)
+        argv = [CFG["tmux"], "-S", sock]
+        conf = os.path.expanduser(str(CFG.get("tmux_conf") or ""))
+        if conf and os.path.isfile(conf):
+            argv += ["-f", conf]         # read only when this call is the one that starts the server
+        argv += ["new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", cwd, cmd]
+        rc = run(argv, env=server_env())[0]      # nothing of the caller's environment, and no value on a command line
         created.add((sock, name))
     return rc == 0
 
 
-def came_up(r):
+def came_up(r, P=None):
+    """The Claude process in this session's tmux pane, or None. P: a process list taken a moment ago; on a
+    machine with thousands of processes one list per pass is taken and handed down, not one per session."""
     rc, out = tmux(r["tmux_socket"], "list-panes", "-t", f"={r['tmux_session']}", "-F", "#{pane_pid}")
     if rc != 0 or not out.split():
         return None
-    c = claude_under(int(out.split()[0]), procs())
+    c = claude_under(int(out.split()[0]), P or procs())
     return c if c and alive(c) else None
 
 
 YES_LINE = re.compile(r"❯\s*(\d\.\s*)?Yes, I trust")
+OTHER_DIALOG = re.compile(r"usage credits|usage limit|limit reached|Stop and wait|Wait here|Switch to", re.I)
+
+
+def bottom(screen, n):
+    return "\n".join([ln for ln in screen.splitlines() if ln.strip()][-n:])
+
+
+def trust_dialog(screen):
+    """The foot of the screen if Claude Code's folder question is the dialog open there now, else "".
+    A resumed session redraws its old conversation, and a conversation can quote this very dialog, cursor
+    mark and all. So nothing higher up counts: both choices must be in the last 6 lines that have text,
+    and the 15 lines above the foot must say nothing about usage or limits. If another dialog is open
+    (the one that offers usage credits, say), a key meant for this one would land in that one."""
+    foot, near = bottom(screen, 6), bottom(screen, 15)
+    if "No, exit" not in foot or "Yes, I trust" not in foot or "trust this folder" not in near:
+        return ""
+    if OTHER_DIALOG.search(near):
+        return ""
+    return foot
 
 
 def answer_trust(r):
     """Only when the person has switched it on (`trust on`), and only for a session this run started, in
-    the folder it was recorded in: if its pane shows Claude Code's "trust this folder?" question, choose
-    Yes. These are the only keys Tardigrade ever sends, and Enter is sent only with the cursor on Yes."""
+    the folder it was recorded in: if Claude Code's "trust this folder?" question is the dialog open at
+    the foot of its pane, choose Yes. The screen is read again right before the key that confirms, and
+    Enter is sent only with the cursor on Yes."""
     sock, target = r["tmux_socket"], f"={r['tmux_session']}:"
-    screen = tmux(sock, "capture-pane", "-p", "-t", target, timeout=6)[1]
-    if "trust this folder" not in screen:
+
+    def look():
+        return trust_dialog(tmux(sock, "capture-pane", "-p", "-t", target, timeout=6)[1])
+
+    foot = look()
+    if not foot:
         return False
-    if not YES_LINE.search(screen):
+    if not YES_LINE.search(foot):
         tmux(sock, "send-keys", "-t", target, "Down")
         time.sleep(1)
-        screen = tmux(sock, "capture-pane", "-p", "-t", target, timeout=6)[1]
-    if not YES_LINE.search(screen):
+    foot = look()                       # looked at again, right before the key that confirms
+    if not foot or not YES_LINE.search(foot):
         log(f"  {display(r)}: the trust question is open, but the cursor is not on Yes; left for you")
         return False
     tmux(sock, "send-keys", "-t", target, "Enter")
@@ -930,7 +998,7 @@ def answer_trust(r):
     return True
 
 
-QUESTION = re.compile(r"trust this folder|❯\s*\d\.\s")
+QUESTION = re.compile(r"trust this folder|No, exit|❯\s*\d\.\s|usage credits|Stop and wait")
 
 
 def type_note(r, note):
@@ -954,11 +1022,12 @@ def watch(started, note_for, minutes, tab_rows):
         if tabs_due and herdr_up():
             attach_tabs(tab_rows, wait=False)
             tabs_due = False
-        still = []
+        still, P = [], procs()                # one process list per pass, for every session in it
         for r in waiting:
-            pid = came_up(r)
+            pid = came_up(r, P)
             if not pid:
-                continue                      # it went down again: counted below
+                log(f"  {display(r)}: went down again while being watched")
+                continue                      # counted below
             sj = session_json(pid, r.get("config_dir", ""))
             if not sj.get("sessionId"):
                 if CFG["answer_trust"] and answer_trust(r):
@@ -967,7 +1036,7 @@ def watch(started, note_for, minutes, tab_rows):
                 continue
             if r["session_id"] in note_for and r["session_id"] not in noted_ids:
                 screen = tmux(r["tmux_socket"], "capture-pane", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
-                if sj.get("status") == "idle" and not QUESTION.search(screen):
+                if sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15)):
                     type_note(r, note_for[r["session_id"]])
                     noted.append(display(r))
                     noted_ids.add(r["session_id"])
@@ -983,8 +1052,9 @@ def watch(started, note_for, minutes, tab_rows):
         time.sleep(1 if TESTING else 10)
     res = {"trust_answered": answered, "noted": noted, "loaded": [], "not_loaded": [], "down_again": [],
            "note_not_typed": [], "tabs_due": tabs_due}
+    P = procs()
     for r in started:
-        pid = came_up(r)
+        pid = came_up(r, P)
         if not pid:
             res["down_again"].append(display(r))
         elif not session_json(pid, r.get("config_dir", "")).get("sessionId"):
@@ -1081,24 +1151,19 @@ def _revive(boot):
     while pending:
         for sid, (r, n) in list(pending.items()):
             nm = display(r)
-            if n and came_up(r):
+            P = procs()                # taken fresh for each session, right before the decision to start it
+            late = came_up(r, P) if n else None
+            if late:
                 log(f"  {nm}: up (came up late)")
                 report["started"].append(nm)
                 came.append(r)
-                if note and same_login(r, came_up(r) or 0):
+                if note and same_login(r, late):
                     note_for[sid] = note
                 del pending[sid]
                 continue
-            if sid in running_sids():
-                if n and came_up(r):
-                    log(f"  {nm}: up (came up late)")
-                    report["started"].append(nm)
-                    came.append(r)
-                    if note and same_login(r, came_up(r) or 0):
-                        note_for[sid] = note
-                else:
-                    log(f"  {nm}: something else started it meanwhile; left alone")
-                    report["skipped"].append(nm)
+            if sid in running_sids(P):
+                log(f"  {nm}: something else started it meanwhile; left alone")
+                report["skipped"].append(nm)
                 del pending[sid]
                 continue
             pace()
