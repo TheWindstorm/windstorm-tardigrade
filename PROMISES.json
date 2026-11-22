@@ -607,7 +607,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G2_47_a_row_whose_conversation_is_a_print_mode_run_is_never_started",
-   "proven": "",
+   "proven": "2026-11-22, a Linux test machine (Veron test spot, Claude Code 2.1.280), first on candidate ca90349, then again on 7ecdf19 and 1310169 with the two counts it showed wrong fixed: a real claude -p run's row, written down by 0.1.8 while it ran (T40), was never started by revive, dry run or not, nor by revive --only <its id> (exit 1): \"its conversation is a print-mode or SDK run (entrypoint sdk-cli) ... it is never started (G2.47)\"; a record finding nothing live moved it to the down list (\"1 print-mode run(s) moved to the down list\"), and census showed it there as \"a print-mode run (claude -p), never brought back\", and not as DOWN while it still ran. The revive summary counts it as never started, not as already running.",
    "issue": 46,
    "moved_why": "",
    "moved_by_person": ""
