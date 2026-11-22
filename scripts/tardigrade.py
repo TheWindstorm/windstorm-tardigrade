@@ -818,7 +818,29 @@ def env_file_pairs():
             left.append(k)
         else:
             keep.append((k, v))
-    return keep, left
+    return live_desktop(keep), left
+
+
+def live_desktop(pairs):
+    """An env_file is written while a desktop is open. After a reboot that desktop is gone, and a session
+    should not be pointed at a display or a session bus that is no longer there. A local display whose
+    socket is missing is left out. A session bus whose socket is missing is replaced by the user's own
+    bus when that one exists, and left out otherwise."""
+    d, out = dict(pairs), []
+    xroot = os.environ.get("TARDIGRADE_FAKE_X11_DIR", "/tmp/.X11-unix") if TESTING else "/tmp/.X11-unix"
+    for k, v in pairs:
+        if k == "DISPLAY":
+            m = re.fullmatch(r":(\d+)(\.\d+)?", v)
+            if m and not os.path.exists(os.path.join(xroot, "X" + m.group(1))):
+                continue
+        if k == "DBUS_SESSION_BUS_ADDRESS" and v.startswith("unix:path="):
+            if not os.path.exists(v[len("unix:path="):].split(",")[0]):
+                own = os.path.join(d.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "bus")
+                if not os.path.exists(own):
+                    continue
+                v = "unix:path=" + own
+        out.append((k, v))
+    return out
 
 
 SAID = {}

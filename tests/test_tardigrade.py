@@ -51,7 +51,11 @@ class Base(unittest.TestCase):
         self.path = f"{self.bin}:/usr/local/bin:/usr/bin:/bin"
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",
                     "USER": os.environ.get("USER", "u"), "LANG": "C.UTF-8", "TERM": "xterm-256color",
-                    "TARDIGRADE_TESTING": "1", "TARDIGRADE_FAKE_UPTIME_S": "100000", "TARDIGRADE_FAKE_BOOT_ID": "boot-a"}
+                    "TARDIGRADE_TESTING": "1", "TARDIGRADE_FAKE_UPTIME_S": "100000", "TARDIGRADE_FAKE_BOOT_ID": "boot-a",
+                    "TARDIGRADE_FAKE_X11_DIR": os.path.join(self.tmp, "x11")}
+        os.makedirs(os.path.join(self.tmp, "x11"))
+        with open(os.path.join(self.tmp, "x11", "X10"), "w") as f:      # this "machine" has a desktop on display :10
+            f.write("")
         self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
@@ -606,6 +610,26 @@ class Revive(Base):
         for name in ("PWD", "OLDPWD", "UID", "EUID", "SHLVL", "TERM", "TMUX"):
             self.assertNotIn(f"export {name}=", text)
         self.assertEqual(jload(self.state("last-revive.json"))["loaded"], ["Alpha Lane"])
+
+    def test_G2_33_a_display_or_session_bus_that_is_gone_is_not_handed_to_a_session(self):
+        import importlib.util
+        x11 = os.path.join(self.tmp, "x11")          # made by setUp, with display :10 in it
+        rt = os.path.join(self.tmp, "run")
+        os.makedirs(rt)
+        with open(os.path.join(rt, "bus"), "w") as f:
+            f.write("")
+        os.environ.update(TARDIGRADE_TESTING="1", TARDIGRADE_FAKE_X11_DIR=x11)
+        self.addCleanup(lambda: [os.environ.pop(k, None) for k in ("TARDIGRADE_TESTING", "TARDIGRADE_FAKE_X11_DIR")])
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        gone = [("DISPLAY", ":11.0"), ("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-gone,guid=1")]
+        self.assertEqual(tg.live_desktop(gone), [("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", f"unix:path={rt}/bus")])
+        there = [("DISPLAY", ":10.0"), ("DBUS_SESSION_BUS_ADDRESS", f"unix:path={rt}/bus"), ("LANG", "C")]
+        self.assertEqual(tg.live_desktop(there), there)             # what is there is left as it is
+        nobus = [("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-gone"), ("XDG_RUNTIME_DIR", "/nowhere")]
+        self.assertEqual(tg.live_desktop(nobus), [("XDG_RUNTIME_DIR", "/nowhere")])
+        self.assertEqual(tg.live_desktop([("DISPLAY", "otherhost:0")]), [("DISPLAY", "otherhost:0")])   # not a local display
 
     def test_G2_28_one_process_list_per_pass_is_taken_and_handed_down(self):
         src = fread(SCRIPT)
