@@ -681,6 +681,20 @@
    "issue": 51,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T49",
+   "seen": "2026-11-22, a throwaway copy at 1e2eb14, after a sister project found a proof resting on a test that had never run: the plan check and the promise check matched a test's name as text. Of six breaks planted in one real test, five got through and only a rename was refused; nested after a helper's return, under `if False:`, `@unittest.skip`, shadowed by a later empty test of the same name, and only its text in a string all passed both gates.",
+   "promise": "a test named in the plan or in PROMISES.json, at any version, counts only if the runner really runs it: a method defined straight in a test class's body, once, read from the syntax tree; never skipped whatever the machine (an honest skip on a condition of the machine, with its reason, is \"not run here\"); a body that does something; and, after a whole run, reported PASSED. A self-test plants the bad cases.",
+   "codon": "G7.3",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "test_G7_3_a_test_named_for_a_claim_counts_only_if_the_runner_really_runs_it",
+   "proven": "",
+   "issue": 53,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

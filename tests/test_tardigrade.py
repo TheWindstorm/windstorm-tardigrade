@@ -3,6 +3,7 @@
 They run a stand-in `claude` (tests/fake_claude.py) inside a private tmux folder and a private HOME, so no
 real session, no real tmux server and no service is touched. Linux only. Run: python3 -m unittest -v
 """
+import ast
 import json
 import os
 import shutil
@@ -2697,9 +2698,38 @@ class Strand(unittest.TestCase):
         import re
         plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
         named = set(re.findall(r"`(test_[A-Za-z0-9_]+)`", plan))
-        real = set(re.findall(r"def (test_(?:G|INV)[A-Za-z0-9_]+)\(", fread(os.path.abspath(__file__))))
+        src = fread(os.path.abspath(__file__))
+        real = {n for n in gate_collected(src)[0] if re.match(r"test_(?:G|INV)", n)}   # what the runner collects
         self.assertEqual(named - real, set(), "the plan names tests that do not exist")
         self.assertEqual(real - named, set(), "tests with no codon in the plan")
+        self.assertEqual(gate_problems(src, gate_named()), [], "a named test the runner would not really run")
+
+    def test_G7_3_a_test_named_for_a_claim_counts_only_if_the_runner_really_runs_it(self):
+        """the six ways sister skills broke their own gates, planted in a copy of this file"""
+        src, name = fread(os.path.abspath(__file__)), "test_G2_49_a_start_finds_claude_by_the_path_setting_not_by_the_boot_services_path"
+        self.assertEqual(gate_problems(src, {name}), [])
+        a = src.index(f"    def {name}("); b = src.index("\n    def ", a + 10) + 1
+        blk = src[a:b]
+        ind = lambda t: "".join("    " + l if l.strip() else l for l in t.splitlines(True))
+        planted = {
+            "nested in a helper after its return": src[:a] + "    def _helper(self):\n        return\n" + ind(blk) + src[b:],
+            "renamed so it is not collected": src[:a] + blk.replace(f"def {name}(", "def check" + name[4:] + "(") + src[b:],
+            "under if False": src[:a] + "    if False:\n" + ind(blk) + src[b:],
+            "marked as skipped": src[:a] + '    @unittest.skip("planted")\n' + blk + src[b:],
+            "skipped with skipTest": src[:a] + blk.replace('"""\n', '"""\n        self.skipTest("planted")\n', 1) + src[b:],
+            "skipIf with no reason": src[:a] + "    @unittest.skipIf(True)\n" + blk + src[b:],
+            "shadowed by a later empty test": src[:b] + f"    def {name}(self):\n        pass\n\n" + src[b:],
+            "only its text in a string at column 0": src[:a] + src[b:] + f'\nPLANTED = """\ndef {name}(self):\n"""\n',
+        }
+        for why, bad in planted.items():
+            self.assertNotEqual(gate_problems(bad, {name}), [], f"the gate let through a test {why}")
+        # an honest skip on a condition of the machine, with its reason, is "not run here"
+        honest = src[:a] + '    @unittest.skipUnless(sys.platform == "plan9", "needs Plan 9")\n' + blk + src[b:]
+        self.assertEqual(gate_problems(honest, {name}), [])
+        # and after a run, a named test that did not pass is refused; a machine skip is listed, not counted
+        bad, here = runner_problems({"test_a", "test_b", "test_c"}, {"test_a"}, {"test_c": "needs Linux and tmux"})
+        self.assertEqual(bad, ["test_b: did not pass in this run"])
+        self.assertEqual(here, ["test_c (needs Linux and tmux)"])
 
     def test_no_codon_is_used_twice_in_the_plan(self):
         import re, collections
@@ -2708,5 +2738,101 @@ class Strand(unittest.TestCase):
         self.assertEqual([c for c, n in seen.items() if n > 1], [], "a codon is used for two claims")
 
 
+# ---------- the gate: a test named for a claim must be one the runner runs (G7.3, T49) ----------
+def gate_named():
+    """every test the plan or PROMISES.json names, at any version: built rows count whenever they are due"""
+    import re
+    plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
+    rows = json.loads(fread(os.path.join(ROOT, "PROMISES.json")))["rows"]
+    return set(re.findall(r"`(test_[A-Za-z0-9_]+)`", plan)) | {r["test"] for r in rows if r.get("test")}
+
+
+def _deco_kind(d):
+    f = d.func if isinstance(d, ast.Call) else d
+    return (f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""), d
+
+
+def gate_collected(src):
+    """{test name: [(class, its function node, the class chain's decorators)]} for tests the runner collects: a
+    method defined straight in a class body at the top of the file. Read from the syntax tree, never from text."""
+    tree = ast.parse(src)
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+
+    def chain(c, seen=()):
+        out = list(c.decorator_list)
+        for b in c.bases:
+            if isinstance(b, ast.Name) and b.id in classes and b.id not in seen:
+                out += chain(classes[b.id], seen + (c.name,))
+        return out
+    found, twice = {}, []
+    for c in classes.values():
+        mine = {}
+        for f in c.body:
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name.startswith("test"):
+                if f.name in mine:
+                    twice.append(f"{f.name}: defined twice in {c.name}; only the last one runs")
+                mine[f.name] = f
+        for n, f in mine.items():
+            found.setdefault(n, []).append((c.name, f, chain(c)))
+    return found, twice
+
+
+def gate_problems(src, named):
+    """why each named test would not prove its claim: not collected, defined twice, skipped whatever the machine,
+    skipped with no reason, or a body that does nothing. An honest skip (skipIf/skipUnless on a condition of the
+    machine, with its reason) is "not run here", not a problem."""
+    found, probs = gate_collected(src)
+    probs = [p for p in probs if p.split(":")[0] in named]
+    for n in sorted(named):
+        defs = found.get(n, [])
+        if not defs:
+            probs.append(f"{n}: no test the runner collects (missing, renamed, nested, under an if, or only text)")
+            continue
+        if len(defs) > 1:
+            probs.append(f"{n}: defined in {len(defs)} classes")
+        cls, f, decos = defs[-1]
+        for kind, d in [_deco_kind(d) for d in f.decorator_list + decos]:
+            if kind in ("skip", "expectedFailure"):
+                probs.append(f"{n}: {kind} whatever the machine")
+            elif kind in ("skipIf", "skipUnless") and not (isinstance(d, ast.Call) and len(d.args) + len(d.keywords) >= 2):
+                probs.append(f"{n}: {kind} with no reason")
+        body = [b for b in f.body if not (isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant))]
+        if not body or all(isinstance(b, ast.Pass) for b in body):
+            probs.append(f"{n}: its body does nothing")
+        for b in body:
+            if (isinstance(b, ast.Expr) and isinstance(b.value, ast.Call) and isinstance(b.value.func, ast.Attribute)
+                    and b.value.func.attr == "skipTest"):
+                probs.append(f"{n}: skipTest whatever the machine")
+    return probs
+
+
+def runner_problems(named, passed, skipped):
+    """after a whole run: a named test must have PASSED, or been skipped on a condition of the machine (the gate
+    above refuses any other skip). Returns (problems, not run here)."""
+    return sorted(f"{n}: did not pass in this run" for n in named - passed - set(skipped)), sorted(
+        f"{n} ({skipped[n]})" for n in named & set(skipped))
+
+
 if __name__ == "__main__":
-    unittest.main()
+    # G7.3: the claims count only what this run really passed
+    PASSED, SKIPPED = set(), {}
+
+    class _Kept(unittest.TextTestResult):
+        def addSuccess(self, test):
+            super().addSuccess(test)
+            PASSED.add(test.id().rsplit(".", 1)[-1])
+
+        def addSkip(self, test, reason):
+            super().addSkip(test, reason)
+            SKIPPED[test.id().rsplit(".", 1)[-1]] = reason
+
+    prog = unittest.main(exit=False, testRunner=unittest.TextTestRunner(resultclass=_Kept, verbosity=2 if "-v" in sys.argv else 1))
+    whole = len(sys.argv) == 1 or all(a.startswith("-") for a in sys.argv[1:])
+    bad, here = runner_problems(gate_named(), PASSED, SKIPPED) if whole else ([], [])
+    for line in bad:
+        print("GATE:", line)
+    if here:
+        print(f"gate: {len(here)} named test(s) not run here: " + "; ".join(here))
+    if whole:
+        print(f"gate: {len(gate_named() & PASSED)} named test(s) passed in this run")
+    sys.exit(0 if prog.result.wasSuccessful() and not bad else 1)
