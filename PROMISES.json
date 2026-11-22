@@ -516,8 +516,8 @@
   },
   {
    "id": "T37",
-   "seen": "2026-11-22, a restore on a Linux test machine whose starts were all done, with one session at a usage-limit notice that never read as loaded: for the run's whole 15-minute watch every record was skipped ('a revive is running; waiting screens are not sessions gone') and census told the person 'do not start any by hand', with nothing left to start.",
-   "promise": "once every start of a run is done and no waiting screen is left, the record runs again and census no longer says 'do not start any by hand'; the watch only watches.",
+   "seen": "2026-11-22, a restore on a Linux test machine whose starts were all done, with one session at a usage-limit notice that never read as loaded: for the run's whole 15-minute watch every record was skipped ('a revive is running; waiting screens are not sessions gone') and census told the person 'do not start any by hand', with nothing left to start. Seen again 2026-11-22 at a clean reboot of a Mac test machine on 0.1.8.1 (a restore of two sessions, with Herdr not running): both were started and loaded within two minutes, then the run waited 30 minutes for Herdr's tabs, and every record in that time was skipped the same way; census read 'Last record: 36 min ago', so a session started or ended in that half hour was not written down.",
+   "promise": "the record skips only while sessions are being started; once every start of a run is done, the record runs again whatever the run is still waiting for afterwards (loading, wake-up notes, tabs, a waiting screen), and census no longer says 'do not start any by hand'; the watch only watches.",
    "codon": "G3.6",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
