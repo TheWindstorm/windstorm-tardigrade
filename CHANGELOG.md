@@ -1,8 +1,9 @@
 # Changelog
 
 ## Unreleased
-- **PROMISES.json**: twelve lessons from the first real reboot with 98 sessions, each with the version it is due
-  in. Four tests (class `Promises`) refuse a version while a promise due in it is not built. No change to the script.
+- **PROMISES.json**: twenty-four lessons from the first real reboot with 98 sessions, twelve of them from the agent
+  that ran that machine, each with the version it is due in, and one lesson declined with its reason. Five tests
+  (class `Promises`) refuse a version while a promise due in it is not built. No change to the script.
 - README and plan: what that reboot proved, and what it did badly.
 
 ## 0.1.7 (2026-11-21)
