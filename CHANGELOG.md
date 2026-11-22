@@ -7,7 +7,13 @@ A fix to what 0.1.8 counts as a session (G1.12, T40). A `claude -p` run, which C
 in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could
 have started it again as an interactive session. Now a print-mode run, a run through an SDK, a process whose
 input is not a terminal, and a process started inside another Claude session are never recorded, listed or
-started; they are counted as helpers.
+started; they are counted as helpers. "Inside another session" means a claude among its parents below the tmux
+pane, Herdr, terminal window, editor or ssh login it lives in: a session in a Herdr server or a terminal that
+someone opened from a Claude session is still a session.
+
+Known edge: a record that finds no live session keeps the previous record. On a machine where 0.1.8 wrote a
+print-mode run down and no session is live after the upgrade, that row stays until the next record that sees a
+live session moves it to the down list.
 
 ## 0.1.8 (2026-11-22)
 Built from DNA Strand Master Plan 1.8, from the lessons of the first real reboot with 98 sessions (`PROMISES.json`
