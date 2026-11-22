@@ -112,7 +112,9 @@ default note is used in their place.
 **A session you ended with `/exit` stays ended**, also when the machine restarts minutes later. Tardigrade
 reads it from Claude Code's prompt history (`~/.claude/history.jsonl`), for the sessions on its record only: of
 those lines it keeps the time and whether it is exactly `/exit` or `/quit`, and nothing else. To bring such a
-session back anyway: `revive --only <its id>`.
+session back anyway: `revive --only <its id>`. One known edge: a session being moved to another login at the very
+moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down; `revive --only
+<its name>` brings it back.
 
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
 session with the same name, folder and flags.

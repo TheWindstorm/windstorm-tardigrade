@@ -41,6 +41,10 @@ What comes back:
   history is read too, for the sessions on the record only. Of what a person typed there, only the time and
   whether it is exactly `/exit` or `/quit` is kept, and nothing of it is logged or shown. If the history cannot be
   read, nobody is taken as ended by it, and the log says so.
+- **`census` marks as "started by hand" only what was** (G3.7). On a real machine it marked two sessions that share
+  a name, and sessions the restore itself had started new under a new id. Now a session in a tmux session the
+  restore made, or with any id coming back under its name, is never marked. While a restore is still watching
+  sessions that are all back, `census` says so instead of speaking of others on their way.
 - **A session with no conversation is started new even when it is slow to say so** (G2.43). On a Mac whose
   start fetches a login first, 0.1.7 counted such a session up, then lost it.
 - **A pinned session keeps its account label** (G2.41): the start file sets it, so a login wrapper need not.

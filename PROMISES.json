@@ -109,7 +109,7 @@
   },
   {
    "id": "T8",
-   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions: a session started by hand during the restore, in the tab of a session that was coming back, was recorded as one more session under the same name. Nothing flagged it.",
+   "seen": "2026-11-21, the first real reboot of a shared machine with 98 sessions: a session started by hand during the restore, in the tab of a session that was coming back, was recorded as one more session under the same name. Nothing flagged it. SEEN 2026-11-22 on a real Mac during a 0.1.8 candidate's restore: census marked as STARTED BY HAND two sessions that share a name (one was taken as the copy of the other) and the sessions the restore had itself started new under a new id. Fixed before the tag; the test now has both cases.",
    "promise": "`census` names sessions that share a name, and marks a session that was started by hand in the place of one a restore was bringing back.",
    "codon": "G3.7",
    "owner": "maintainer",
@@ -441,6 +441,20 @@
    "test": "test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named",
    "proven": "",
    "issue": 32,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T32",
+   "seen": "2026-11-22, in review: a tool that moves a session to another login ends it with /exit and resumes it on the other login seconds later. A restart inside those seconds leaves /exit as the session's last prompt, so Tardigrade would leave it down.",
+   "promise": "A session being moved between logins at the moment of a restart is not left down without a word: census names it with the command that brings it back. Until then the README says so (one known edge) and `revive --only <its name>` brings it back.",
+   "codon": "G2.46",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "",
+   "proven": "",
+   "issue": 33,
    "moved_why": "",
    "moved_by_person": ""
   }

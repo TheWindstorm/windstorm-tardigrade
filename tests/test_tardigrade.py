@@ -1517,6 +1517,12 @@ class Census(Base):
     def test_G3_7_census_names_a_name_two_sessions_carry_and_a_copy_started_by_hand(self):
         self.cfg({"wake": "idle", "settle_s": 3, "starts_at_once": 1})
         ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta")]
+        # as on a real machine: two sessions that share a name, and one that Claude Code has no conversation for,
+        # which the restore starts new, under a new id, in its own tmux session. None of them is "by hand".
+        twins = [self.start_lane(f"twin{i}", "Twin Lane") for i in (1, 2)]
+        empty = self.start_lane("delta", "Delta Lane")
+        with open(os.path.join(self.home, "noconv"), "w") as f:
+            f.write(empty)
         self.tg("record", "--force")
         self.reboot()
         run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
@@ -1534,8 +1540,10 @@ class Census(Base):
             if run.poll() is None:
                 run.kill()
         d = json.loads(self.tg("census", "--json")[1])
-        self.assertEqual(d["same_name"], {"Beta Lane": sorted([ids[1], hand])}, out)
-        self.assertEqual(d["by_hand"], [{"name": "Beta Lane", "session_id": hand, "in_place_of": ids[1]}])
+        self.assertEqual(d["same_name"]["Beta Lane"], sorted([ids[1], hand]), out)
+        self.assertEqual(d["same_name"]["Twin Lane"], sorted(twins))
+        self.assertIn("Delta Lane: Claude Code has no conversation for it", out)
+        self.assertEqual(d["by_hand"], [{"name": "Beta Lane", "session_id": hand, "in_place_of": ids[1]}], out)
         rc, text = self.tg("census")
         self.assertIn("SAME NAME: more than one session carries it", text)
         self.assertIn("STARTED BY HAND while its session was coming back", text)

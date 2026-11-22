@@ -569,6 +569,7 @@ def last_turn(r):
 
 _HISTORY = {}
 EXIT_SIDS = []                  # the session ids on the record, so the history is read once for all of them
+HISTORY_SAY = []                # set by revive and record, which say in the log when the history cannot be used
 HISTORY_SID = re.compile(r'"sessionId"\s*:\s*"([0-9A-Za-z-]{8,64})"')
 
 
@@ -608,7 +609,7 @@ def history_exits(base, sids):
             last[sid] = (t, words.strip() in ("/exit", "/quit"))
     if not problem and tail and not shaped:
         problem = "it does not look as expected (no session ids in it)"
-    if problem and have is None:
+    if problem and have is None and HISTORY_SAY:
         log(f"the prompt history in {base} could not be used: {problem}. A session ended with /exit is known only "
             "from its conversation or its pane; one may be brought back that its owner ended.")
     out = {sid: t for sid, (t, ex) in last.items() if ex}
@@ -1020,7 +1021,7 @@ def record():
     # A session its owner ended with /exit (after a record last saw it running) is over, at once, and never
     # part of a crash count. "Its pane holds the shell it left" counts only for a session that went alone:
     # a memory kill of many sessions leaves shells behind too, and that is a crash.
-    EXIT_SIDS[:] = [r["session_id"] for r in gone]
+    EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in gone], [True]
     exits = {r["session_id"]: exited_at(r) for r in gone}
     fresh = [r for r in gone if not r.get("lost_since") and not exits[r["session_id"]]]
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
@@ -1875,7 +1876,7 @@ def _revive(boot):
             "Two starts of one id would be two copies. Run `record --force` while the session runs, then revive.")
     rows = [r for r in rows if r["session_id"] not in twice]
     held = running_sids()
-    EXIT_SIDS[:] = [r["session_id"] for r in rows if r["session_id"] not in held]
+    EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held], [True]
     note = wake_note(boot)
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": []}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
@@ -1924,7 +1925,8 @@ def _revive(boot):
     prog = {"pid": os.getpid(), "boot": boot_id(), "began": int(time.time()), "uptime_at_start": int(uptime_s()),
             "total": len(todo), "back": 0, "done": False, "boot_run": boot, "user_up_s": up_s,
             "boot_wait_s": int(float(CFG["boot_wait_s"])),
-            "sessions": {r["session_id"]: {"name": display(r), "state": "waiting"} for r in todo}}
+            "sessions": {r["session_id"]: {"name": display(r), "state": "waiting",
+                                           "place": f"{r['tmux_socket']}:{r['tmux_session']}"} for r in todo}}
     write_progress(prog)
     show_waiting(todo, created)
     if todo:
@@ -2354,11 +2356,19 @@ def census_data():
             ids_by_name.setdefault(r["name"], set()).add(r["session_id"])
     same_name = {n: sorted(i) for n, i in ids_by_name.items() if len(i) > 1}
     pr = read_json(progress_path(), {})
-    coming_names = {v.get("name"): k for k, v in ((pr.get("sessions") or {}) if isinstance(pr, dict) else {}).items()}
+    # By hand means: the name of one coming back, but none of their ids, and not in a tmux session the restore
+    # itself made (it starts a session new there, under a new id, when Claude Code has no conversation for it).
+    # Two sessions can share a name, so a name maps to all the ids coming back under it.
+    back = (pr.get("sessions") or {}) if isinstance(pr, dict) else {}
+    coming_names, places = {}, {v.get("place") for v in back.values() if isinstance(v, dict)}
+    for k, v in back.items():
+        if isinstance(v, dict):
+            coming_names.setdefault(v.get("name"), []).append(k)
     for r in mine:
-        sid_back = coming_names.get(r["name"])
-        if sid_back and sid_back != r["session_id"] and r.get("started_at", 0) >= int(pr.get("began") or 0) > 0:
-            r["by_hand"] = sid_back
+        sids = coming_names.get(r["name"]) or []
+        if sids and r["session_id"] not in sids and f"{r.get('tmux_socket')}:{r.get('tmux_session')}" not in places \
+                and r.get("started_at", 0) >= int(pr.get("began") or 0) > 0:
+            r["by_hand"] = sids[0]
     on_record = {r["session_id"] for r in table["lanes"]}
     rec_at = int(table.get("recorded_at") or 0)
     not_kept = []
