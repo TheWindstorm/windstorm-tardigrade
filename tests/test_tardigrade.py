@@ -2124,11 +2124,11 @@ class Windows(Base):
             # typed into its tab before the first session had even been started: to its waiting screen
             self.assertLess(out.index(f"herdr {nm} Lane: the attach was typed into its tab"), first_start, out)
 
-    def herdr_missing_run(self, wait_min, on_done=""):
-        """three sessions with tabs on the record, a reboot, and no Herdr server; the boot revive runs in the
-        background. Returns (the run, the file its output goes to)."""
+    def herdr_missing_run(self, wait_min, on_done="", names=("alpha", "beta", "gamma")):
+        """sessions with tabs on the record (three by default), a reboot, and no Herdr server; the boot revive runs
+        in the background. Returns (the run, the file its output goes to)."""
         herdr = self.script("herdr", fread(FAKE_HERDR))
-        for n in ("alpha", "beta", "gamma"):
+        for n in names:
             self.start_lane(n, n.title() + " Lane")
         self.tg("record", "--force")
         p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
@@ -2140,10 +2140,10 @@ class Windows(Base):
         os.makedirs(os.path.join(self.home, ".config", "herdr"), exist_ok=True)    # its folder, but no server
         shell = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
         jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
-               "tabs": [{"tab_id": f"t{i}", "label": f"{n} Lane", "workspace_id": "w1"} for i, n in enumerate(("Alpha", "Beta", "Gamma"))],
-               "panes": [{"pane_id": f"p{i}", "tab_id": f"t{i}", "workspace_id": "w1"} for i in range(3)],
-               "process_info": {f"p{i}": {"shell_pid": 100, "foreground_processes": shell} for i in range(3)},
-               "visible": {f"p{i}": "you@box:~$ \n" for i in range(3)}}, os.path.join(self.home, "herdr-state.json"))
+               "tabs": [{"tab_id": f"t{i}", "label": f"{n.title()} Lane", "workspace_id": "w1"} for i, n in enumerate(names)],
+               "panes": [{"pane_id": f"p{i}", "tab_id": f"t{i}", "workspace_id": "w1"} for i in range(len(names))],
+               "process_info": {f"p{i}": {"shell_pid": 100, "foreground_processes": shell} for i in range(len(names))},
+               "visible": {f"p{i}": "you@box:~$ \n" for i in range(len(names))}}, os.path.join(self.home, "herdr-state.json"))
         self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "settle_s": 2, "attach_wait_min": wait_min,
                   "on_done": on_done})
         log = os.path.join(self.home, "revive-out.txt")
@@ -2207,6 +2207,51 @@ class Windows(Base):
         self.assertIn("run_going() and not starts_finished()", rec)            # still skipped while it starts them
         loop = src[src.index("waiting += len(inflight)"):src.index("end_due()", src.index("waiting += len(inflight)"))]
         self.assertIn('prog["starts_done"] = tries_done and not inflight', loop)
+
+    def test_G3_6_a_session_that_dies_in_the_watch_is_written_as_it_would_be_at_any_other_time(self):
+        # asked in review: the record now runs during the watch. A session that dies there alone is down, as it
+        # would be at any other time; sessions that vanish together are a crash, kept as lost and brought back
+        names = ("alpha", "beta", "gamma", "delta", "omega")
+        n0 = len(self.launches())
+        run, log = self.herdr_missing_run(1, names=names)
+        try:
+            self.until_said(log, "count: started=5", run)
+            now = {x["sid"]: x["pid"] for x in self.launches()[n0:]}
+            rows = {r["tmux_session"]: r["session_id"] for r in self.table()["lanes"]}
+            def up(*nms):
+                out = []
+                for nm in nms:
+                    try:
+                        os.kill(int(now[rows[nm]]), 0)
+                        out.append(nm)
+                    except OSError:
+                        pass
+                return out
+            self.kill(now[rows["alpha"]])                                     # one dies alone
+            self.assertEqual(gone_soon(lambda: up("alpha"), within=10), [])
+            self.assertIn("record: 4 session(s)", self.tg("record")[1])
+            t = self.table()
+            self.assertEqual(sorted(r["tmux_session"] for r in t["lanes"]), ["beta", "delta", "gamma", "omega"])
+            self.assertEqual([r["tmux_session"] for r in t["down"] if r.get("down_since")], ["alpha"])
+            for nm in ("beta", "gamma", "delta"):                             # then three of four vanish together
+                self.kill(now[rows[nm]])
+            self.assertEqual(gone_soon(lambda: up("beta", "gamma", "delta"), within=10), [])
+            out = self.tg("record")[1]
+            self.assertIn("vanished together (a crash?)", out)
+            t = self.table()
+            self.assertEqual(sorted(r["tmux_session"] for r in t["lanes"] if r.get("lost_since")), ["beta", "delta", "gamma"])
+        finally:
+            run.kill()
+            run.wait(timeout=WAIT)
+        socks = {r["tmux_session"]: r["tmux_socket"] for r in t["lanes"]}
+        for nm in ("beta", "gamma", "delta"):           # their places are free again (a revive never takes one in use)
+            self.tmux(socks[nm], "kill-session", "-t", "=" + nm)
+        self.cfg({"attach_wait_min": 0.02})
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 3)
+        again = {x["sid"] for x in self.launches()[n:]}
+        self.assertEqual(again, {rows[nm] for nm in ("beta", "gamma", "delta")}, out)   # the lost ones, not alpha
 
     def test_G4_10_when_herdr_never_comes_census_report_and_on_done_say_how_many_tabs_wait(self):
         told = os.path.join(self.home, "told.txt")
