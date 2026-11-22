@@ -788,7 +788,7 @@ class Revive(Base):
     def test_G2_44_a_start_that_is_up_a_little_late_is_looked_after_at_once(self):
         # seen on a Mac: the first start after login waited on the network for its login and missed the 8 s look
         self.cfg({"settle_s": 1, "retry_gap_s": 60, "claude_command": "sleep 3; claude"})
-        self.recorded_then_rebooted()
+        sid_a = self.recorded_then_rebooted()
         n = len(self.launches())
         t0 = time.time()
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
@@ -799,6 +799,20 @@ class Revive(Base):
         self.assertEqual(len(self.wait_typed(1)), 1)                # and it is looked after: its note is typed
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["started"], rep["failed"]), (["Alpha Lane"], []), out)
+        # given up, then up after all, while the watch still runs for another session: counted once, as back
+        b = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        self.script("lateclaude", '#!/bin/bash\ncase " $* " in *" %s "*) sleep 5;; esac\nexec claude "$@"\n' % sid_a)
+        self.cfg({"settle_s": 1, "retry_min": 0.03, "retry_gap_s": 60, "claude_command": "lateclaude",
+                  "wake": "note", "watch_min": 0.25})
+        with open(os.path.join(self.home, "status"), "w") as f:
+            f.write("waiting")                   # Beta is up but not idle: the watch goes on
+        rc, out = self.tg("revive")
+        self.assertIn("Alpha Lane: GAVE UP after 1 attempt(s)", out)
+        self.assertIn("Alpha Lane: up (came up after it was given up)", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((sorted(rep["started"]), rep["failed"]), (["Alpha Lane", "Beta Lane"], []), out)
 
     def test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser(self):
         a = self.start_lane("alpha", "Alpha Lane", flags="--permission-mode acceptEdits")

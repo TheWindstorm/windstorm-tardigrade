@@ -1795,8 +1795,13 @@ def _revive(boot):
 
     def came_late(sid, r, pid):
         nonlocal last_up
-        log(f"  {display(r)}: up (came up late)")
-        report["started"].append(display(r))
+        nm = display(r)
+        if nm in report["failed"]:          # given up, then back after all: it counts as back, once
+            report["failed"].remove(nm)
+            log(f"  {nm}: up (came up after it was given up)")
+        else:
+            log(f"  {nm}: up (came up late)")
+        report["started"].append(nm)
         came.append(r)
         last_up = time.time()
         if note and same_login(r, pid) and not r.get("fresh") and wants_note(r):
