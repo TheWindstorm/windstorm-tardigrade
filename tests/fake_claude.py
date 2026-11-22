@@ -123,7 +123,9 @@ d = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(home, ".cla
 os.makedirs(d, exist_ok=True)
 now = int(time.time() * 1000)
 json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": names.get(sid, ""),
-           "kind": os.environ.get("FAKE_KIND", "interactive"), "entrypoint": "cli", "startedAt": now,
+           "kind": os.environ.get("FAKE_KIND", "interactive"), "startedAt": now,
+           # Claude Code 2.1.330 marks a print-mode run "interactive" too; only its entrypoint differs
+           "entrypoint": "sdk-cli" if ("-p" in a or "--print" in a) else "cli",
            "status": status, "updatedAt": now}, open(os.path.join(d, f"{os.getpid()}.json"), "w"))
 # its input box at the foot of the screen, empty, as Claude Code draws it when idle
 if not os.path.exists(os.path.join(home, "nobox")):
