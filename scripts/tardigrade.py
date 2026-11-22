@@ -2234,8 +2234,8 @@ def idle_shell(pane):
 def place_in_lost_workspace(r):
     """G4.5, G4.7: a session whose workspace is gone. Its workspace is made again under its old label, once
     per run, not focused. The tab a new workspace comes with is used for the first session placed there,
-    if it still holds an idle shell, so no blank tab is left; otherwise a new tab is made and that one is
-    left as it is. Only if the workspace cannot be made: herdr_default_workspace. Returns (pane, what)."""
+    if it holds an idle shell within 10 s (its shell may still be starting), so no blank tab is left;
+    otherwise a new tab is made and that one is left as it is. Only if the workspace cannot be made: herdr_default_workspace. Returns (pane, what)."""
     lab = r.get("herdr_workspace") or ""
     if lab and lab not in MADE:
         res = herdr("workspace", "create", "--label", lab, "--cwd", r["cwd"] if os.path.isdir(r["cwd"]) else HOME,
@@ -2248,6 +2248,12 @@ def place_in_lost_workspace(r):
     if m and not m["used"] and m["tab"] and m["pane"]:
         m["used"] = True
         ok, why = idle_shell(m["pane"])
+        # T34: the pane was made a moment ago and its shell may still be starting; give it up to 10 s to show
+        # an idle prompt before it is called "not blank" (a real Mac left a blank tab when it was looked at at once)
+        end = time.time() + 10
+        while not ok and time.time() < end:
+            time.sleep(0.5)
+            ok, why = idle_shell(m["pane"])
         if ok:
             herdr("tab", "rename", m["tab"], r["herdr_tab"])
             return m["pane"], f"tab '{r['herdr_tab']}' in workspace '{lab}', made again"

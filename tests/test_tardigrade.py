@@ -1864,6 +1864,17 @@ class Windows(Base):
         self.assertIn({"create": "Delta Lane", "workspace": "wn-Busy Gone", "no_focus": True}, runs)
         self.assertIn("the first tab of the workspace made again is not blank (it is running something else)", out)
 
+    def test_G4_7_a_new_workspace_tab_whose_shell_is_still_starting_is_waited_for(self):
+        # T34: a real Mac looked at the new workspace's first tab in the same second it was made, while its
+        # shell was still starting, called it "not blank" and left it as a blank tab beside a new one
+        runs, out = self.lost_workspaces({"alpha": "Gone"}, {"starting": {"wsp-Gone": 3}, "process_info": {
+            "wsp-Gone": {"shell_pid": 100, "foreground_processes": self.SHELL}}, "visible": {"wsp-Gone": "you@box:~$ \n"}})
+        self.assertIn({"rename": "wst-Gone", "label": "Alpha Lane"}, runs)           # its first tab is used
+        self.assertEqual([r["pane"] for r in runs if "cmd" in r], ["wsp-Gone"], out)
+        self.assertNotIn("Alpha Lane", [r.get("create") for r in runs])               # no second tab, no blank one
+        self.assertNotIn("is not blank", out)
+        self.assertGreaterEqual(int(fread(os.path.join(self.home, "herdr-asked-wsp-Gone"))), 4)
+
     def test_G4_9_after_a_restore_stopped_census_counts_its_waiting_screens_as_stopped(self):
         self.cfg({"starts_at_once": 1, "wake": "idle"})
         for nm in ("alpha", "beta", "gamma"):

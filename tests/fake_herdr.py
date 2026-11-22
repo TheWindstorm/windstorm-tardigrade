@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """A stand-in for the `herdr` command in tests. It answers from HOME/herdr-state.json and writes down
-every `pane run`, `tab create`, `workspace create` and `tab rename` in HOME/herdr-runs.jsonl. It talks to no service."""
+every `pane run`, `tab create`, `workspace create` and `tab rename` in HOME/herdr-runs.jsonl. It talks to no service.
+"starting": {pane: N} in the state makes that pane's first N process-info answers show a shell still starting."""
 import json
 import os
 import sys
@@ -27,6 +28,16 @@ elif a[:2] == ["workspace", "list"]:
     out({"workspaces": state["workspaces"]})
 elif a[:2] == ["pane", "process-info"] and a[a.index("--pane") + 1] in state.get("fail_panes", []):
     sys.exit(1)                        # a pane whose answer timed out
+elif a[:2] == ["pane", "process-info"] and a[a.index("--pane") + 1] in state.get("starting", {}):
+    # a pane whose shell is still starting: its first N answers show the shell's startup in front of it
+    pane = a[a.index("--pane") + 1]
+    seen = os.path.join(home, f"herdr-asked-{pane}")
+    n = int(open(seen).read()) if os.path.exists(seen) else 0
+    open(seen, "w").write(str(n + 1))
+    pi = dict(state["process_info"].get(pane, {}))
+    if n < state["starting"][pane]:
+        pi["foreground_processes"] = (pi.get("foreground_processes") or []) + [{"pid": 8, "argv": ["shell-startup"]}]
+    out({"process_info": pi})
 elif a[:2] == ["pane", "process-info"]:
     out({"process_info": state["process_info"].get(a[a.index("--pane") + 1], {})})
 elif a[:2] == ["pane", "read"]:
