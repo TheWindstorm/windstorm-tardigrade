@@ -56,7 +56,7 @@ The wake-up note:
   not covered by the first part; the second part tells you its note is waiting ("note queued until the reset").
   And a limit belongs to the login: once a note just typed on a login meets the limit (limit words that appear
   after it; an old limit reply in a conversation or on a resumed screen holds only its own session), no other session on that login gets a note in that
-  run, so many sessions sharing one login do not all run stale notes at once at the reset.
+  run. A `wake_text` that reads like a limit notice is refused (setup names the words; the default note is used), so many sessions sharing one login do not all run stale notes at once at the reset.
 
 A name is not an identity:
 

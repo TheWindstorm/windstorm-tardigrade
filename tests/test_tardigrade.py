@@ -1305,6 +1305,29 @@ class Revive(Base):
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((sorted(rep["noted"]), rep["note_held_login_at_limit"]), (["Beta Lane", "Gamma Lane"], []))
 
+    def test_G2_45_a_note_whose_words_read_as_a_limit_notice_is_refused(self):
+        # the note's own words, echoed on the screen after typing, must never be taken for the limit: setup names
+        # them, and a revive types the default note instead
+        self.cfg({"wake_text": "Back after a restart. If you hit your weekly limit, wait for the reset."})
+        rc, out = self.tg("setup", "--dry-run")
+        self.assertIn("wake_text is refused: its words \"hit your weekly limit\" read as Claude Code's usage or limit notice", out)
+        self.recorded_then_rebooted()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        self.assertIn("wake_text is not used: its words \"hit your weekly limit\"", out)
+        typed = [x["text"] for x in self.typed()]
+        self.assertEqual(len(typed), 1, out)
+        self.assertNotIn("weekly limit", typed[0])
+        self.assertNotIn("is at its usage limit", out)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        self.assertEqual(tg.note_problem(tg.WAKE_NOTE), "")              # the default note never reads as one
+        for text in ("set to continue automatically", "Stop and wait", "see /usage-credits"):
+            self.assertTrue(tg.note_problem(text), text)
+
     def test_G2_45_once_one_note_meets_the_limit_no_other_session_on_that_login_gets_one(self):
         # a usage limit belongs to the login: five sessions on one login, the first note is held for the reset,
         # and the other four get none, or all five would run at once at the reset

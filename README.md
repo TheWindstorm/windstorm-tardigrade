@@ -105,7 +105,9 @@ after each note, and if it is held for the reset, the log and the counts say so 
 limit belongs to the login, not to one conversation: once a note just typed meets the limit (the limit words appear
 after it), no other session on the same login gets a note in that run. A limit reply already in a conversation, or on
 a screen after a resume (which shows history), holds that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. To drop a held note, press Esc in that
-session. Tardigrade does not press it for you.
+session. Tardigrade does not press it for you. Your own words for the note (`wake_text`) must not read like a limit
+notice ("hit your weekly limit", "continue automatically", "/usage-credits"): `setup` names such words, and the
+default note is used in their place.
 
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
 session with the same name, folder and flags.

@@ -1513,12 +1513,28 @@ def tmp_emptied():
     return True
 
 
+def note_problem(text):
+    """G2.45: the words in a note that Tardigrade would take, on the screen after typing it, for Claude Code's
+    usage or limit notice ("" if none). Such a note would hold every other note on its login."""
+    for pat in (AT_LIMIT, QUEUED, OTHER_DIALOG):
+        m = pat.search(text or "")
+        if m:
+            return m.group(0)
+    return ""
+
+
 def wake_note(boot):
-    """the note's words: the person's own (wake_text), or the default, which says when /tmp was emptied"""
+    """the note's words: the person's own (wake_text), or the default, which says when /tmp was emptied. Words
+    that read as a limit notice are refused, and the default is used (G2.45)."""
     if CFG["wake"] != "note" and not CFG.get("wake_names"):
         return ""
     text = str(CFG.get("wake_text") or "") or WAKE_NOTE
-    if not CFG.get("wake_text") and boot and tmp_emptied():
+    bad = note_problem(text) if CFG.get("wake_text") else ""
+    if bad:
+        log(f"wake_text is not used: its words \"{bad}\" read as Claude Code's usage or limit notice; the default "
+            "note is used instead. Change wake_text in config.json.")
+        text = WAKE_NOTE
+    if (not CFG.get("wake_text") or bad) and boot and tmp_emptied():
         text += (" This restart emptied /tmp: scripts, tools or files you kept there are gone; make again only "
                  "what you still need, somewhere that lasts.")
     return text.replace("{when}", time.strftime("%Y-%m-%d %H:%M %Z"))
@@ -2574,6 +2590,10 @@ def setup():
         print("tmux is not installed. Tardigrade starts sessions inside tmux, so they outlive their windows.\n"
               "Install it (apt install tmux, dnf install tmux or brew install tmux), then run setup again.")
         return 1
+    bad = note_problem(str(CFG.get("wake_text") or ""))
+    if bad:
+        print(f"wake_text is refused: its words \"{bad}\" read as Claude Code's usage or limit notice, and Tardigrade "
+              "would take its own note for one. The default note is used until you change wake_text in config.json.")
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")
         return 0
