@@ -1817,6 +1817,7 @@ def _revive(boot):
             write_progress(prog)
             r["fresh"] = True
             report.setdefault("fresh", []).append(nm)
+            pace()                     # the load gate holds for this start as for every other
             if start_lane(r, created):
                 inflight[sid] = (r, time.time())
             else:
