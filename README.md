@@ -129,6 +129,12 @@ A session comes back with the flags it was started with, word for word: `--plugi
 Each flag that is not carried is named in the log the first time a record sees it, with the reason, never dropped
 silently. A first message is never written down.
 
+**The first minutes:** a restore starts several sessions at a time (`starts_at_once`), so on a machine with many
+sessions the last can take a while. From the first minute, each place a session will come back to (its tmux
+session, and its Herdr tab) holds a waiting screen that says it is coming back, how many are back, and not to
+start it by hand, because two copies of one session would both act. The screen takes no input. The session
+replaces it when its turn comes. `census` says that a restore is running, and `report` prints its timeline after.
+
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
 (socket `tardigrade`) with no window, and `tardigrade open` shows it.

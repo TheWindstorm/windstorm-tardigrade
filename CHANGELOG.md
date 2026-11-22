@@ -1,6 +1,52 @@
 # Changelog
 
 ## Unreleased
+
+## 0.1.8 (not yet released)
+Built from DNA Strand Master Plan 1.8, from the lessons of the first real reboot with 98 sessions (`PROMISES.json`
+T1 to T21, T24) and four found on real machines while getting ready for the next ones (T25, T26, and two inside
+T13). Every row due in 0.1.8 is built and named in the plan next to its test.
+
+The first minutes after a reboot:
+
+- **Several sessions start at a time** (G2.34): at most `starts_at_once` (default 4) started and not yet seen up.
+  Each start is still decided on its own, right before it, with a fresh process list.
+- **A waiting screen holds each place from the first minute** (G4.4). Each session to be started gets its tmux
+  session at once, holding a small program (not a shell) that says the session is coming back, how many are back,
+  and not to start it by hand. It takes no input. Its Claude replaces it in the same pane. A restore that stopped
+  says so on the screen, and `census` counts what it left as "waiting, stopped" (G4.9).
+- **Herdr tabs are attached at the start, and tried again in every pass** (G4.3). A workspace that is gone is
+  made again under its old label, never focused (G4.5), and the tab it comes with is used, not left blank (G4.7).
+  `revive --only` says what it did about the tab (G4.8).
+- **The boot run says when it began and why** (G5.8): how long after boot the user's services came up, then its
+  own wait, now the setting `boot_wait_s` (default 45 s). **`report`** prints the last restore's timeline (G3.8).
+- **While a restore runs, census says so** (G3.6), with a desktop note and a Herdr notification at its start and
+  end. With **`on_done`** set, a command of yours is run with the counts when it ends (G2.38).
+
+What comes back:
+
+- **Every start flag** (G2.39): `--plugin-dir`, `--settings`, `--name` and the rest, word for word. 0.1.7 carried
+  only the permission mode, model, effort and added folders. A flag that cannot be carried is named in the log;
+  README lists them. On macOS the argument list is now read from the kernel, so an argument with spaces stays one.
+- **A session its owner ended with `/exit` stays ended** (G2.36), and is not counted in a crash.
+- **A pinned session keeps its account label** (G2.41): the start file sets it, so a login wrapper need not.
+- **Tab and workspace labels** from Herdr, the record before, or the `tsv_path` table (G5.6).
+
+The wake-up note:
+
+- **Per session, in its own words, spaced** (G2.37): `wake_names`, `wake_skip`, `wake_text`, and at most
+  `notes_per_min` a minute (default 6). It says when /tmp was emptied. It is typed only into an empty input box; a
+  dim placeholder in the box counts as empty (found on a real machine before any reboot).
+- **Never beside a usage or limit notice** (G2.40), whatever its form. 0.1.7 missed Claude Code's "Usage limit
+  reached ... /usage-credits" notice under an empty box and would have typed its note there (found on two real
+  machines before any reboot).
+
+A name is not an identity:
+
+- **`revive --only NAME` refuses a name two sessions carry** (G2.35) and lists them with their ids.
+- **census lists names more than one session carries** (G3.7), and marks a session started by hand while its
+  namesake was coming back.
+- **census names each running session that will not come back, and why** (G3.12).
 - **PROMISES.json**: twenty-four lessons from the first real reboot with 98 sessions, twelve of them from the agent
   that ran that machine, each with the version it is due in, and one lesson declined with its reason. Five tests
   (class `Promises`) refuse a version while a promise due in it is not built. No change to the script.
