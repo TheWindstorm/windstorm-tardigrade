@@ -428,6 +428,20 @@ class Revive(Base):
         self.assertEqual(rep["started"], ["Alpha Lane"], out)
         self.assertEqual(rep["failed"], [])
 
+    def test_G2_49_a_start_finds_claude_by_the_path_setting_not_by_the_boot_services_path(self):
+        """seen in a stock Ubuntu VM (tmux 3.4): the boot service's PATH has no ~/.local/bin, where Claude Code's own
+        installer puts it. tmux gives a pane that respawn-pane starts the PATH of the tmux client that asked, so every
+        start at boot, which replaces its waiting screen with respawn-pane, said "claude: command not found"."""
+        sid = self.recorded_then_rebooted()
+        self.cfg({"path": f"{self.bin}:/usr/bin:/bin"})
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, PATH="/usr/local/bin:/usr/bin:/bin")
+        self.assertEqual(rc, 0, out)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual(rep["started"], ["Alpha Lane"], out)
+
     def test_G2_2_the_revived_session_is_told_what_happened(self):
         sid = self.recorded_then_rebooted()
         n = len(self.launches())

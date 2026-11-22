@@ -446,10 +446,10 @@ def sockets():
     return res
 
 
-def tmux(sock, *a, timeout=10):
+def tmux(sock, *a, timeout=10, env=None):
     if not CFG["tmux"]:
         return 99, ""
-    return run([CFG["tmux"], "-S", sock, *a], timeout=timeout)
+    return run([CFG["tmux"], "-S", sock, *a], timeout=timeout, env=env)
 
 
 def panes():
@@ -1397,7 +1397,9 @@ def start_lane(r, created):
         if is_waiting(sock, name):
             # its turn: Claude replaces the waiting screen in the same pane, through the same start file.
             # The pane gets a new terminal, so nothing typed at the waiting screen reaches Claude.
-            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd)[0]
+            # tmux gives a respawned pane the PATH of the client that asks (tmux 3.4): ask with the clean
+            # environment, as new_session does, or at boot the pane gets the boot service's PATH (G2.49).
+            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
             tmux(sock, "set-option", "-u", "-t", f"={name}:", WAIT_MARK)
             tmux(sock, "clear-history", "-t", f"={name}:")
             return rc == 0
@@ -1406,7 +1408,7 @@ def start_lane(r, created):
         if cur not in SHELLS:
             log(f"  {display(r)}: its tmux session is busy ({cur}); not touching it")
             return False
-        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd)[0]
+        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
     else:
         rc = new_session(sock, name, cwd, cmd)
         created.add((sock, name))
