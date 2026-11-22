@@ -565,7 +565,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G7_1_a_run_stopped_part_way_leaves_nothing_behind",
-   "proven": "",
+   "proven": "2026-11-22, a Linux test machine (Veron test spot, its own account) on candidate cafdfc9: the whole suite, run there with its tests' folders in a folder of its own, was stopped by SIGTERM to its own PID once 5 tests had passed, in the middle of a live test (7 processes of the run, its tmux server up). It ended within 5 s, and right after and 5 s later there were 0 folders left in its folder, 0 python3, 0 tmux processes and 0 tmux sockets of that account.",
    "issue": 41,
    "moved_why": "",
    "moved_by_person": ""
