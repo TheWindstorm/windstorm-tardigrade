@@ -11,10 +11,10 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.7, a pilot.** Versions up to 0.1.6 went through real reboots of a Linux laptop (one of them a
-> sudden reset with no shutdown) and of a Mac, and brought every test session back. Its first Mac reboot brought
-> back none, which is how two faults were found and fixed. 0.1.7 changes how a session is started, so those
-> reboots are being done again. See [Tested](#tested) for exactly what is proven, on which version, and what is not.
+> **Status: 0.1.7, a pilot.** It has been through ten real reboots on two machines (a Linux laptop and a Mac),
+> two of them with no clean shutdown. The first reboots on this version found faults, which is what they were for;
+> after the fixes every session came back every time. It has not yet restarted a machine with a hundred sessions.
+> See [Tested](#tested) for exactly what is proven and what is not.
 
 ## Install
 
@@ -194,54 +194,55 @@ Before a planned reboot, run `tardigrade revive --dry-run --all` and read the li
 
 ## Tested
 
-Proven (on the version named in each line; none of the reboots below was on 0.1.7 yet):
+Proven on 0.1.7, on real machines, 2026-11-21:
 
-- **Two real reboots**, 2026-11-21, an Ubuntu 24.04 laptop, Claude Code 2.1.323: one clean restart and one sudden
-  reset with no shutdown. Three sessions were running: one with permission checks on, one with them off, and one in
-  a plain terminal window. Both times all three came back as the same sessions, with their names and folders, in
-  under three minutes, with nothing typed by anyone. After the reset the record on disk was intact. A second tool
-  restored a fourth session on the same machine in the same second, and neither touched the other's
-  (`skip_tmux_sockets`).
-- **A third reboot** of that laptop on the released version after a plugin update: three of three again.
-- **One real reboot of a Mac** (Intel, macOS 13, logs in by itself, FileVault off), version 0.1.3: the launchd
-  agent ran 166 seconds after boot and both test sessions came back as themselves. On that Mac the `claude` command
-  supplies the login token, and each session's login was checked. The reboot before it, on 0.1.2, brought back
-  none of them; 0.1.3 and 0.1.4 are the fixes.
-- **`trust on` through a real reboot** of that laptop, version 0.1.6: four sessions, one of them in the home folder.
-  All four came back. The one in the home folder was asked "do you trust this folder?", Tardigrade answered Yes
-  five seconds later and logged it, and the session loaded. It answered nothing else: all four then stopped at the
-  account's "limit reached" question and waited.
-- **Opening windows** on that laptop's real desktop: three hidden sessions, three windows.
-- **Acting on the opening message**: one real session on Linux, Claude Code 2.1.330. It was recorded, ended and
-  brought back, and it read its notes and answered.
-- The census on a shared Linux machine with 98 sessions: a quarter of a second, and its list matched a separate
-  tool's list, 98 of 98.
-- 60 tests on Linux with a stand-in for `claude`, run on every push with Python 3.10 and 3.13: record, revive, never
-  a second copy, once per boot, a clean environment, the typed message, the start file, the census, and the rules
-  under Safety.
-- On a shared Linux machine with 98 sessions, 0.1.7's `revive --dry-run --all` was compared line by line with the
-  restore tool that machine uses today: the same 98 sessions, each with the same tmux name, folder, model, effort
-  and recorded permission mode. Nothing was started.
+- **Seven real reboots of a Linux laptop** (Ubuntu 24.04, Claude Code 2.1.330) with seven sessions: one of a team's
+  own working sessions with its Herdr tab, one with permission checks off, one that accepts edits, one in the home
+  folder, one that had been in a plain desktop window, and two that nobody had ever written in. The first two
+  reboots found three faults (see the changelog); they were fixed and the reboots repeated. On the five after
+  that, one of them a sudden reset with no shutdown, all seven were running again within four minutes of boot and
+  all seven loaded, with nothing typed by anyone. Each time: the two home-folder sessions were asked "trust this folder?" and
+  answered (`trust on`), the Herdr tab was attached again, the two empty sessions came back new under their names,
+  and every command line was Claude Code's flags and `--resume`, nothing else.
+- **A restart in the middle of a revive** left a lock behind, and the next boot brought back nothing. That was
+  the fault. After the fix, the boot run was started again by hand on that machine, took the lock over and brought
+  all seven back. A second real reboot landing in the middle of a run of the fixed version is covered by a test,
+  not yet by a machine.
+- **Three real reboots of a Mac** (Intel, macOS 13, logs in by itself, FileVault off), one of them an ungraceful
+  quick restart, with four sessions, two of them a team's working sessions in the home folder with Herdr tabs.
+  All four were loaded between three and four minutes after boot each time, and each session's login was checked. The first two
+  showed that the Herdr tabs were not really attached on a Mac (its shell reads `=name` its own way); after the
+  fix both tabs were attached, and the log now checks that instead of assuming it.
+- **The typed message, on a real session** (Linux, Claude Code 2.1.330): ended, brought back through its start
+  file, the message typed once it was idle; the session showed its earlier conversation and answered.
+- **The message withheld**: on a laptop whose account was at its usage limit, five sessions came back to Claude
+  Code's "limit reached" question. Nothing was typed into any of them, and the log named all five.
+- **An env file, a tmux config and a stale session bus** on a real boot: the variables reached the sessions, each
+  session started in its own folder, the config was loaded, and a bus address that no longer existed was replaced
+  by the user's own.
+- **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
+  compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
+  tmux name, folder, model, effort and recorded permission mode. Nothing was started.
+- 60 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+
+Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
 Not yet proven:
 
-- **A session acting on the opening message after a real reboot.** On the test laptop the account had reached its
-  usage limit, so each revived session stopped at Claude Code's own "limit reached" question and waited there. The
-  census showed all of them as "waiting for you". That is the right behaviour, and it is not the same proof.
-- **With nobody logged in at all.** The boot service started before any remote login, but that laptop also logs into
-  its desktop by itself, so lingering alone was not isolated.
-- **A Mac with FileVault on, or one that does not log in by itself**: setup says what will happen; no such Mac was rebooted. Opening windows on a Mac.
-- **Herdr** tab re-attach on a real machine. The test uses a stand-in for the `herdr` command.
-- **About 100 sessions through a real reboot.** The most brought back at once so far is four.
-- Sessions pinned to different accounts by a token: proven with the stand-in only.
+- **About 100 sessions through a real reboot.** The most brought back at once so far is seven.
+- **A session acting on the message after a real reboot.** It is proven after a real end and return of one
+  session, not after a restart of the whole machine: the test machines' account was at its usage limit.
+- **With nobody logged in at all.** The laptop logs into its desktop by itself, so lingering alone was not isolated.
+- **A Mac with FileVault on, or one that logs in as another user**: setup and the census say what will happen; no
+  such Mac was rebooted. Opening windows on a Mac.
+- **A session pinned to an account by a wrapper**, **a start command of your own** and **a server command of your
+  own**: proven with stand-ins, and by a read-only dry run on a machine that uses them, not through a reboot.
 - **Windows** is not supported. Under WSL, use it inside the Linux system.
 
-On a slow machine Claude Code can take a couple of minutes to load a session after boot. During that time the
-census shows it as "starting".
-
-Two more things the real machines taught us: Claude Code asks "do you trust this folder?" for a new folder even when
-permission checks are off, and a session on an account at its limit comes back to a question. Tardigrade answers
-neither. It leaves them for you and counts them.
+Things the real machines taught us, which the tests now hold: Claude Code asks "do you trust this folder?" on every
+start of a session in the home folder, even with permission checks off; a session on an account at its limit comes
+back to a question; a session nobody ever wrote in cannot be resumed; a slow machine can take minutes to load a
+session; and a line that works in one shell can fail in another.
 
 The plan this is built from, with each claim and its proof, is
 [DNA-STRAND-MASTER-PLAN.md](DNA-STRAND-MASTER-PLAN.md).

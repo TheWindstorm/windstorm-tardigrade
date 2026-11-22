@@ -204,6 +204,34 @@ test has a codon here.
 
 ## Proven by hand on real machines, not by a test
 
+On 0.1.7 (plan 1.7), 2026-11-21:
+
+- An Ubuntu 24.04 laptop, Claude Code 2.1.330, **seven real reboots**, seven sessions (one of a team's working
+  sessions with its Herdr tab; permission checks off; accept-edits; the home folder; one from a plain desktop
+  window; two that nobody had written in). Reboot 1: five of seven up, and the five were not looked at for 25
+  minutes (G2.29, G2.30 come from it). Reboot 2 landed in the middle of that run and brought back nothing: the lock
+  (G2.31); after the fix the boot run was started again by hand, took the lock over and brought back seven of
+  seven. Then five reboots, one a sudden reset: seven of seven running within four minutes of boot and loaded;
+  the trust question answered for the two home-folder sessions, once within 4 seconds of the start (G2.12, G2.25,
+  G2.32); the Herdr tab attached again and checked (G4.2); every command line clean (G2.19); accept-edits kept its
+  mode (G2.14); the plain-window session came back on the named socket under its prefix (G1.9); the table written
+  (G1.10). One of them with an env file and a tmux config: the variables arrived, each session started in its own
+  folder, a session bus that was gone was replaced, the config was loaded (G2.17, G2.26, G2.27, G2.33). One with
+  the note on and the account at its usage limit: nothing typed into five sessions that came back to a question
+  (G2.20).
+- An Intel Mac, macOS 13, auto-login on, FileVault off, **three real reboots** (one ungraceful), four sessions, two
+  of them a team's working sessions in the home folder with Herdr tabs: four of four loaded between three and
+  four minutes after boot each time, each login checked (G2.8), trust answered for both. Reboots 1 and 2 logged the tabs as
+  attached when they were not: the tab's shell is zsh, which reads a bare `=name` as a command path. After the fix
+  both tabs were attached, and the log line now comes from a check (G4.2).
+- Linux, Claude Code 2.1.330, one real session ended and brought back through its start file with the env file of
+  a real desktop: display and session bus present, no child marker, its own folder; the note was typed once it was
+  idle, and the session answered it (G2.2, G2.19).
+- A shared Linux machine with 98 sessions, read only: `revive --dry-run --all` against the restore tool in use
+  there: 98 in both, none in only one, no difference in tmux name, folder, model, effort or recorded mode (G2.21).
+
+On earlier versions:
+
 - 2026-11-21, an Ubuntu 24.04 laptop, Claude Code 2.1.323, **two real reboots** (one clean, one a sudden reset with
   no shutdown). Setup said "boot service: enabled, record timer: active, lingering is on". Three sessions (permission
   checks on; permission checks off; one in a plain terminal window) came back both times with the same ids, names
@@ -235,9 +263,8 @@ test has a codon here.
 - **macOS with FileVault on, or without auto-login.** Setup says what will happen (G5.3); no such Mac was rebooted. `open` was not run on a Mac.
 - **Herdr on a real machine** (G4.2). The test uses a stand-in for the `herdr` command, so it proves the rule
   (what is typed, and when not) and not Herdr itself.
-- **0.1.7 on a real reboot.** The start file (G2.19) and the typed note (G2.2) are a new start path. Everything
-  under "Proven by hand" above was done on 0.1.6 or earlier and has to be done again.
-- **A machine with about 100 sessions** through a real reboot. The most brought back at once so far is four.
+- **A machine with about 100 sessions** through a real reboot. The most brought back at once so far is seven.
+- **G2.15, G2.16 and the `server_command` of G2.26** on a real reboot: stand-ins and a read-only dry run only.
 - **G3.3 and INV5.** The check is one line (`uid != me` before anything is read), read by a person, not exercised
   by a test, because a test cannot easily start a process as another user.
 - **Sessions pinned to different accounts by a token** (G2.11) are proven with the stand-in only, not on a real
