@@ -1,6 +1,7 @@
 # DNA Strand Master Plan: Windstorm Tardigrade
 
-Plan version 1.7 (2026-11-21). Builds: `scripts/tardigrade.py` 0.1.7.
+Plan version 1.8 (2026-11-22). Builds: `scripts/tardigrade.py` 0.1.8, being built. Until every promise due in
+0.1.8 has its test, the release is 0.1.7.
 What is promised for the versions after it is under "Planned" below and in `PROMISES.json`.
 
 This is the plan the skill is built from. Each gene is one thing the skill does. Each codon is one claim small
@@ -124,8 +125,12 @@ It worked and it was not good enough, and both halves are lessons.
   copied by hand (G5.6).
 - Two things a second kind of user needs, seen the same night: windows that open by themselves after login (G4.6),
   and a way to see who is busy before a planned reboot (G3.9).
-- Not understood yet: on that machine the boot run began 4 minutes 35 seconds after boot; on a laptop it begins
-  after about 2 minutes. Find out why before promising anything.
+- Why the boot run began 4 minutes 35 seconds after boot on that machine and after about 2 minutes on a laptop
+  (looked into for plan 1.8, from that boot's own journal, read only). Uptime counts from the start of the kernel.
+  The kernel took 1 min 30 s. Then the machine's own start held every user service back: one of its system services
+  took 2 min 17 s, and the per-user service manager could start only after it, 3 min 50 s after boot. Then the boot
+  service's own fixed wait, 45 s. So 45 s of the 4 min 35 s are ours, and the rest is that machine's start. Nothing
+  is promised from this yet; `report` (G3.8) will show the parts, so the next machine does not need a journal reader.
 
 A lesson is easy to write down and easy to leave behind. Each of these is a row in `PROMISES.json` with the
 version it is due in, and the tests refuse that version while the row is not built (see "Promises" below).
@@ -222,18 +227,23 @@ above with the name of its test, and the row's `test` field names the same test.
 
 | Codon | Claim | Promise |
 |---|---|---|
-| G2.34 | Sessions are started several at a time. The decision to start stays one by one, with a fresh look at what is running, so never a second copy still holds; only the waiting overlaps. How many at once is a setting, and load_max still applies. | T1, due 0.1.8 |
-| G4.3 | Each Herdr tab is attached as soon as its session is up, in the same pass as the trust answer and the note, not after all the starts. | T2, due 0.1.8 |
-| G4.4 | While a restore is running, the place where a session will appear says that it is on its way and how far the restore is (N of M), so nobody takes a session for lost and starts a second copy. | T3, due 0.1.8 |
-| G3.6 | `census` says when a restore is running and how far it is. A desktop note says so when it starts and when it ends. | T4, due 0.1.8 |
-| G4.5 | A workspace that is gone is made again under its old name, with the tab in it: the person's layout is the thing to keep. A default workspace is used only if that fails. | T5, due 0.1.8 |
-| G2.35 | `revive --only` refuses a name that matches more than one session, lists their ids, and starts nothing. | T6, due 0.1.8 |
-| G2.36 | A session its owner ended is not brought back: its conversation ends with /exit, or its process is gone while its pane still holds the shell it left. A crash (G1.11) is never read as many sessions ended by hand. | T7, due 0.1.8 |
-| G3.7 | `census` names sessions that share a name, and marks a session that was started by hand in the place of one a restore was bringing back. | T8, due 0.1.8 |
-| G3.8 | `report` prints the last restore's timeline and what still needs a person. | T9, due 0.1.8 |
-| G5.6 | setup's own record keeps every tab and workspace label it can read, and keeps the labels already on the record when Herdr is slow to answer. | T10, due 0.1.8 |
+| G2.34 | Sessions are started several at a time: at most `starts_at_once` (default 4) started and not yet seen up. The decision to start is still made one session at a time, right before its start, with a fresh process list, the check that no live process holds its id (G2.4) and the check that its tmux session holds nothing of anyone else's. Only the wait after a start (`settle_s`) overlaps with the next starts. `stagger_s` and `load_max` still pace each start. | T1, due 0.1.8 |
+| G4.3 | With Herdr, a session's tab is attached as soon as its tmux session exists, which with G4.4 is at the start of the run, and looked at again in every pass, in the same pass as the trust answer and the note. A tab that could not be attached in one pass is tried in the next; the end of the run is a last try, not the only one. What is typed and when (G4.2) does not change. | T2, due 0.1.8 |
+| G4.4 | At the start of a run, each session it will start gets its own tmux session at once, holding a waiting screen: that Windstorm Tardigrade is bringing this session back, how many of how many are back, and that it will appear in this place. When its turn comes, its Claude replaces the waiting screen in the same pane. So a person who opens its tab, its tmux session or an `open` window at any moment sees that it is coming. The waiting screen shows a file and takes no input. A session that turns out to be running somewhere else by its turn is not started, and its waiting screen says so and ends. While a run is going, `record` writes nothing. | T3, due 0.1.8 |
+| G3.6 | While a restore runs, the first lines of `census` say so: how many of how many are back, and since when. A desktop note, and a Herdr notification where Herdr is up, says when a restore starts and when it ends. | T4, due 0.1.8 |
+| G4.5 | With Herdr, a session whose workspace is gone gets its workspace made again under its old label, once per run for all the sessions that belong in it, not focused, and its tab in it under its old label. The tab a new workspace comes with is used for the first of them, so no empty tab is left. Only if that fails is `herdr_default_workspace` used, when it is set. The log says which. | T5, due 0.1.8 |
+| G2.35 | `revive --only WORD` counts the recorded sessions whose name, tmux name or id is WORD. When more than one matches, it starts nothing, lists each with its id, folder and whether it runs, and says to give the id instead. | T6, due 0.1.8 |
+| G2.36 | A session its owner ended is not brought back. It is ended when its conversation's last entry is the `/exit` (or `/quit`) command, written after a record last saw it running; or, for a session that went alone, when its tmux pane holds the shell it left. This is read when it matters (by `revive`, `census` and `record`), so it needs no daemon: `revive` and the boot run skip it, `census` lists it as ended, and `record` puts it on the down list at once. Only `/exit` takes a session out of the crash count of G1.11: many sessions gone at once with their shells left (a memory kill, say) are still a crash. `revive --only <its id>` still brings it back, because then a person asked. | T7, due 0.1.8 |
+| G3.7 | `census` lists every name that more than one session carries, running or on the record, with each id. A running session that started after the last restore began, carrying the name of a session that restore was bringing back under another id, is marked as started by hand while its session was coming back. | T8, due 0.1.8 |
+| G3.8 | `report` prints the last restore's timeline from times the run itself wrote down: the machine's start, the run's start and its own wait, the first and the last start, how many were up and loaded and when, the tabs attached and not (and why), and what still needs a person (failed, needs you, not loaded, note not typed, waiting at a question, ended by its owner, a name carried twice). Local time. It reads only. | T9, due 0.1.8 |
+| G5.6 | `record` (setup's first one too) takes a session's tab and workspace labels from, in order: Herdr now, the record before, and the `tsv_path` table when that table has the session's id (a table another tool wrote, the case of a machine switching over). A Herdr call that times out on a loaded machine loses that one pane's labels, not all of them, and setup gives Herdr longer to answer. | T10, due 0.1.8 |
 | G4.6 | On a desktop, a window opens by itself after login for each returned session that had a window, once the restore is done. A setting that setup offers; off where there is no desktop. | T11, due 0.1.9 |
 | G3.9 | `ready` says, before a planned reboot, which sessions are busy and which have background commands that will be cut. | T12, due 0.1.9 |
+
+Building G4.4 changes INV1. Planned wording: "It never ends a Claude session and never ends a tmux session, with
+two exceptions, both in a tmux session it made itself in the same run: the leftover shell when the first start
+failed, which it replaces; and its own waiting screen, which a session's start replaces, or which ends by itself
+when that session turns out to be running elsewhere." INV1 and its test change in the same commit as G4.4.
 
 ## Promises
 
