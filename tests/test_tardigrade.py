@@ -819,6 +819,41 @@ class Revive(Base):
         self.tg("record", "--force")
         self.assertEqual({r["name"]: r["account"] for r in self.table()["lanes"]}, {"Alpha Lane": "sam", "Beta Lane": ""})
 
+    def test_G2_39_every_start_flag_comes_back_and_none_is_dropped_silently(self):
+        flags = ("--name 'Alpha Lane' --plugin-dir /opt/p1 --plugin-dir '/opt/p two' --settings '{\"a\": 1}' "
+                 "--permission-mode acceptEdits --verbose --allowed-tools Bash Edit "
+                 "--mcp-config '{\"headers\": {\"Authorization\": \"Bearer abc\"}}' --worktree wt "
+                 "--frobnicate maybe 'do the thing'")
+        sid = self.start_lane("alpha", "Alpha Lane", flags=flags)
+        rc, out = self.tg("record", "--force")
+        self.assertIn("record: Alpha Lane: start flag(s) not carried: --mcp-config (its value looks like it holds a "
+                      "secret); --worktree (it would start something other than this session here); --frobnicate "
+                      "(not known to this version: is the word after it its value?)", out)
+        self.assertNotIn("not carried", self.tg("record", "--force")[1])     # named once, not at every record
+        for f in (self.state("tardigrade.log"), os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")):
+            self.assertNotIn("Bearer abc", fread(f))
+            self.assertNotIn("do the thing", fread(f))                        # a first message is never kept
+        self.reboot()
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertEqual(self.wait_launches(n + 1)[-1]["argv"],
+                         ["--permission-mode", "acceptEdits", "--name", "Alpha Lane", "--plugin-dir", "/opt/p1",
+                          "--plugin-dir", "/opt/p two", "--settings", '{"a": 1}', "--verbose", "--allowed-tools",
+                          "Bash", "Edit", "--resume", sid])
+        # the name it has now goes with --name: a session renamed since it started keeps its new name
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        self.assertEqual(tg.flags_of({"mode": "default", "name": "New Name", "flags": ["-n", "Old Name", "--chrome"]}),
+                         ["-n", "New Name", "--chrome"])
+        self.assertEqual(tg.start_flags(["claude", "-c", "--resume", "x", "--print", "hi", "--ide", "-d", "api"]),
+                         (["--ide", "-d", "api"], []))
+        # the README lists what is carried and what is not
+        readme = fread(os.path.join(ROOT, "README.md"))
+        for word in ("--plugin-dir", "--worktree", "--resume", "first message"):
+            self.assertIn(word, readme[readme.index("### Start flags"):])
+
     def test_G2_16_a_start_command_from_the_settings_replaces_the_start_line(self):
         self.script("mystart", '#!/bin/bash\nprintf "%s|" "$@" >> "$HOME/mystart.log"\nexec claude --resume "$1"\n')
         self.cfg({"start_command": "mystart {session_id} {mode} {model} {name} {flags}"})
@@ -1612,7 +1647,8 @@ class Invariants(unittest.TestCase):
         import re
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
         self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
-                                    "signal", "termios", "select"})   # the waiting screen (G4.4): standard, no network
+                                    "signal", "termios", "select",    # the waiting screen (G4.4): standard, no network
+                                    "ctypes"})   # macOS only: a process's own argument list from the kernel (G2.39)
 
 
 class Promises(unittest.TestCase):

@@ -254,7 +254,29 @@ def argv_of(pid):
                 return [x.decode(errors="replace") for x in f.read().split(b"\0") if x]
         except OSError:
             return []
-    return run(["ps", "-o", "args=", "-p", str(pid)])[1].split()
+    a = mac_argv(pid)
+    return a if a is not None else run(["ps", "-o", "args=", "-p", str(pid)])[1].split()
+
+
+def mac_argv(pid):
+    """macOS: a process's own argument list, from the kernel (sysctl KERN_PROCARGS2), so that an argument
+    with spaces in it stays one argument. None when it cannot be read; `ps` is then the fallback."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        mib = (ctypes.c_int * 3)(1, 49, int(pid))          # CTL_KERN, KERN_PROCARGS2, pid
+        size = ctypes.c_size_t(1 << 18)
+        buf = ctypes.create_string_buffer(size.value)
+        if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
+            return None
+        raw = buf.raw[:size.value]
+        argc = int.from_bytes(raw[:4], sys.byteorder)
+        rest = raw[4:]
+        rest = rest[rest.index(b"\0"):].lstrip(b"\0")      # skip the program's path and its padding
+        parts = rest.split(b"\0")[:argc]
+        return [x.decode(errors="replace") for x in parts] if len(parts) == argc else None
+    except Exception:
+        return None
 
 
 def env_facts(pid):
@@ -553,7 +575,85 @@ def launch_facts(pid, sj, config_dir):
             if x.startswith("-"):
                 break
             add_dirs.append(x)
-    return {"model": model, "effort": opt("--effort"), "mode": mode, "add_dirs": add_dirs}
+    extra, dropped = start_flags(a)
+    return {"model": model, "effort": opt("--effort"), "mode": mode, "add_dirs": add_dirs,
+            "flags": extra, "dropped": dropped}
+
+
+# Claude Code's start flags (2.1.330), by what follows them. Read once from `claude --help`; a flag not in
+# these lists is still carried when its form is plain, and named in the log when it is not (G2.39).
+FLAG_ONE = {"--agent", "--agents", "--append-system-prompt", "--append-system-prompt-file", "--autocompact",
+            "--debug-file", "--effort", "--environment", "--fallback-model", "--input-format", "--json-schema",
+            "--max-budget-usd", "--model", "-n", "--name", "--output-format", "--permission-mode",
+            "--permission-prompts", "--plugin-dir", "--plugin-url", "--remote-control-session-name-prefix",
+            "--session-id", "--setting-sources", "--settings", "--system-prompt", "--system-prompt-file",
+            "--system-prompt-snapshot"}
+FLAG_MANY = {"--add-dir", "--allowedTools", "--allowed-tools", "--betas", "--disallowedTools",
+             "--disallowed-tools", "--file", "--mcp-config", "--tools"}
+FLAG_NONE = {"--allow-dangerously-skip-permissions", "--ax-screen-reader", "--bg", "--background", "--bare",
+             "--brief", "--chrome", "-c", "--continue", "--dangerously-skip-permissions", "--desktop",
+             "--disable-slash-commands", "--exclude-dynamic-system-prompt-sections", "--fork-session",
+             "--forward-subagent-text", "-h", "--help", "--ide", "--include-hook-events",
+             "--include-partial-messages", "--no-chrome", "--no-session-persistence", "-p", "--print",
+             "--replay-user-messages", "--restricted", "--safe-mode", "--strict-mcp-config", "-v", "--version",
+             "--verbose"}
+FLAG_MAYBE = {"-d", "--debug", "--cloud", "--from-pr", "--prompt-suggestions", "--remote-control", "-r",
+              "--resume", "--teleport", "-w", "--worktree", "--tmux"}
+# carried another way (the permission mode, model, effort and added folders have fields of their own)
+FLAG_OWN = {"--dangerously-skip-permissions", "--permission-mode", "--model", "--effort", "--add-dir"}
+# they name a conversation or pass a first message: a revive gives its own --resume
+FLAG_CONVERSATION = {"-r", "--resume", "-c", "--continue", "--session-id", "--fork-session", "--from-pr",
+                     "--teleport", "-p", "--print"}
+# they would start something other than this session in this place
+FLAG_ELSEWHERE = {"--bg", "--background", "--desktop", "--cloud", "--environment", "-w", "--worktree", "--tmux",
+                  "-v", "--version", "-h", "--help"}
+SECRET_VALUE = re.compile(r"sk-[A-Za-z0-9]|TOKEN|SECRET|PASSW|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTHORI[SZ]ATION|"
+                          r"BEARER", re.I)
+
+
+def start_flags(a):
+    """(flags to carry, word for word; names of flags not carried, each with why). a: the whole argv."""
+    extra, dropped = [], []
+    i = 1
+    while i < len(a):
+        x = a[i]
+        if not x.startswith("-") or x == "-":
+            i += 1                  # a first message: a revive resumes the conversation instead (never logged)
+            continue
+        if x == "--":
+            break
+        name, eq, _ = x.partition("=")
+        vals = []
+        if not eq:
+            if name in FLAG_ONE:
+                vals = a[i + 1:i + 2]
+            elif name in FLAG_MANY or name in FLAG_MAYBE:
+                j = i + 1
+                while j < len(a) and not a[j].startswith("-"):
+                    j += 1
+                    if name in FLAG_MAYBE:
+                        break
+                vals = a[i + 1:j]
+            elif name not in FLAG_NONE and i + 1 < len(a) and not a[i + 1].startswith("-"):
+                dropped.append(f"{name} (not known to this version: is the word after it its value?)")
+                i += 2
+                continue
+        words = [x] + vals
+        i += len(words)
+        if name in FLAG_OWN:
+            continue
+        if name in FLAG_CONVERSATION:
+            continue
+        if name in FLAG_ELSEWHERE:
+            dropped.append(f"{name} (it would start something other than this session here)")
+            continue
+        if any(SECRET_VALUE.search(w) for w in words):
+            dropped.append(f"{name} (its value looks like it holds a secret)")
+            continue
+        extra += words
+    return extra, dropped
+
+
 
 
 def live(with_launch=True):
@@ -774,12 +874,17 @@ def record():
         used.add((sock, name))
         rows.append({
             "name": r["name"], "session_id": r["session_id"], "cwd": r["cwd"], "model": r["model"],
-            "effort": r["effort"], "mode": r["mode"], "add_dirs": r["add_dirs"], "host": r["host"],
+            "effort": r["effort"], "mode": r["mode"], "add_dirs": r["add_dirs"], "flags": r["flags"],
+            "dropped": r["dropped"], "host": r["host"],
             "tmux_socket": sock, "tmux_session": name, "herdr_tab": tab, "herdr_workspace": ws,
             "config_dir": r["config_dir"], "token_keys": r["token_keys"], "token_print": r["token_print"],
             "account": r["account"], "carry_env": r["carry_env"],
             "last_seen": int(time.time()),
         })
+    was = {r["session_id"]: r.get("dropped") for r in old["lanes"]}
+    for r in rows:              # a flag that cannot be carried is named once, when it is first seen (G2.39)
+        if r["dropped"] and r["dropped"] != was.get(r["session_id"]):
+            log(f"record: {display(r)}: start flag(s) not carried: {'; '.join(r['dropped'])}")
     if not rows and old["lanes"]:
         log(f"record: 0 live sessions; kept the previous record ({len(old['lanes'])} sessions)")
         return 0
@@ -889,7 +994,17 @@ def flags_of(r):
         flags += ["--effort", r["effort"]]
     for d in r.get("add_dirs") or []:
         flags += ["--add-dir", d]
-    return flags
+    extra = [str(x) for x in (r.get("flags") or [])]
+    for k, x in enumerate(extra):      # the name it has now: a session renamed since it started keeps the new one
+        if r.get("name") and x in ("-n", "--name") and k + 1 < len(extra):
+            extra[k + 1] = r["name"]
+        elif r.get("name") and x.startswith("--name="):
+            extra[k] = "--name=" + r["name"]
+    return flags + extra
+
+
+def has_name_flag(r):
+    return any(x in ("-n", "--name") or str(x).startswith("--name=") for x in (r.get("flags") or []))
 
 
 def fill(template, r):
@@ -916,7 +1031,7 @@ def claude_line(r):
     else:
         head = str(CFG.get("claude_command") or "claude")
     if r.get("fresh"):      # it never had a conversation, so there is none to resume: same name, folder and flags
-        tail = ["--name", shlex.quote(r["name"])] if r.get("name") else []
+        tail = ["--name", shlex.quote(r["name"])] if r.get("name") and not has_name_flag(r) else []
     else:
         tail = ["--resume", r["session_id"]]
     return " ".join([head] + [shlex.quote(x) for x in flags_of(r)] + tail)

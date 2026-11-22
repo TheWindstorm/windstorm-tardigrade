@@ -340,7 +340,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.8",
    "ship_in": "0.1.8",
-   "test": "",
+   "test": "test_G2_39_every_start_flag_comes_back_and_none_is_dropped_silently",
    "proven": "",
    "issue": 25,
    "moved_why": "",

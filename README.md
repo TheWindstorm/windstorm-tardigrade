@@ -84,8 +84,8 @@ usually one you forgot.
 
 ## What comes back, and what does not
 
-**Comes back:** the conversation, the session's name, its folder, its model, effort and permission mode, and its
-tmux session under the same name.
+**Comes back:** the conversation, the session's name, its folder, its model, effort and permission mode, every
+other start flag it had (see below), and its tmux session under the same name.
 
 **Does not come back:** anything the session had running in the background: timers, watchers, background commands.
 Tardigrade cannot restart those. Instead it tells each revived session, in one message, that they are gone, so the
@@ -107,6 +107,23 @@ Tardigrade brings back, in the folder that session was already running in, it an
 question, and it writes each answer in its log. It counts only the dialog that is open at the foot of the screen:
 a conversation that merely quotes the question gets no key, and neither does a screen with a usage or limit
 dialog on it.
+
+### Start flags
+
+A session comes back with the flags it was started with, word for word: `--plugin-dir`, `--settings`,
+`--mcp-config`, `--allowed-tools`, `--name` (with the name the session has now) and the rest. These are not carried:
+
+- the ones that name a conversation or pass a first message (`--resume`, `--continue`, `--session-id`,
+  `--fork-session`, `--from-pr`, `--teleport`, `--print`, and the words of a first message). A revive gives its own
+  `--resume`;
+- the ones that would start something other than this session in this place (`--worktree`, `--tmux`, `--bg`,
+  `--desktop`, `--cloud`, `--environment`);
+- a flag whose value looks like it holds a secret (a key, a token, an authorization header). It stays out of the
+  record and the log;
+- a flag this version does not know, when the word after it may be its value.
+
+Each flag that is not carried is named in the log the first time a record sees it, with the reason, never dropped
+silently. A first message is never written down.
 
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
