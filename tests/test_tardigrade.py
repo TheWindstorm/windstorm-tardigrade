@@ -1393,7 +1393,7 @@ class Revive(Base):
             d = json.loads(self.tg("census", "--json")[1])
             self.assertIn("Echo Lane", [r["name"] for r in d["sessions"]["coming_back"]])
             self.assertNotIn("Echo Lane", [r["name"] for r in d["sessions"]["hidden"] + d["sessions"]["with_window"]])
-            self.assertIn("a revive is running", self.tg("record")[1])
+            self.assertIn("a revive is starting sessions", self.tg("record")[1])
             # a person starts delta by hand somewhere else during the wait; another closes gamma's waiting screen
             d_sid = ids[3]
             self.tmux(self.sock, "new-session", "-d", "-s", "byhand", "-c", self.work, f"claude --resume {d_sid}")
@@ -2566,7 +2566,8 @@ class Invariants(unittest.TestCase):
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
         self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
                                     "signal", "termios", "select",    # the waiting screen (G4.4): standard, no network
-                                    "ctypes"})   # macOS only: a process's own argument list from the kernel (G2.39)
+                                    "ctypes",    # macOS only: a process's own argument list from the kernel (G2.39)
+                                    "zoneinfo"})  # the zone a limit reply names, to read when it resets (G2.48)
 
 
 class Promises(unittest.TestCase):
