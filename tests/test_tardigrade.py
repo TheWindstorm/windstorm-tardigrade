@@ -2258,6 +2258,9 @@ class Windows(Base):
         run, log = self.herdr_missing_run(1)
         try:
             self.until_said(log, "count: started=3", run)
+            end = time.time() + WAIT                         # the run has taken its own look at the count
+            while time.time() < end and not (jload(self.state("progress.json")) or {}).get("done"):
+                time.sleep(0.2)
             now = {x["sid"]: x["pid"] for x in self.launches()[n0:]}
             rows = {r["tmux_session"]: r["session_id"] for r in self.table()["lanes"]}
             self.kill(now[rows["beta"]])                     # after the count, while the run waits for Herdr
