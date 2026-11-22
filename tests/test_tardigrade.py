@@ -56,7 +56,7 @@ class Base(unittest.TestCase):
         os.makedirs(os.path.join(self.tmp, "x11"))
         with open(os.path.join(self.tmp, "x11", "X10"), "w") as f:      # this "machine" has a desktop on display :10
             f.write("")
-        self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1,
+        self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1, "retry_gap_s": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
         self.pids, self.loose = [], []
@@ -522,6 +522,137 @@ class Revive(Base):
         rc, out = self.tg("revive", "--only", "No Such Lane")
         self.assertEqual(rc, 1)
 
+    def test_G2_35_only_refuses_a_name_that_two_sessions_carry(self):
+        a = self.start_lane("alpha", "Alpha Lane")
+        c = self.start_lane("alpha-copy", "Alpha Lane")      # a copy started by hand, under the same name
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--only", "Alpha Lane")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("2 sessions on the record match", out)
+        self.assertIn(a, out)
+        self.assertIn(c, out)
+        time.sleep(3)
+        self.assertEqual(len(self.launches()), n, "it started something")
+        rc, out = self.tg("revive", "--only", c)              # the id says which one
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 1)
+        time.sleep(2)
+        self.assertEqual([x["sid"] for x in self.launches()[n:]], [c])
+
+    def test_G2_36_an_exit_that_only_the_prompt_history_has_still_counts(self):
+        # seen on real machines with Claude Code 2.1.330: /exit was typed, Claude ended, and its conversation has no
+        # /exit line at all. The prompt history has it. Alpha's last prompt is /exit, after the record saw it:
+        # ended. Beta typed /exit and then more (a resume): not ended. Gamma's /exit is older than the record.
+        a, b, c = (self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma"))
+        self.tg("record", "--force")
+        seen = self.table()["lanes"][0]["last_seen"]
+        private = "PRIVATE-WORDS-7f3 my bank pin"           # what a person typed: it must reach nothing of ours
+        other = str(uuid.uuid4())                           # a session not on the record
+        hist = [(a, "fix the tests " + private, seen - 50), (a, "/exit", seen + 2), (b, "/exit", seen + 1),
+                (b, "go on " + private, seen + 3), (c, "/exit", seen - 100), (a, "/exit now", seen - 300),
+                (other, "/exit", seen + 5), (other, private, seen + 6)]
+        hp = os.path.join(self.home, ".claude", "history.jsonl")
+        with open(hp, "w") as f:
+            for sid, words, t in hist:
+                f.write(json.dumps({"display": words, "pastedContents": {"1": private}, "timestamp": int(t * 1000),
+                                    "project": self.work, "sessionId": sid}) + "\n")
+            f.write("not json " + private + "\n" + json.dumps({"display": "/exit", "timestamp": int((seen + 9) * 1000)}) + "\n")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        time.sleep(2)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([b, c]), out)
+        self.assertIn("skip  Alpha Lane: its owner ended it with /exit", out)
+        outs = [out]
+        for cmd in (("census",), ("record",), ("report",), ("census", "--json")):
+            outs.append(self.tg(*cmd)[1])
+        self.assertIn("ended by its owner (/exit)", outs[1])
+        st = os.path.join(self.home, ".local", "state", "windstorm-tardigrade")
+        files = [os.path.join(dp, f) for d in (st, os.path.join(self.home, ".config", "windstorm-tardigrade"))
+                 for dp, _, fs in os.walk(d) for f in fs]
+        for text in outs + [fread(f) for f in files]:
+            self.assertNotIn("PRIVATE-WORDS", text)
+            self.assertNotIn("bank pin", text)
+        # a history that cannot be used: nobody is taken as ended by it, and the log says the check was not made
+        with open(hp, "w") as f:
+            f.write("{this is not what Claude Code writes}\n")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        self.assertIn("could not be used: it does not look as expected", out)
+        import importlib.util                           # and nobody is taken as ended by it: one too many is the safe side
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.HOME, tg.STATE = self.home, st
+        tg.LOG = os.path.join(st, "tardigrade.log")
+        self.assertEqual(tg.exited_at({"session_id": a, "last_seen": seen}), 0)
+        os.remove(hp)
+        self.reboot()
+        rc, out = self.tg("revive")
+        self.assertIn("could not be used: it cannot be read", out)
+
+    def conversation(self, sid, last_command_at):
+        """a conversation whose last entry is /exit, then what Claude Code writes after it"""
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(last_command_at)) + ".000Z"
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            for e in ({"type": "assistant", "timestamp": stamp, "message": {"content": [{"type": "text", "text": "done"}]}},
+                      {"type": "user", "isMeta": True, "timestamp": stamp, "message": {"content": "<local-command-caveat>x"}},
+                      {"type": "user", "timestamp": stamp, "message": {"content":
+                          "<command-name>/exit</command-name>\n<command-message>exit</command-message>"}},
+                      {"type": "user", "timestamp": stamp, "message": {"content": "<local-command-stdout>Bye!</local-command-stdout>"}},
+                      {"type": "cost-state"}):
+                f.write(json.dumps(e) + "\n")
+
+    def test_G2_36_a_session_its_owner_ended_is_not_brought_back_and_a_crash_is_still_a_crash(self):
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma", "delta", "echo")]
+        a, b, c, d, e = ids
+        self.tg("record", "--force")
+        seen = self.table()["lanes"][0]["last_seen"]
+        self.conversation(a, seen + 2)           # alpha's owner typed /exit after the record saw it running
+        self.conversation(e, seen - 100)         # echo's /exit is older: it was resumed after it (moved, say)
+        pids = {x["sid"]: x["pid"] for x in self.launches()}
+        for sid in (a, b, c, d):                 # four gone at once: alpha by its owner, three by a crash
+            self.kill(pids[sid])
+        time.sleep(2)
+        self.tg("record")
+        t = self.table()
+        self.assertEqual(sorted(r["session_id"] for r in t["lanes"] if r.get("lost_since")), sorted([b, c, d]),
+                         "the three that went without /exit are still a crash")
+        self.assertEqual([(r["session_id"], r.get("ended")) for r in t["down"]], [(a, "exit")])
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        new = self.wait_launches(n + 4)
+        time.sleep(3)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([b, c, d, e]))
+        rc, out = self.tg("census")
+        self.assertIn("ended by its owner (/exit)", out)
+        # still on the record (not yet written down as down), a name is not enough to bring it back; its id is
+        self.kill([x for x in self.launches()[n:] if x["sid"] == e][0]["pid"])
+        time.sleep(1.5)
+        rc, out = self.tg("revive")                # its pane holds the shell it left
+        self.assertIn("skip  Echo Lane: a tmux session named echo already exists", out)
+        self.tmux(self.sock, "kill-session", "-t", "=echo")     # and then its owner closed that too
+        self.conversation(e, time.time() + 1)
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.assertIn("skip  Echo Lane: its owner ended it with /exit", out)
+        rc, out = self.tg("revive", "--only", "Echo Lane")
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"revive --only {e}", out)
+        time.sleep(2)
+        self.assertEqual(len(self.launches()), n)
+        rc, out = self.tg("revive", "--only", e)
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 1)
+
     def test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder(self):
         rc, out = self.tg("trust", "on")
         self.assertIn("Trust answering is ON", out)
@@ -652,13 +783,15 @@ class Revive(Base):
             with open(os.path.join(self.home, name), "w") as f:
                 f.write(text)
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
-        self.assertIn("Beta Lane: GAVE UP", out)
+        self.assertIn("Beta Lane: GAVE UP after", out)
+        self.assertIn("its tmux session holds a shell", out)        # what is in its place now (G4.9)
         self.assertLess(out.index('Alpha Lane: answered Yes to "trust this folder?"'), out.index("Beta Lane: GAVE UP"), out)
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["started"], rep["failed"], rep["loaded"]), (["Alpha Lane"], ["Beta Lane"], ["Alpha Lane"]), out)
 
     def test_G2_32_a_question_is_answered_while_later_sessions_are_still_being_started(self):
         self.tg("trust", "on")
+        self.cfg({"starts_at_once": 1})         # one at a time, so "later sessions" are still to be started
         for n in ("alpha", "beta", "gamma"):
             self.start_lane(n, n.title() + " Lane")
         self.tg("record", "--force")
@@ -688,6 +821,53 @@ class Revive(Base):
         self.assertEqual(self.typed(), [])      # no "your conversation is intact" note for a session that had none
         rc, cj = self.tg("census", "--json")
         self.assertEqual([r["name"] for r in json.loads(cj)["sessions"]["hidden"]], ["Alpha Lane"])
+
+    def test_G2_43_a_session_slow_to_say_it_has_no_conversation_is_still_started_new(self):
+        # seen on a Mac: the start fetched a login first, so "No conversation found" came after the settle look
+        self.cfg({"settle_s": 2})
+        sid = self.recorded_then_rebooted()
+        with open(os.path.join(self.home, "noconvslow"), "w") as f:
+            f.write(sid)
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = self.wait_launches(n + 2)[n:]
+        self.assertEqual(new[0]["argv"][-2:], ["--resume", sid])
+        self.assertEqual(new[1]["argv"][-2:], ["--name", "Alpha Lane"], out)          # started new, once
+        self.assertIn("it said so only after it was counted up", out)
+        self.assertEqual(len(self.launches()), n + 2)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["fresh"], rep["failed"], rep["needs_you"]),
+                         (["Alpha Lane"], ["Alpha Lane"], [], []), out)
+        self.assertEqual(self.typed(), [])
+
+    def test_G2_44_a_start_that_is_up_a_little_late_is_looked_after_at_once(self):
+        # seen on a Mac: the first start after login waited on the network for its login and missed the 8 s look
+        self.cfg({"settle_s": 1, "retry_gap_s": 60, "claude_command": "sleep 3; claude"})
+        sid_a = self.recorded_then_rebooted()
+        n = len(self.launches())
+        t0 = time.time()
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertIn("Alpha Lane: not running yet (attempt 1); will retry", out)
+        self.assertIn("Alpha Lane: up (came up late)", out)
+        self.assertLess(time.time() - t0, 45, "it waited for the retry round, 60 s away")
+        self.assertEqual(len(self.launches()), n + 1)               # one start, never a second copy
+        self.assertEqual(len(self.wait_typed(1)), 1)                # and it is looked after: its note is typed
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["failed"]), (["Alpha Lane"], []), out)
+        # given up, then up after all, while the watch still runs for another session: counted once, as back
+        b = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        self.script("lateclaude", '#!/bin/bash\ncase " $* " in *" %s "*) sleep 5;; esac\nexec claude "$@"\n' % sid_a)
+        self.cfg({"settle_s": 1, "retry_min": 0.03, "retry_gap_s": 60, "claude_command": "lateclaude",
+                  "wake": "note", "watch_min": 0.25})
+        with open(os.path.join(self.home, "status"), "w") as f:
+            f.write("waiting")                   # Beta is up but not idle: the watch goes on
+        rc, out = self.tg("revive")
+        self.assertIn("Alpha Lane: GAVE UP after 1 attempt(s)", out)
+        self.assertIn("Alpha Lane: up (came up after it was given up)", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((sorted(rep["started"]), rep["failed"]), (["Alpha Lane", "Beta Lane"], []), out)
 
     def test_G2_14_the_permission_mode_comes_back_word_for_word_never_looser(self):
         a = self.start_lane("alpha", "Alpha Lane", flags="--permission-mode acceptEdits")
@@ -721,6 +901,95 @@ class Revive(Base):
         self.assertTrue(wrapped[0].startswith("use sam ") and wrapped[0].endswith("--resume " + a), wrapped)
         self.assertEqual(new[a]["seen"].get("ACCT_NAME"), "sam")
         self.assertNotIn("ACCT_NAME", new[b]["seen"])
+
+    def test_G2_41_the_account_label_is_set_by_the_start_file_not_left_to_the_wrapper(self):
+        # a real wrapper (one that fetches a login token) does not put the label back; the G2.15 stand-in did
+        self.script("acctwrap", '#!/bin/bash\necho "$@" >> "$HOME/acctwrap.log"\n[ "$1" = use ] || exit 2\n'
+                                'shift 2\nexec claude "$@"\n')
+        self.cfg({"account_env": "ACCT_NAME", "account_command": "acctwrap use {account}"})
+        a = self.start_lane("alpha", "Alpha Lane", extra_env={"ACCT_NAME": "sam"})
+        b = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = {x["sid"]: x for x in self.wait_launches(n + 2)[n:]}
+        self.assertEqual(new[a]["seen"].get("ACCT_NAME"), "sam")       # so the next record still knows it is pinned
+        self.assertNotIn("ACCT_NAME", new[b]["seen"])
+        self.assertIn("export ACCT_NAME=sam\n", fread(self.state(os.path.join("launch", a + ".sh"))))
+        self.assertIn("unset ACCT_NAME\n", fread(self.state(os.path.join("launch", b + ".sh"))))
+        self.tg("record", "--force")
+        self.assertEqual({r["name"]: r["account"] for r in self.table()["lanes"]}, {"Alpha Lane": "sam", "Beta Lane": ""})
+
+    def test_G2_39_every_start_flag_comes_back_and_none_is_dropped_silently(self):
+        flags = ("--name 'Alpha Lane' --plugin-dir /opt/p1 --plugin-dir '/opt/p two' --settings /opt/s.json "
+                 "--agents '{\"x\": {}}' --remote-control "
+                 "--permission-mode acceptEdits --verbose --allowed-tools Bash Edit "
+                 "--mcp-config '{\"headers\": {\"Authorization\": \"Bearer abc\"}}' --worktree wt "
+                 "--frobnicate maybe 'do the thing'")
+        sid = self.start_lane("alpha", "Alpha Lane", flags=flags)
+        rc, out = self.tg("record", "--force")
+        self.assertIn("record: Alpha Lane: start flag(s) not carried: --agents (inline JSON: only a file's path is "
+                      "carried); --mcp-config (its value looks like it holds a "
+                      "secret); --worktree (it would start something other than this session here); --frobnicate "
+                      "(not known to this version: is the word after it its value?)", out)
+        self.assertIn("record: Alpha Lane: --remote-control is carried: it comes back with Remote Control on", out)
+        self.assertNotIn("not carried", self.tg("record", "--force")[1])     # named once, not at every record
+        for f in (self.state("tardigrade.log"), os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")):
+            self.assertNotIn("Bearer abc", fread(f))
+            self.assertNotIn("do the thing", fread(f))                        # a first message is never kept
+        self.reboot()
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertEqual(self.wait_launches(n + 1)[-1]["argv"],
+                         ["--permission-mode", "acceptEdits", "--name", "Alpha Lane", "--plugin-dir", "/opt/p1",
+                          "--plugin-dir", "/opt/p two", "--settings", "/opt/s.json", "--remote-control", "--verbose",
+                          "--allowed-tools",
+                          "Bash", "Edit", "--resume", sid])
+        # the name it has now goes with --name: a session renamed since it started keeps its new name
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        self.assertEqual(tg.flags_of({"mode": "default", "name": "New Name", "flags": ["-n", "Old Name", "--chrome"]}),
+                         ["-n", "New Name", "--chrome"])
+        self.assertEqual(tg.start_flags(["claude", "-c", "--resume", "x", "--print", "hi", "--ide", "-d", "api"]),
+                         (["--ide", "-d", "api"], []))
+        # a value with the shape of a key or token is never carried, whatever the words around it
+        for v in ("ghp_" + "a1" * 12, "github_pat_" + "B2" * 12, "xoxb-1234-abcd-efgh", "AKIA" + "ABCDEFGH23456789",
+                  "AIza" + "x" * 35, "eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0", "sk-ant-api03-abc", "hf_" + "q" * 34):
+            self.assertEqual(tg.start_flags(["claude", "--append-system-prompt", f"use {v} here"]),
+                             ([], ["--append-system-prompt (its value looks like it holds a secret)"]), v)
+        self.assertEqual(tg.start_flags(["claude", "--settings={\"model\": \"x\"}", "--mcp-config", "/a.json", "[1]"]),
+                         ([], ["--settings (inline JSON: only a file's path is carried)",
+                               "--mcp-config (inline JSON: only a file's path is carried)"]))
+        self.assertEqual(tg.start_flags(["claude", "--mcp-config", "/a.json", "/b.json", "--settings=/s.json"]),
+                         (["--mcp-config", "/a.json", "/b.json", "--settings=/s.json"], []))
+        # the README lists what is carried and what is not
+        readme = fread(os.path.join(ROOT, "README.md"))
+        for word in ("--plugin-dir", "--worktree", "--resume", "first message"):
+            self.assertIn(word, readme[readme.index("### Start flags"):])
+
+    def test_G2_42_the_record_the_table_and_the_log_are_this_users_only(self):
+        tsv = os.path.join(self.home, "tables", "lanes.tsv")
+        self.cfg({"tsv_path": tsv})
+        cfgd = os.path.join(self.home, ".config", "windstorm-tardigrade")
+        for d in (self.state(""), cfgd):                           # open, as a Mac's home leaves things
+            os.makedirs(d, exist_ok=True)
+            os.chmod(d, 0o755)
+        self.recorded_then_rebooted()
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        for d in (self.state(""), cfgd):
+            self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
+        self.tg("record", "--force")                        # the record's copy, lanes.json.prev, holds start flags too
+        for f in (os.path.join(cfgd, "lanes.json"), os.path.join(cfgd, "lanes.json.prev"), tsv,
+                  self.state("tardigrade.log"), self.state("last-revive.json"), self.state("progress.json")):
+            self.assertEqual(os.stat(f).st_mode & 0o777, 0o600, f)
+        # and uninstall leaves no compiled copy behind (seen on a real Mac); not run here: it talks to the real
+        # systemctl --user of whoever runs the tests
+        src = fread(SCRIPT)
+        u = src[src.index("def uninstall():"):src.index("def trust_cmd():")]
+        self.assertIn('shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)', u)
 
     def test_G2_16_a_start_command_from_the_settings_replaces_the_start_line(self):
         self.script("mystart", '#!/bin/bash\nprintf "%s|" "$@" >> "$HOME/mystart.log"\nexec claude --resume "$1"\n')
@@ -820,6 +1089,378 @@ class Revive(Base):
         self.assertEqual((rep["started"], rep["failed"]), (["Alpha Lane"], []), out)
         self.assertEqual(self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split(), ["alpha"])
 
+    def test_G2_34_several_starts_at_once_each_decided_alone(self):
+        import re
+        # the starts are timed here, not the notes (which wait one at a time per login, G2.45)
+        self.cfg({"settle_s": 3, "starts_at_once": 3, "load_max": 50, "load_wait_s": 0, "wake": "idle"})
+        ids = [self.start_lane(f"lane{i}", f"Lane {i}") for i in range(6)]
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        t0 = time.time()
+        rc, out = self.tg("revive", TARDIGRADE_FAKE_LOAD=99)
+        took = time.time() - t0
+        self.wait_launches(n + 6)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted(ids))
+        # six starts with a 3-second wait each take at least 18 s one after another; the waits overlapped
+        self.assertLess(took, 15, out)
+        flying = [int(m) for m in re.findall(r"started \((\d+) of at most 3 not yet seen up\)", out)]
+        self.assertEqual(len(flying), 6, out)
+        self.assertLessEqual(max(flying), 3)
+        self.assertEqual(out.count("above load_max 50"), 6, "load_max is read again before each start")
+        # two rows with one session id: neither is started
+        t = self.table()
+        t["lanes"].append(dict(t["lanes"][0], tmux_session="lane0-copy"))
+        jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 5)
+        time.sleep(3)
+        self.assertNotIn(t["lanes"][0]["session_id"], [x["sid"] for x in self.launches()[n:]])
+        self.assertIn("the record holds 2 rows with this session id; started none of them", out)
+
+    def test_G4_4_a_waiting_screen_holds_each_place_until_its_session_comes(self):
+        import re
+        # a machine's own server: started by its server_command, with a boot unit's and a Claude's variables in it
+        self.cfg({"settle_s": 2, "starts_at_once": 1, "wake": "idle",
+                  "server_command": f"INVOCATION_ID=unit-1 JOURNAL_STREAM=9:9 CLAUDE_CODE_CHILD_SESSION=1 {TMUX} -S {{socket}} "
+                                    "new-session -d -s keeper 'sleep 600'; date +%s.%N > $HOME/server-at"})
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma", "delta", "echo")]
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        env = dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100")
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"], env=env,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and self.tmux(self.sock, "has-session", "-t", "=echo")[0] != 0:
+                time.sleep(0.1)
+            screen = self.tmux(self.sock, "capture-pane", "-p", "-t", "=echo:")[1]
+            for _ in range(30):
+                if "of 5 sessions are back" in screen:
+                    break
+                time.sleep(0.2)
+                screen = self.tmux(self.sock, "capture-pane", "-p", "-t", "=echo:")[1]
+            self.assertIn("Windstorm Tardigrade is bringing this session back", screen)
+            self.assertIn('Session:  "Echo Lane"', screen)
+            self.assertIn("of 5 sessions are back", screen)
+            for line in screen.splitlines():                       # nothing a waker could take for a prompt
+                self.assertNotIn("❯", line)
+                self.assertFalse(re.search(r"[$%#>]\s*$", line), line)
+            self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", "=echo:", "@tardigrade_waiting")[1].strip(), "1")
+            self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", "=echo:", "#{pane_title}")[1].strip(),
+                             "Echo Lane (coming back)")
+            self.assertNotIn(self.tmux(self.sock, "display", "-p", "-t", "=echo:", "#{pane_current_command}")[1].strip(),
+                             ("bash", "sh", "zsh"))
+            made = int(self.tmux(self.sock, "display", "-p", "-t", "=alpha:", "#{session_created}")[1])
+            self.assertGreaterEqual(made + 1, float(fread(os.path.join(self.home, "server-at"))), "server first")
+            # typed text, Enter and Ctrl+C do nothing there
+            self.tmux(self.sock, "send-keys", "-t", "=echo:", "-l", "rm -rf hello")
+            self.tmux(self.sock, "send-keys", "-t", "=echo:", "Enter")
+            self.tmux(self.sock, "send-keys", "-t", "=echo:", "C-c")
+            time.sleep(1.2)
+            screen = self.tmux(self.sock, "capture-pane", "-p", "-t", "=echo:")[1]
+            self.assertIn("Windstorm Tardigrade is bringing this session back", screen)
+            self.assertNotIn("rm -rf hello", screen)
+            # meanwhile: census says coming back, never running; record writes nothing
+            d = json.loads(self.tg("census", "--json")[1])
+            self.assertIn("Echo Lane", [r["name"] for r in d["sessions"]["coming_back"]])
+            self.assertNotIn("Echo Lane", [r["name"] for r in d["sessions"]["hidden"] + d["sessions"]["with_window"]])
+            self.assertIn("a revive is running", self.tg("record")[1])
+            # a person starts delta by hand somewhere else during the wait; another closes gamma's waiting screen
+            d_sid = ids[3]
+            self.tmux(self.sock, "new-session", "-d", "-s", "byhand", "-c", self.work, f"claude --resume {d_sid}")
+            self.tmux(self.sock, "kill-session", "-t", "=gamma")
+            out, _ = run.communicate(timeout=180)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        new = self.launches()[n:]
+        self.assertEqual(sorted(x["sid"] for x in new if x["sid"] != d_sid), sorted(ids[:3] + ids[4:]), out)
+        self.assertEqual(len([x for x in new if x["sid"] == d_sid]), 1, "delta was started a second time")
+        self.assertIn("Delta Lane: something else started it meanwhile (tmux default:byhand)", out)
+        self.assertNotEqual(self.tmux(self.sock, "has-session", "-t", "=delta")[0], 0, "its waiting screen ended")
+        self.assertEqual(self.typed(), [], "something typed at a waiting screen reached Claude")
+        for x in [x for x in new if x["sid"] != d_sid]:            # its own starts: none of the unit's or a Claude's variables
+            self.assertNotIn("INVOCATION_ID", x["seen"])
+            self.assertNotIn("JOURNAL_STREAM", x["seen"])
+            self.assertFalse(x["child"])
+        waiters = []                                               # this test's own, by the HOME it gave them
+        for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    cmd = f.read()
+                if b"tardigrade.py\0wait" in cmd:
+                    with open(f"/proc/{pid}/environ", "rb") as f:
+                        if f"HOME={self.home}".encode() in f.read().split(b"\0"):
+                            waiters.append(pid)
+            except OSError:
+                pass
+        self.assertEqual(waiters, [], "a waiting screen outlived its turn")
+        for s in ("alpha", "beta", "gamma", "echo"):
+            self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", f"={s}:", "@tardigrade_waiting")[1].strip(), "")
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual(sorted(rep["loaded"]), ["Alpha Lane", "Beta Lane", "Echo Lane", "Gamma Lane"], out)
+
+    def test_G2_37_the_note_per_session_in_its_own_words_spaced_and_only_into_an_empty_box(self):
+        import importlib.util
+        tmpd = os.path.join(self.tmp, "fresh-tmp")             # a /tmp that the restart emptied
+        os.makedirs(tmpd)
+        self.cfg({"wake": "note", "wake_skip": ["^Gamma"], "notes_per_min": 1})
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma")]
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_TMP=tmpd)
+        self.wait_launches(n + 3)
+        typed = self.wait_typed(2)
+        by = {x["sid"]: x["text"] for x in typed}
+        self.assertEqual(sorted(by), sorted(ids[:2]), out)        # Gamma is on wake_skip
+        for text in by.values():
+            self.assertIn("This restart emptied /tmp", text)
+        lines = [ln for ln in out.splitlines() if "wake-up note typed" in ln]
+        import datetime
+        stamps = [datetime.datetime.strptime(ln[:24], "%Y-%m-%dT%H:%M:%S%z").timestamp() for ln in lines]
+        self.assertEqual(len(stamps), 2, out)
+        self.assertGreaterEqual(stamps[1] - stamps[0], 5, "one note a minute (6 s in tests): they were not spaced")
+        # the rules, one by one
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.CFG.update(wake="idle", wake_names=["^Alpha"], wake_skip=[])
+        self.assertEqual([tg.wants_note({"name": x}) for x in ("Alpha Lane", "Beta Lane")], [True, False])
+        tg.CFG.update(wake_text="Back at {when}. Carry on.")
+        self.assertRegex(tg.wake_note(True), r"^Back at \d{4}-\d\d-\d\d \d\d:\d\d .*\. Carry on\.$")
+        rule = "─" * 40
+        self.assertTrue(tg.box_empty(f"old text\n{rule}\n❯ \n{rule}\n  ⏵⏵ bypass permissions on\n"))
+        self.assertFalse(tg.box_empty(f"old text\n{rule}\n❯ half a sentence\n{rule}\n"))    # someone is typing
+        self.assertFalse(tg.box_empty("loaded\n"))                                           # no box: not known
+        # a session nobody wrote in shows a dim placeholder in its empty box (Claude Code 2.1.330, a real machine)
+        self.assertTrue(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0\x1b[2mTry \"how does <filepath> work?\"\x1b[0m\n{rule}\n"))
+        self.assertFalse(tg.box_empty(f"{rule}\n\x1b[39m❯\xa0hello \x1b[2mtypo\x1b[0m\n{rule}\n"))
+
+    def tall_status_revive(self, notice):
+        sid = self.recorded_then_rebooted()
+        with open(os.path.join(self.home, "tallstatus"), "w") as f:
+            f.write("16")
+        if notice:
+            open(os.path.join(self.home, "limitnotice"), "w").close()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        return sid, out
+
+    def test_G2_40_a_tall_status_line_moves_where_the_box_is_looked_for(self):
+        # T36: a real Linux machine draws a 13-line status line under the input box. The foot was read as a
+        # fixed 15 lines, so the box was never found there and no revived session got its note
+        sid, out = self.tall_status_revive(notice=False)
+        self.assertEqual([t["sid"] for t in self.wait_typed(1)], [sid], out)
+        self.assertEqual(jload(self.state("last-revive.json"))["noted"], ["Alpha Lane"])
+
+    def test_G2_40_a_notice_above_a_tall_status_line_still_holds_the_note(self):
+        # T36: with the box found again, a usage-limit notice above that tall status line must still be seen
+        sid, out = self.tall_status_revive(notice=True)
+        time.sleep(2)
+        self.assertEqual(self.typed(), [], out)
+        self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
+
+    def test_G2_40_no_note_is_typed_beside_a_usage_or_limit_notice(self):
+        # seen on two real machines at their weekly limit: the notice sits under an ordinary, empty input box
+        self.recorded_then_rebooted()
+        open(os.path.join(self.home, "limitnotice"), "w").close()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        self.assertEqual(self.typed(), [], out)
+        self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["noted"], rep["note_not_typed"]), ([], ["Alpha Lane"]))
+        self.assertNotIn("is at its usage limit", out)    # a screen can be history: it holds this session only (G2.45)
+        # the forms it takes, or may take; and ordinary words are not mistaken for one
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        for text in ("⚠ Usage limit reached · limit resets 12pm", "/usage-credits to continue now", "usage credits",
+                     "You've hit your limit · resets 3pm", "Weekly limit reached", "5-hour limit reached",
+                     "Opus limit reached", "Approaching usage limit", "/extra-usage to keep going",
+                     "You have reached your plan's usage limit.", "1. Stop and wait", "Switch to usage credits"):
+            self.assertTrue(tg.OTHER_DIALOG.search(text), text)
+        for text in ("❯ ", "  ⏵⏵ bypass permissions on", "● Done. The tests pass.", "Context left until auto-compact: 12%"):
+            self.assertFalse(tg.OTHER_DIALOG.search(text), text)
+        # live evidence that a login is AT its limit (G2.45); a warning that it is near is not
+        for text in ("⚠ Usage limit reached · limit resets 12pm", "You've hit your weekly limit · resets 12pm",
+                     "set to continue automatically at 12pm", "You have reached your plan's usage limit."):
+            self.assertTrue(tg.AT_LIMIT.search(text), text)
+        for text in ("Approaching usage limit", "/usage-credits to continue now", "Context left until auto-compact: 12%"):
+            self.assertFalse(tg.AT_LIMIT.search(text), text)
+        # and the same rule holds the trust answer (G2.12): one pattern for both
+        src = fread(SCRIPT)
+        call = src.index("type_note(r, self.note_for")
+        self.assertIn("not OTHER_DIALOG.search(near_box(screen, 15))", src[call - 500:call])
+
+    def limit_reply(self, sid, then=()):
+        """a conversation whose last turn is Claude Code's limit reply (as 2.1.330 writes it), then `then`"""
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 3 * 86400)) + ".000Z"   # 3 days old
+            for e in ({"type": "user", "timestamp": stamp, "message": {"content": "carry on"}},
+                      {"type": "assistant", "timestamp": stamp, "isApiErrorMessage": True, "error": "rate_limit", "message": {
+                          "model": "<synthetic>", "content": [{"type": "text", "text":
+                              "You've hit your weekly limit \u00b7 resets 12pm (America/New_York)"}]}},
+                      {"type": "system", "subtype": "informational", "level": "notice"}, {"type": "cost-state"}) + tuple(then):
+                f.write(json.dumps(e) + "\n")
+
+    def test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named(self):
+        # seen on a real machine: a note typed at the weekly limit is not lost; Claude Code holds it and runs it
+        # by itself at the reset, hours later. Alpha's conversation ended on a limit reply 3 days ago: no note for
+        # it. That reply is no evidence that the login is at its limit NOW, so Beta and Gamma, on the same
+        # login, still get theirs.
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")
+        self.limit_reply(a)
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        self.assertNotIn(a, [x["sid"] for x in self.typed()], out)
+        self.assertEqual(len(self.typed()), 2, out)
+        self.assertIn("Alpha Lane: its conversation last ended on a usage or limit reply (\"You've hit your weekly limit "
+                      "\u00b7 resets 12pm (America/New_York)\"); the wake-up note is not typed", out)
+        self.assertIn("Alpha Lane: loaded, but its conversation last ended on a usage or limit reply; the wake-up note "
+                      "was not typed", out)
+        self.assertNotIn("is at its usage limit", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((sorted(rep["noted"]), rep["note_not_typed"]), (["Beta Lane", "Gamma Lane"], ["Alpha Lane"]))
+        # the same again, but now the login IS at its limit: the first note typed is seen held for the reset (live
+        # evidence), and the other session on that login gets none
+        self.reboot()
+        open(os.path.join(self.home, "limitqueue"), "w").close()
+        n, t = len(self.launches()), len(self.typed())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 3)
+        self.assertEqual(len(self.typed()) - t, 1, out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual(len(rep["noted"]), 1, out)
+        self.assertEqual(rep["note_queued"], rep["noted"])
+        other = ({"Beta Lane", "Gamma Lane"} - set(rep["noted"])).pop()
+        self.assertEqual(rep["note_held_login_at_limit"], [other], out)
+        self.assertEqual(sorted(rep["note_not_typed"]), sorted(["Alpha Lane", other]))
+        # a limit reply that the person went on past is not the end of the conversation; nor is an ordinary error
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.HOME = self.home
+        r = {"session_id": a}
+        self.assertTrue(tg.ended_on_limit(r))
+        self.limit_reply(a, [{"type": "user", "message": {"content": "go on"}},
+                             {"type": "assistant", "message": {"model": "claude-haiku-5-5", "content": [{"type": "text", "text": "ok"}]}}])
+        self.assertEqual(tg.ended_on_limit(r), "")
+        self.limit_reply(a, [{"type": "assistant", "isApiErrorMessage": True, "error": "unknown",
+                              "message": {"content": [{"type": "text", "text": "API Error: 500"}]}}])
+        self.assertEqual(tg.ended_on_limit(r), "")
+        self.assertEqual(tg.ended_on_limit({"session_id": "no-such-session"}), "")
+        # one login, one limit: what tells logins apart
+        k = tg.login_key
+        self.assertEqual(k({"session_id": "x"}), k({"session_id": "y"}))
+        self.assertNotEqual(k({"account": "A"}), k({"account": "B"}))
+        self.assertNotEqual(k({"token_print": "p1"}), k({"token_print": "p2"}))
+        self.assertNotEqual(k({}), k({"config_dir": "/elsewhere"}))
+
+    def test_G2_45_an_old_limit_reply_on_a_screen_holds_that_session_only(self):
+        # after a resume the foot of the screen is history: Alpha's shows a limit reply from before the reset above
+        # a newer short turn. Alpha's note is held; Beta and Gamma, on the same login, get theirs.
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        with open(os.path.join(self.home, "oldlimit"), "w") as f:
+            f.write(a)
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        self.assertEqual(sorted(x["sid"] for x in self.typed()), sorted(x["sid"] for x in self.launches()[n:] if x["sid"] != a), out)
+        self.assertIn("Alpha Lane: loaded, but a usage or limit notice is on its screen; the wake-up note was not typed", out)
+        self.assertNotIn("is at its usage limit", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((sorted(rep["noted"]), rep["note_held_login_at_limit"]), (["Beta Lane", "Gamma Lane"], []))
+
+    def test_G2_45_a_note_whose_words_read_as_a_limit_notice_is_refused(self):
+        # the note's own words, echoed on the screen after typing, must never be taken for the limit: setup names
+        # them, and a revive types the default note instead
+        self.cfg({"wake_text": "Back after a restart. If you hit your weekly limit, wait for the reset."})
+        rc, out = self.tg("setup", "--dry-run")
+        self.assertIn("wake_text is refused: its words \"hit your weekly limit\" read as Claude Code's usage or limit notice", out)
+        self.recorded_then_rebooted()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 1)
+        self.assertIn("wake_text is not used: its words \"hit your weekly limit\"", out)
+        typed = [x["text"] for x in self.typed()]
+        self.assertEqual(len(typed), 1, out)
+        self.assertNotIn("weekly limit", typed[0])
+        self.assertNotIn("is at its usage limit", out)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        self.assertEqual(tg.note_problem(tg.WAKE_NOTE), "")              # the default note never reads as one
+        for text in ("set to continue automatically", "Stop and wait", "see /usage-credits"):
+            self.assertTrue(tg.note_problem(text), text)
+
+    def test_G2_45_once_one_note_meets_the_limit_no_other_session_on_that_login_gets_one(self):
+        # a usage limit belongs to the login: five sessions on one login, the first note is held for the reset,
+        # and the other four get none, or all five would run at once at the reset
+        for nm in ("alpha", "beta", "gamma", "delta", "echo"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        open(os.path.join(self.home, "limitqueue"), "w").close()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 5)
+        self.assertEqual(len(self.typed()), 1, out)
+        rep = jload(self.state("last-revive.json"))
+        first = rep["noted"]
+        self.assertEqual((len(first), rep["note_queued"]), (1, first), out)
+        self.assertIn(f"{first[0]}: the note met a usage limit; Claude Code holds it and will run it by itself at the reset", out)
+        self.assertIn("this machine's own login is at its usage limit: no more notes are typed into sessions on it", out)
+        self.assertIn("note not typed, its login at its usage limit: 4 session(s)", out)
+        self.assertIn("note queued until the reset: 1 session(s): " + first[0], out)
+        self.assertEqual(sorted(rep["note_held_login_at_limit"]), sorted(set(rep["started"]) - set(first)))
+        self.assertEqual(sorted(rep["note_not_typed"]), sorted(set(rep["started"]) - set(first)))
+        self.assertIn("loaded, but its login is at its usage limit; the wake-up note was not typed", out)
+        rc, out = self.tg("report")
+        self.assertIn("note waiting in Claude Code's queue for the limit to reset", out)
+        self.assertIn("note not typed (its login is at its usage limit)", out)
+
+    def test_G2_38_on_done_is_run_with_the_counts_when_a_restore_ends(self):
+        self.script("tell", '#!/bin/sh\necho "$* | $TARDIGRADE_STARTED $TARDIGRADE_LOADED $TARDIGRADE_FAILED $TARDIGRADE_NEEDS_YOU" >> "$HOME/told.log"\n')
+        self.cfg({"on_done": "tell started={started} loaded={loaded} not_loaded={not_loaded} down={down} failed={failed} needs_you={needs_you}",
+                  "wake": "idle"})
+        for nm in ("alpha", "beta"):
+            self.start_lane(nm, nm.title() + " Lane")
+        # gamma had a login of its own, which it does not get back: "needs you", which is not "failed" (seen on a
+        # real Mac: a clean restore was handed on as one failure)
+        self.start_lane("gamma", "Gamma Lane", extra_env={"CLAUDE_CODE_OAUTH_TOKEN": "test-only-not-a-token"})
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        self.assertIn("needs you  Gamma Lane", out)
+        self.assertEqual(fread(os.path.join(self.home, "told.log")),
+                         "started=2 loaded=3 not_loaded=0 down=0 failed=0 needs_you=1 | 2 3 0 1\n", out)
+        self.assertIn("on_done ran (exit 0): 2 started, 3 loaded, 0 not loaded, 0 down, 0 failed, 1 need you", out)
+        self.assertIn("revive: 2 started, 0 already running, 0 failed, 1 need you", out)
+
     def test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts(self):
         self.cfg({"load_max": 5, "load_wait_s": 2})
         self.recorded_then_rebooted()
@@ -867,6 +1508,134 @@ class Census(Base):
         self.assertIn("Comes back after a reboot: yes, by itself", self.tg("census", TARDIGRADE_FAKE_LINGER="yes")[1])
         self.assertIn("yes, after you log in (lingering is off)", self.tg("census", TARDIGRADE_FAKE_LINGER="no")[1])
 
+    def test_G3_6_census_and_a_note_say_that_a_restore_is_running(self):
+        import re
+        self.script("notify-send", '#!/bin/sh\necho "$2" >> "$HOME/notes.log"\n')
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        jdump({"workspaces": [], "tabs": [], "panes": [], "process_info": {}, "visible": {}},
+              os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "settle_s": 3, "starts_at_once": 1})
+        for n in ("alpha", "beta"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                               env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100", DISPLAY=":10"),
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and not os.path.exists(self.state("progress.json")):
+                time.sleep(0.1)
+            time.sleep(0.5)
+            rc, text = self.tg("census")
+            self.assertRegex(text, r"A RESTORE IS RUNNING: [01] of 2 sessions back, since \d\d:\d\d")
+            self.assertEqual(json.loads(self.tg("census", "--json")[1])["restore"]["total"], 2)
+            out, _ = run.communicate(timeout=120)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        self.assertNotIn("A RESTORE IS RUNNING", self.tg("census")[1])        # and not once it is over
+        # with all back while the watch still runs, it does not speak of "others" on their way (seen on a real Mac)
+        src = fread(SCRIPT)
+        i = src.index("A RESTORE IS RUNNING")
+        self.assertIn('if pr["back"] < pr["total"] else', src[i:i + 400])
+        self.assertIn("All are back; it is still watching them load", src[i:i + 600])
+        notes = fread(os.path.join(self.home, "notes.log")).splitlines()
+        self.assertEqual(len(notes), 2, out)
+        self.assertTrue(notes[0].startswith("Bringing back 2 session(s)"), notes)
+        self.assertTrue(notes[1].startswith("Restore done: 2 session(s) brought back, 0 need you"), notes)
+        runs = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()]
+        self.assertEqual([r["body"] for r in runs if "notification" in r], notes)
+
+    def test_G3_7_census_names_a_name_two_sessions_carry_and_a_copy_started_by_hand(self):
+        self.cfg({"wake": "idle", "settle_s": 3, "starts_at_once": 1})
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta")]
+        # as on a real machine: two sessions that share a name, and one that Claude Code has no conversation for,
+        # which the restore starts new, under a new id, in its own tmux session. None of them is "by hand".
+        twins = [self.start_lane(f"twin{i}", "Twin Lane") for i in (1, 2)]
+        empty = self.start_lane("delta", "Delta Lane")
+        with open(os.path.join(self.home, "noconv"), "w") as f:
+            f.write(empty)
+        self.tg("record", "--force")
+        self.reboot()
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                               env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100"),
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and not os.path.exists(self.state("progress.json")):
+                time.sleep(0.1)
+            time.sleep(1.1)
+            # its owner looks, does not see Beta yet, and starts a new session under its name somewhere else
+            hand = self.start_lane("byhand", "Beta Lane")
+            out, _ = run.communicate(timeout=120)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual(d["same_name"]["Beta Lane"], sorted([ids[1], hand]), out)
+        self.assertEqual(d["same_name"]["Twin Lane"], sorted(twins))
+        self.assertIn("Delta Lane: Claude Code has no conversation for it", out)
+        self.assertEqual(d["by_hand"], [{"name": "Beta Lane", "session_id": hand, "in_place_of": ids[1]}], out)
+        rc, text = self.tg("census")
+        self.assertIn("SAME NAME: more than one session carries it", text)
+        self.assertIn("STARTED BY HAND while its session was coming back", text)
+        self.assertEqual(text.count("STARTED BY HAND"), 1)                    # the real Beta is not marked
+
+    def test_G3_16_a_session_started_new_under_a_new_id_is_not_listed_as_down(self):
+        # seen on a real Mac: until the next record, census said "down: 14" for a clean restore, naming as DOWN
+        # every lane the restore had started new (Claude Code had no conversation for it) under a new id
+        self.cfg({"wake": "idle"})
+        self.start_lane("alpha", "Alpha Lane")
+        empty = self.start_lane("beta", "Beta Lane")
+        with open(os.path.join(self.home, "noconv"), "w") as f:
+            f.write(empty)
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 3)
+        self.assertIn("Beta Lane: Claude Code has no conversation for it", out)
+        new = [x["sid"] for x in self.launches()[n:] if x["sid"] != empty and "--resume" not in x["argv"]]
+        self.assertEqual(len(new), 1, out)
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual((d["running"], d["down"]), (2, 0), d)
+        self.assertEqual(d["replaced"], [{"name": "Beta Lane", "was": empty, "now": new[0]}])
+        self.assertNotIn("Beta Lane", d["same_name"])
+        self.assertEqual([x["name"] for x in d["not_kept"]], [])
+        rc, text = self.tg("census")
+        self.assertIn("STARTED NEW under a new id, in their own place (up, not down", text)
+        down_part = text.split("DOWN: on the record, not running now")[-1].split("STARTED NEW")[0] \
+            if "DOWN: on the record" in text else ""
+        self.assertNotIn("Beta Lane", down_part)
+
+    def test_G3_8_report_prints_the_last_restores_timeline_and_what_needs_a_person(self):
+        a, b = self.start_lane("alpha", "Alpha Lane"), self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        seen = self.table()["lanes"][0]["last_seen"]
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d)
+        with open(os.path.join(d, b + ".jsonl"), "w") as f:                    # Beta's owner ended it
+            f.write(json.dumps({"type": "user", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(seen + 2)) + ".000Z",
+                                "message": {"content": "<command-name>/exit</command-name>"}}) + "\n")
+        self.reboot()
+        self.cfg({"wake": "idle"})
+        n = len(self.launches())
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_USER_UP_S=60)
+        self.wait_launches(n + 1)
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        before, n = fread(p), len(self.launches())
+        rc, out = self.tg("report")
+        self.assertEqual(rc, 0, out)
+        for line in ("machine started", "user services up", "run began", "first start", "last start", "counted"):
+            self.assertRegex(out, rf"\n  {line} +\w\w\w \d\d:\d\d:\d\d", line)
+        self.assertIn("1 started, 1 loaded, 0 not loaded, 0 down again", out)
+        self.assertIn("Still needs a person:\n  ended by its owner, not brought back:\n    Beta Lane", out)
+        self.assertEqual((fread(p), len(self.launches())), (before, n))          # it reads only
+
     def test_G3_2_census_changes_nothing(self):
         self.start_lane("alpha", "Alpha Lane")
         self.tg("record", "--force")
@@ -904,6 +1673,25 @@ class Census(Base):
         self.assertNotIn("answered Yes", fread(self.state("tardigrade.log")))     # off unless switched on
 
 
+    def test_G3_12_census_names_each_running_session_that_will_not_come_back_and_why(self):
+        self.start_lane("alpha", "Alpha Lane")
+        self.tg("record", "--force")
+        time.sleep(1.1)
+        self.start_lane("beta", "Beta Lane")                     # a session started by hand after the record
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual([(x["name"], x["why"]) for x in d["not_kept"]],
+                         [("Beta Lane", "started after the last record: the next record takes it")])
+        out = self.tg("census")[1]
+        self.assertIn("RUNNING, BUT WILL NOT COME BACK after a reboot (1):", out)
+        self.cfg({"skip_tmux_sockets": [os.path.basename(self.sock)]})   # another tool brings these back
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual(sorted((x["name"], x["why"]) for x in d["not_kept"]),
+                         [(n, "its tmux socket is on skip_tmux_sockets: another tool brings it back")
+                          for n in ("Alpha Lane", "Beta Lane")])
+        src = fread(SCRIPT)                                      # census and record use one rule, from one place
+        self.assertEqual(src.count("left_out_why(r)"), 3)          # its definition, record and census
+
+
 class Setup(Base):
     def test_G5_1_the_boot_service_revives_once_and_outlives_itself(self):
         rc, out = self.tg("setup", "--print-units")
@@ -912,6 +1700,25 @@ class Setup(Base):
         self.assertIn("ExecStartPre=/bin/sleep 45", out)
         self.assertIn("OnUnitActiveSec=5min", out)
         self.assertIn(os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py"), out)
+
+    def test_G5_9_setup_keeps_sessions_that_are_down_on_the_record(self):
+        # T35: on a real Linux machine whose sessions had vanished together, setup's first record was a forced
+        # one and moved all of them to the down list, out of reach of a revive
+        self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
+                    'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
+        self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+        for nm in ("alpha", "beta", "gamma", "delta"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        for row in self.launches()[1:]:           # three of the four vanish together; one still runs
+            self.kill(row["pid"])
+        time.sleep(1)
+        rc, out = self.tg("setup")
+        self.assertTrue(os.path.exists(os.path.join(self.home, "systemctl.log")), out)    # only the stand-in
+        t = self.table()
+        self.assertEqual(sorted(r["name"] for r in t["lanes"]), ["Alpha Lane", "Beta Lane", "Delta Lane", "Gamma Lane"], out)
+        self.assertEqual(t["down"], [], out)
+        self.assertIn("vanished together", out)
 
     def test_G5_2_setup_dry_run_installs_nothing(self):
         rc, out = self.tg("setup", "--dry-run")
@@ -936,6 +1743,68 @@ class Setup(Base):
         self.assertEqual(short, "after you log in at its screen")
         self.assertIn("A login over ssh does not start it", lines[-1])
 
+    def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in ("alpha", "beta", "gamma"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force", "--no-herdr")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        ids = {r["tmux_session"]: r["session_id"] for r in t["lanes"]}
+        for r in t["lanes"]:
+            if r["tmux_session"] == "beta":
+                r["herdr_tab"], r["herdr_workspace"] = "Beta Tab", "Team"        # on the record before
+        jdump(t, p)
+        table = os.path.join(self.home, "older-tool.tsv")                       # what another tool wrote
+        with open(table, "w") as f:
+            f.write("# a table\n" + "\t".join(["gamma", ids["gamma"], self.work, "", "", "", "Gamma Tab", "Old Team"]) + "\n")
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": "t0", "label": "Alpha Tab", "workspace_id": "w1"},
+                        {"tab_id": "t1", "label": "Beta New", "workspace_id": "w1"}],
+               "panes": [{"pane_id": "p0", "tab_id": "t0", "workspace_id": "w1"},
+                         {"pane_id": "p1", "tab_id": "t1", "workspace_id": "w1"}],
+               "fail_panes": ["p1"],                                           # Herdr too slow for this one
+               "process_info": {"p0": {"shell_pid": 1, "foreground_processes": [
+                   {"pid": 2, "argv": [TMUX, "-S", self.sock, "attach", "-t", "=alpha"]}]}}, "visible": {}},
+              os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "tsv_path": table})
+        self.tg("record", "--force")
+        got = {r["tmux_session"]: (r["herdr_tab"], r["herdr_workspace"]) for r in self.table()["lanes"]}
+        self.assertEqual(got, {"alpha": ("Alpha Tab", "Team"), "beta": ("Beta Tab", "Team"),
+                               "gamma": ("Gamma Tab", "Old Team")})
+        src = fread(SCRIPT)
+        setup = src[src.index("def setup():"):src.index("def mac_story(")]
+        self.assertLess(setup.index('HERDR_WAIT["s"] = 120'), setup.index("record()"))   # setup gives Herdr longer
+
+    def test_G5_8_the_boot_run_says_when_it_began_and_what_it_waited_for(self):
+        self.cfg({"boot_wait_s": 15})
+        self.assertIn("ExecStartPre=/bin/sleep 15", self.tg("setup", "--print-units")[1])     # its own wait, a setting
+        self.cfg({"boot_wait_s": 45, "wake": "idle", "settle_s": 3, "starts_at_once": 1})
+        for nm in ("alpha", "beta"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                               env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="275", TARDIGRADE_FAKE_USER_UP_S="230"),
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            end = time.time() + 20
+            while time.time() < end and not os.path.exists(self.state("progress.json")):
+                time.sleep(0.1)
+            time.sleep(0.5)
+            text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=280)[1]
+            out, _ = run.communicate(timeout=120)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        self.assertIn("boot run began 275 s after boot: this user's services came up 230 s after boot, then this "
+                      "service's own wait of 45 s (boot_wait_s)", out)
+        self.assertRegex(text, r"This boot's restore began .+ after boot: this user's services came up .+ after boot, "
+                               r"then its own wait of 45 s")
+
     def test_G5_5_trust_on_and_off_write_the_setting_and_say_what_it_means(self):
         rc, out = self.tg("trust")
         self.assertIn("Trust answering is OFF", out)                # off unless switched on
@@ -954,6 +1823,161 @@ class Windows(Base):
         self.assertIn("Alpha Lane:", out)
         self.assertIn("attach -t '=alpha'", out)
 
+
+    def test_G4_3_each_tab_is_attached_at_the_start_not_after_the_last_start(self):
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in ("alpha", "beta", "gamma"):
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], "Team"
+        jdump(t, p)
+        self.reboot()
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        shell = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": f"t{i}", "label": f"{n} Lane", "workspace_id": "w1"} for i, n in enumerate(("Alpha", "Beta", "Gamma"))],
+               "panes": [{"pane_id": f"p{i}", "tab_id": f"t{i}", "workspace_id": "w1"} for i in range(3)],
+               "process_info": {f"p{i}": {"shell_pid": 100, "foreground_processes": shell} for i in range(3)},
+               "visible": {f"p{i}": "you@box:~$ \n" for i in range(3)}}, os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "starts_at_once": 1, "settle_s": 2})
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        runs = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()]
+        self.assertEqual(sorted(r["pane"] for r in runs if "cmd" in r), ["p0", "p1", "p2"], out)   # each once
+        first_start = out.index("Alpha Lane: started")
+        for nm in ("Alpha", "Beta", "Gamma"):
+            # typed into its tab before the first session had even been started: to its waiting screen
+            self.assertLess(out.index(f"herdr {nm} Lane: the attach was typed into its tab"), first_start, out)
+
+    def lost_workspaces(self, places, extra_state):
+        """sessions whose Herdr workspaces are gone after a reboot; returns (what herdr was asked, revive's log)"""
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in places:
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], places[r["tmux_session"]]
+        jdump(t, p)
+        self.reboot()
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        jdump(dict({"workspaces": [{"workspace_id": "w1", "label": "Team"}], "tabs": [], "panes": [],
+                    "process_info": {}, "visible": {}}, **extra_state), os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "herdr_default_workspace": "Team"})
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + len(places))
+        return [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()], out
+
+    SHELL = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+
+    def test_G4_5_a_workspace_that_is_gone_is_made_again_under_its_old_name(self):
+        runs, out = self.lost_workspaces({"alpha": "Gone", "beta": "Gone", "gamma": "Cannot Make"}, {
+            "ws_fail": ["Cannot Make"], "process_info": {"wsp-Gone": {"shell_pid": 100, "foreground_processes": self.SHELL}},
+            "visible": {"wsp-Gone": "you@box:~$ \n"}})
+        made = [r for r in runs if "create_ws" in r]
+        self.assertEqual(sorted(r["create_ws"] for r in made), ["Cannot Make", "Gone"], out)   # once per workspace
+        self.assertTrue(all(r["no_focus"] for r in made))              # the person's view is never moved
+        creates = [r for r in runs if "create" in r]
+        self.assertIn({"create": "Beta Lane", "workspace": "wn-Gone", "no_focus": True}, creates)
+        self.assertIn({"create": "Gamma Lane", "workspace": "w1", "no_focus": True}, creates)    # only then the default
+        self.assertIn("workspace 'Gone' was gone; made again under its old name", out)
+        self.assertIn("workspace 'Cannot Make' was gone; could NOT be made again", out)
+        self.assertEqual(len([r for r in runs if "cmd" in r]), 3, out)  # each session got its tab
+
+    def test_G4_7_the_tab_a_workspace_made_again_comes_with_is_used_not_left_blank(self):
+        runs, out = self.lost_workspaces({"alpha": "Gone", "delta": "Busy Gone"}, {"process_info": {
+            "wsp-Gone": {"shell_pid": 100, "foreground_processes": self.SHELL},
+            "wsp-Busy Gone": {"shell_pid": 100, "foreground_processes": self.SHELL + [{"pid": 7, "argv": ["vim"]}]}},
+            "visible": {"wsp-Gone": "you@box:~$ \n", "wsp-Busy Gone": "you@box:~$ vim\n"}})
+        self.assertIn({"rename": "wst-Gone", "label": "Alpha Lane"}, runs)          # its first tab, renamed
+        self.assertEqual([r["pane"] for r in runs if "cmd" in r and r["cmd"].endswith("'=alpha'")], ["wsp-Gone"], out)
+        self.assertNotIn({"create": "Alpha Lane", "workspace": "wn-Gone", "no_focus": True}, runs)
+        # a first tab that is not blank by then is left as it is, and a new tab is made
+        self.assertNotIn("wsp-Busy Gone", [r.get("pane") for r in runs])
+        self.assertNotIn("wst-Busy Gone", [r.get("rename") for r in runs])
+        self.assertIn({"create": "Delta Lane", "workspace": "wn-Busy Gone", "no_focus": True}, runs)
+        self.assertIn("the first tab of the workspace made again is not blank (it is running something else)", out)
+
+    def test_G4_7_a_new_workspace_tab_whose_shell_is_still_starting_is_waited_for(self):
+        # T34: a real Mac looked at the new workspace's first tab in the same second it was made, while its
+        # shell was still starting, called it "not blank" and left it as a blank tab beside a new one
+        runs, out = self.lost_workspaces({"alpha": "Gone"}, {"starting": {"wsp-Gone": 3}, "process_info": {
+            "wsp-Gone": {"shell_pid": 100, "foreground_processes": self.SHELL}}, "visible": {"wsp-Gone": "you@box:~$ \n"}})
+        self.assertIn({"rename": "wst-Gone", "label": "Alpha Lane"}, runs)           # its first tab is used
+        self.assertEqual([r["pane"] for r in runs if "cmd" in r], ["wsp-Gone"], out)
+        self.assertNotIn("Alpha Lane", [r.get("create") for r in runs])               # no second tab, no blank one
+        self.assertNotIn("is not blank", out)
+        self.assertGreaterEqual(int(fread(os.path.join(self.home, "herdr-asked-wsp-Gone"))), 4)
+
+    def test_G4_9_after_a_restore_stopped_census_counts_its_waiting_screens_as_stopped(self):
+        self.cfg({"starts_at_once": 1, "wake": "idle"})
+        for nm in ("alpha", "beta", "gamma"):
+            self.start_lane(nm, nm.title() + " Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        with open(os.path.join(self.home, "slow"), "w") as f:
+            f.write("30")                                          # each start takes long, so the run is still going
+        env = dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100")
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"], env=env,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            end = time.time() + 20
+            while time.time() < end and self.tmux(self.sock, "has-session", "-t", "=gamma")[0] != 0:
+                time.sleep(0.1)
+            d = json.loads(self.tg("census", "--json")[1])
+            self.assertEqual(d["waiting_stopped"], 0)
+            self.assertIn("Gamma Lane", [r["name"] for r in d["sessions"]["coming_back"]])
+        finally:
+            run.kill()                                             # the restore stops: its own process, by its pid
+            run.wait()
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual(d["coming_back"], 0)
+        self.assertIn("Gamma Lane", [r["name"] for r in d["sessions"]["waiting_stopped"]])
+        out = self.tg("census")[1]
+        self.assertIn("WAITING, STOPPED: a waiting screen holds its place, but no restore is running", out)
+        self.assertIn("Run `tardigrade revive`", out)
+
+    def test_G4_8_revive_only_says_what_it_did_about_the_tab(self):
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], "Team"
+        jdump(t, p)
+        beta = [x for x in self.launches() if x["sid"] == t["lanes"][1]["session_id"]][0]
+        self.kill(beta["pid"])
+        time.sleep(1.5)
+        os.makedirs(os.path.join(self.home, ".config", "herdr"))
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        shell = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": "t0", "label": "Alpha Lane", "workspace_id": "w1"},
+                        {"tab_id": "t1", "label": "Beta Lane", "workspace_id": "w1"}],
+               "panes": [{"pane_id": "p0", "tab_id": "t0", "workspace_id": "w1"}, {"pane_id": "p1", "tab_id": "t1", "workspace_id": "w1"}],
+               "process_info": {"p0": {"shell_pid": 1, "foreground_processes": [
+                                    {"pid": 2, "argv": [TMUX, "-S", self.sock, "attach", "-t", "=alpha"]}]},
+                                "p1": {"shell_pid": 100, "foreground_processes": shell + [{"pid": 7, "argv": ["vim"]}]}},
+               "visible": {}}, os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle"})
+        rc, out = self.tg("revive", "--only", "Alpha Lane")                 # running, its tab already shows it
+        self.assertIn("skip  Alpha Lane: already running", out)
+        self.assertIn("revive --only Alpha Lane: tab: already there", out)
+        rc, out = self.tg("revive", "--only", "Beta Lane")                  # brought back; its tab is busy
+        self.assertIn("revive --only Beta Lane: tab: not attached: its tab is running something else; left alone", out)
 
     def test_G4_2_a_herdr_tab_gets_its_session_back_only_at_an_idle_shell_with_an_empty_prompt(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))
@@ -988,7 +2012,7 @@ class Windows(Base):
         self.assertEqual(sorted(r["pane"] for r in typed), ["new-1", "p0"], out)      # Beta and Gamma: left alone
         for r in typed:
             self.assertRegex(r["cmd"], r"^env -u TMUX \S+ -S \S+ attach -t '=(alpha|delta)'$")   # quoted: zsh reads a bare =word as a command path   # only the attach, ever
-        self.assertEqual([r for r in runs if "create" in r], [{"create": "Delta Lane", "workspace": "w1"}])
+        self.assertEqual([r for r in runs if "create" in r], [{"create": "Delta Lane", "workspace": "w1", "no_focus": True}])
         self.assertIn("Beta Lane: its tab has text typed after the prompt; left alone", out)
         self.assertIn("Gamma Lane: its tab is running something else; left alone", out)
 
@@ -998,8 +2022,16 @@ class Invariants(unittest.TestCase):
         self.src = fread(SCRIPT)
 
     def test_INV1_it_never_ends_a_session(self):
-        for word in ("kill-server", "kill-session", "kill-pane", "kill-window", "SIGTERM", "SIGKILL", "pkill", "killall"):
+        for word in ("kill-server", "kill-pane", "kill-window", "SIGKILL", "pkill", "killall"):
             self.assertNotIn(word, self.src, word)
+        # the one tmux session it ends is its own waiting screen, from one function, after checking the mark
+        self.assertEqual(self.src.count("kill-session"), 1)
+        end = self.src[self.src.index("def end_waiting_screen("):self.src.index("def write_progress(")]
+        self.assertIn("kill-session", end)
+        self.assertLess(end.index("if is_waiting(sock, name):"), end.index("kill-session"))
+        # SIGTERM appears only where the waiting screen says it ignores it
+        self.assertEqual([ln.strip() for ln in self.src.splitlines() if "SIGTERM" in ln],
+                         ["for sg in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGTSTP):"])
         import re
         self.assertEqual(set(re.findall(r"os\.kill\(([^)]*)\)", self.src)), {"pid, 0"})   # only "is it alive?"
 
@@ -1013,12 +2045,14 @@ class Invariants(unittest.TestCase):
         self.assertIn('"answer_trust": False,', self.src)           # off by default
         self.assertEqual(self.src.count("type_note(r, "), 2)        # its definition and one call, in the watch
         call = self.src.index("type_note(r, self.note_for")
-        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(bottom(screen, 15))', self.src[call - 200:call])
+        self.assertIn('sj.get("status") == "idle" and not QUESTION.search(near_box(screen, 15))', self.src[call - 400:call])
 
     def test_INV6_standard_library_only_and_no_network(self):
         import re
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
-        self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime"})
+        self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
+                                    "signal", "termios", "select",    # the waiting screen (G4.4): standard, no network
+                                    "ctypes"})   # macOS only: a process's own argument list from the kernel (G2.39)
 
 
 class Promises(unittest.TestCase):

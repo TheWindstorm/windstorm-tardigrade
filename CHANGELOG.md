@@ -1,6 +1,82 @@
 # Changelog
 
 ## Unreleased
+
+## 0.1.8 (2026-11-22)
+Built from DNA Strand Master Plan 1.8, from the lessons of the first real reboot with 98 sessions (`PROMISES.json`
+T1 to T21, T24) and four found on real machines while getting ready for the next ones (T25, T26, and two inside
+T13). Every row due in 0.1.8 is built and named in the plan next to its test.
+
+The first minutes after a reboot:
+
+- **A start that is a little late is looked after at once** (G2.44), not at the next retry round 60 s later. On a
+  Mac, the first start after login waits on the network for its login and missed the first look.
+- **Several sessions start at a time** (G2.34): at most `starts_at_once` (default 4) started and not yet seen up.
+  Each start is still decided on its own, right before it, with a fresh process list.
+- **A waiting screen holds each place from the first minute** (G4.4). Each session to be started gets its tmux
+  session at once, holding a small program (not a shell) that says the session is coming back, how many are back,
+  and not to start it by hand. It takes no input. Its Claude replaces it in the same pane. A restore that stopped
+  says so on the screen, and `census` counts what it left as "waiting, stopped" (G4.9).
+- **Herdr tabs are attached at the start, and tried again in every pass** (G4.3). A workspace that is gone is
+  made again under its old label, never focused (G4.5), and the tab it comes with is used, not left blank (G4.7).
+  `revive --only` says what it did about the tab (G4.8).
+- **The boot run says when it began and why** (G5.8): how long after boot the user's services came up, then its
+  own wait, now the setting `boot_wait_s` (default 45 s). **`report`** prints the last restore's timeline (G3.8).
+- **While a restore runs, census says so** (G3.6), with a desktop note and a Herdr notification at its start and
+  end. With **`on_done`** set, a command of yours is run with the counts when it ends (G2.38).
+
+What comes back:
+
+- **Every start flag** (G2.39): `--plugin-dir`, `--settings`, `--name` and the rest, word for word. 0.1.7 carried
+  only the permission mode, model, effort and added folders. A flag that cannot be carried is named in the log;
+  README lists them. On macOS the argument list is now read from the kernel, so an argument with spaces stays one.
+  **Visible change:** a session started with `--remote-control` now comes back with Remote Control on; 0.1.7
+  brought it back without. The log says so the first time a record sees it. `--settings`, `--mcp-config` and
+  `--agents` are carried as file paths only, never as inline JSON, and a value with the shape of a key or token
+  is never carried.
+- **The record, the table, the progress file and the log are yours only** (G2.42): files 0600, Tardigrade's
+  folders 0700. They hold start flags word for word, and a Mac's home is open to other users by default.
+- **A session its owner ended with `/exit` stays ended** (G2.36), and is not counted in a crash. Claude Code
+  2.1.330 often writes no `/exit` into the conversation (seen on two real machines), so the end of its prompt
+  history is read too, for the sessions on the record only. Of what a person typed there, only the time and
+  whether it is exactly `/exit` or `/quit` is kept, and nothing of it is logged or shown. If the history cannot be
+  read, nobody is taken as ended by it, and the log says so.
+- **`census` marks as "started by hand" only what was** (G3.7). On a real machine it marked two sessions that share
+  a name, and sessions the restore itself had started new under a new id. Now a session in a tmux session the
+  restore made, or with any id coming back under its name, is never marked. While a restore is still watching
+  sessions that are all back, `census` says so instead of speaking of others on their way.
+- **`on_done` hands on "needs you" as its own count** (G2.38), `{needs_you}`, not as `failed`: on a real Mac a clean
+  restore with one session on another login was handed on as one failure. The record's copy (`lanes.json.prev`) is
+  0600 like the record (G2.42), and `uninstall` leaves no compiled copy behind.
+- **A lane started new under a new id is not listed as down** (G3.16). On a real Mac, `census` said "down: 14"
+  for a clean restore until the next record; now it lists those lanes as started new, with both ids.
+- **A session with no conversation is started new even when it is slow to say so** (G2.43). On a Mac whose
+  start fetches a login first, 0.1.7 counted such a session up, then lost it.
+- **A pinned session keeps its account label** (G2.41): the start file sets it, so a login wrapper need not.
+- **Tab and workspace labels** from Herdr, the record before, or the `tsv_path` table (G5.6).
+
+The wake-up note:
+
+- **Per session, in its own words, spaced** (G2.37): `wake_names`, `wake_skip`, `wake_text`, and at most
+  `notes_per_min` a minute (default 6). It says when /tmp was emptied. It is typed only into an empty input box; a
+  dim placeholder in the box counts as empty (found on a real machine before any reboot).
+- **Never beside a usage or limit notice** (G2.40), whatever its form. 0.1.7 missed Claude Code's "Usage limit
+  reached ... /usage-credits" notice under an empty box and would have typed its note there (found on two real
+  machines before any reboot).
+- **Never into a conversation that ended on a usage limit, and a note held for the reset is named** (G2.45).
+  On a real reboot, 0.1.7's note went into two sessions at their weekly limit; Claude Code held it, to run by
+  itself at the reset about 9 hours later. A session at its limit that has not met it in its own conversation is
+  not covered by the first part; the second part tells you its note is waiting ("note queued until the reset").
+  And a limit belongs to the login: once a note just typed on a login meets the limit (limit words that appear
+  after it; an old limit reply in a conversation or on a resumed screen holds only its own session), no other session on that login gets a note in that
+  run. A `wake_text` that reads like a limit notice is refused (setup names the words; the default note is used), so many sessions sharing one login do not all run stale notes at once at the reset.
+
+A name is not an identity:
+
+- **`revive --only NAME` refuses a name two sessions carry** (G2.35) and lists them with their ids.
+- **census lists names more than one session carries** (G3.7), and marks a session started by hand while its
+  namesake was coming back.
+- **census names each running session that will not come back, and why** (G3.12).
 - **PROMISES.json**: twenty-four lessons from the first real reboot with 98 sessions, twelve of them from the agent
   that ran that machine, each with the version it is due in, and one lesson declined with its reason. Five tests
   (class `Promises`) refuse a version while a promise due in it is not built. No change to the script.

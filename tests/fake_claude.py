@@ -6,8 +6,11 @@ name to "claude").
 Files in HOME change how it behaves: `slow` (seconds to "load"), `trustprompt` (stop at the folder
 question first), `usagebox` (never load: redraw an old conversation that quotes the folder question, with
 another dialog open under it, and write down every key received), `failonce` (end at once, one time),
-`status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for),
-`failsid` (session ids whose start always fails)."""
+`status` (the status it reports, default idle), `noconv` (session ids it has "no conversation" for), `noconvslow` (the same, said only after 6 s),
+`failsid` (session ids whose start always fails), `limitnotice` (show the usage-limit notice under
+the empty box), `limitqueue` (a line typed in meets the weekly limit and is held for the reset), `oldlimit` (session ids whose
+redrawn history shows an old limit reply above a newer short turn), `tallstatus` (that many status-line
+lines drawn at the very foot, under the box and any notice)."""
 import ctypes
 import json
 import os
@@ -44,10 +47,14 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
     f.write(json.dumps({"pid": os.getpid(), "sid": sid, "argv": a, "cwd": os.getcwd(),
                         "child": "CLAUDE_CODE_CHILD_SESSION" in os.environ,
                         "claude_env": sorted(k for k in os.environ if k.startswith("CLAUDE")),
-                        "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME", "PWD",
+                        "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME", "PWD", "INVOCATION_ID", "JOURNAL_STREAM",
                                                            "CLAUDE_CODE_AUTO_COMPACT_WINDOW") if k in os.environ}}) + "\n")
 if "--resume" in a and listed("noconv", sid):
     print(f"No conversation found with session ID: {sid}")     # what Claude Code says for a session nobody wrote in
+    sys.exit(1)
+if "--resume" in a and listed("noconvslow", sid):
+    time.sleep(6)                       # a slow machine: it says so only after the run has counted it up
+    print(f"No conversation found with session ID: {sid}")
     sys.exit(1)
 if listed("failsid", sid):
     sys.exit(1)                         # a session whose start keeps failing
@@ -118,6 +125,21 @@ now = int(time.time() * 1000)
 json.dump({"pid": os.getpid(), "sessionId": sid, "cwd": os.getcwd(), "name": names.get(sid, ""),
            "kind": os.environ.get("FAKE_KIND", "interactive"), "entrypoint": "cli", "startedAt": now,
            "status": status, "updatedAt": now}, open(os.path.join(d, f"{os.getpid()}.json"), "w"))
+# its input box at the foot of the screen, empty, as Claude Code draws it when idle
+if not os.path.exists(os.path.join(home, "nobox")):
+    if listed("oldlimit", sid):     # its redrawn history: a limit reply from before the reset, then a short turn
+        sys.stdout.write("  \u23bf  You've hit your weekly limit \u00b7 resets 12pm\r\n\u23fa Usage limit reached \u00b7 "
+                         "set to continue automatically at 12pm\r\n\r\n\u276f hello again\r\n\r\n\u23fa Hello.\r\n")
+    sys.stdout.write("\r\n" + "─" * 40 + "\r\n❯ \r\n" + "─" * 40 + "\r\n  ⏵⏵ bypass permissions on\r\n")
+    if os.path.exists(os.path.join(home, "limitnotice")):     # what Claude Code 2.1.330 shows at the weekly limit
+        sys.stdout.write("  ⚠ Usage limit reached · limit resets 12pm\r\n    Continuing automatically at 12pm · "
+                         "Esc to cancel · /usage-credits to\r\n    continue now\r\n")
+    try:    # a person's own status line, as tall as the number in `tallstatus`, under everything else
+        for i in range(int(open(os.path.join(home, "tallstatus")).read())):
+            sys.stdout.write(f"  STATUS{i} folder · branch · context 4% · week 17% used · cpu 6%\r\n")
+    except (OSError, ValueError):
+        pass
+    sys.stdout.flush()
 # whatever is typed into this "session" is written down, one line each
 end = time.time() + 900
 while time.time() < end:
@@ -133,3 +155,7 @@ while time.time() < end:
         break
     with open(os.path.join(home, "typed.jsonl"), "a") as f:
         f.write(json.dumps({"sid": sid, "text": line.rstrip("\r\n")}) + "\n")
+    if os.path.exists(os.path.join(home, "limitqueue")):    # what Claude Code 2.1.330 shows: the message is held
+        sys.stdout.write("  \u23bf  You've hit your weekly limit \u00b7 resets 12pm\r\n\u23fa Usage limit reached \u00b7 "
+                         "set to continue automatically at 12pm\r\n")
+        sys.stdout.flush()

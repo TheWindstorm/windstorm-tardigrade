@@ -47,12 +47,13 @@ update the plugin.
 |---|---|
 | `tardigrade setup` | Switches it on. From then on, sessions come back after a restart by themselves. |
 | `tardigrade census` | Lists every session: running with a window, running with **no window open**, and down. |
+| `tardigrade report` | The last restore's timeline (boot, first and last start, the count, the tabs) and what still needs you. |
 | `tardigrade open` | Opens a terminal window for each hidden session. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
 | `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
-| `tardigrade uninstall` | Switches it off. Running sessions and your record are not touched. |
+| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log are yours and stay; to remove them as well, delete `~/.config/windstorm-tardigrade` and `~/.local/state/windstorm-tardigrade` afterwards. |
 
 In Claude Code you can say these in plain words. In a terminal, each is
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py <command>`.
@@ -81,16 +82,46 @@ DOWN: on the record, not running now
 "Quiet" is the time since the session last did anything. A hidden session that has been quiet for nine days is
 usually one you forgot.
 
+A session that is running but will not come back after a reboot is listed under RUNNING, BUT WILL NOT COME BACK,
+with the reason: it was started after the last record (the next record takes it), a setting leaves it out, or it is
+some program's own session.
+
 ## What comes back, and what does not
 
-**Comes back:** the conversation, the session's name, its folder, its model, effort and permission mode, and its
-tmux session under the same name.
+**Comes back:** the conversation, the session's name, its folder, its model, effort and permission mode, every
+other start flag it had (see below), and its tmux session under the same name.
 
 **Does not come back:** anything the session had running in the background: timers, watchers, background commands.
 Tardigrade cannot restart those. Instead it tells each revived session, in one message, that they are gone, so the
 session checks its notes and starts again what is still needed. The message is typed into the session once Claude
 Code reports it loaded and idle, and never into one that shows a question. It costs one turn per session. To bring
 sessions back silent instead, put `"wake": "idle"` in `~/.config/windstorm-tardigrade/config.json`.
+
+**A note at a usage limit waits.** A message typed into a session whose login is at its limit is not lost: Claude
+Code holds it and runs it by itself when the limit resets, perhaps hours later, with nobody there. So no note is typed
+into a session whose conversation last ended on a usage or limit reply, nor beside a limit notice on its screen. A
+session at its limit that has not yet met it in its own conversation can still get one; Tardigrade looks once more
+after each note, and if it is held for the reset, the log and the counts say so ("note queued until the reset"). A
+limit belongs to the login, not to one conversation: once a note just typed meets the limit (the limit words appear
+after it), no other session on the same login gets a note in that run. A limit reply already in a conversation, or on
+a screen after a resume (which shows history), holds that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. To drop a held note, press Esc in that
+session. Tardigrade does not press it for you. Your own words for the note (`wake_text`) must not read like a limit
+notice ("hit your weekly limit", "continue automatically", "/usage-credits"): `setup` names such words, and the
+default note is used in their place. The same goes for your status line: Tardigrade reads the lines under Claude
+Code's input box however many there are, so a status line that prints words such as "usage limit" or "limit
+reached" holds that session's note, and one that changes into such words right after a note marks its login as at
+its limit. Keep those words out of your status line.
+
+**A session you ended with `/exit` stays ended**, also when the machine restarts minutes later. Tardigrade
+reads it from Claude Code's prompt history (`~/.claude/history.jsonl`), for the sessions on its record only: of
+those lines it keeps the time and whether it is exactly `/exit` or `/quit`, and nothing else. To bring such a
+session back anyway: `revive --only <its id>`. One known edge: a session being moved to another login at the very
+moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down; `revive --only
+<its name>` brings it back.
+
+**A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
+wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
+"needs you" and nothing is typed into it.
 
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
 session with the same name, folder and flags.
@@ -106,6 +137,36 @@ Tardigrade brings back, in the folder that session was already running in, it an
 question, and it writes each answer in its log. It counts only the dialog that is open at the foot of the screen:
 a conversation that merely quotes the question gets no key, and neither does a screen with a usage or limit
 dialog on it.
+
+### Start flags
+
+A session comes back with the flags it was started with, word for word: `--plugin-dir`, `--settings`,
+`--mcp-config`, `--allowed-tools`, `--name` (with the name the session has now) and the rest. These are not carried:
+
+- the ones that name a conversation or pass a first message (`--resume`, `--continue`, `--session-id`,
+  `--fork-session`, `--from-pr`, `--teleport`, `--print`, and the words of a first message). A revive gives its own
+  `--resume`;
+- the ones that would start something other than this session in this place (`--worktree`, `--tmux`, `--bg`,
+  `--desktop`, `--cloud`, `--environment`);
+- a flag whose value looks like it holds a secret: one that names a key, a token or an authorization header, or
+  has the shape of a common key or token. It stays out of the record and the log;
+- `--settings`, `--mcp-config` and `--agents` given as inline JSON: only a file's path is carried;
+- a flag this version does not know, when the word after it may be its value.
+
+Each flag that is not carried is named in the log the first time a record sees it, with the reason, never dropped
+silently. A first message is never written down.
+
+`--remote-control` is carried. A session started with it comes back with Remote Control on, which 0.1.7 did not
+do, and the log says so the first time a record sees it.
+
+The record, the table at `tsv_path`, the progress file and the log are readable by you only (0600), in folders
+that are yours only (0700), because they hold start flags word for word.
+
+**The first minutes:** a restore starts several sessions at a time (`starts_at_once`), so on a machine with many
+sessions the last can take a while. From the first minute, each place a session will come back to (its tmux
+session, and its Herdr tab) holds a waiting screen that says it is coming back, how many are back, and not to
+start it by hand, because two copies of one session would both act. The screen takes no input. The session
+replaces it when its turn comes. `census` says that a restore is running, and `report` prints its timeline after.
 
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
@@ -155,8 +216,14 @@ Setup tells you this for your machine. It never changes it for you.
 | Key | Default | Meaning |
 |---|---|---|
 | `wake` | `"note"` | `"note"` tells each revived session what happened. `"idle"` says nothing. |
+| `wake_names` / `wake_skip` | `[]` | Patterns of session names: `wake_names` get the note even with `"wake": "idle"`; `wake_skip` never get it. |
+| `wake_text` | | Your own words for the note. `{when}` is the time it came back. |
+| `notes_per_min` | `6` | At most this many notes typed in one minute, so many sessions do not all take a turn at once. |
 | `stagger_s` | `3` | Seconds between two session starts. |
+| `retry_gap_s` | `60` | Seconds between retry rounds for a start that did not come up. A start that is only a little late is looked at in every pass meanwhile. |
+| `starts_at_once` | `4` | At most this many sessions started and not yet seen up. The wait after each start overlaps with the next starts; the decision to start is still made one session at a time. Lower it on a small machine. |
 | `boot_window_min` | `40` | The boot service acts only on a machine up for less than this. |
+| `boot_wait_s` | `45` | Seconds the boot service waits before its run. Run setup again after changing it. |
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
 | `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
@@ -165,6 +232,9 @@ Setup tells you this for your machine. It never changes it for you.
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
+
+On a small machine, set `starts_at_once` to 2, and, if the machine must stay usable while sessions come back, a
+`load_max` of about twice its number of cores. Right after a boot most of the load is the boot itself.
 
 The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 `~/.local/state/windstorm-tardigrade/tardigrade.log`.
@@ -178,7 +248,7 @@ accounts, or shown in another tool.
 |---|---|---|
 | `claude_command` | `"claude"` | The command that starts Claude Code. The session's flags and `--resume <id>` are added to it. |
 | `account_env` | | The name of an environment variable that holds a session's account label, if your wrapper sets one. A label, never a secret. |
-| `account_command` | | Used in place of `claude_command` for a session that had a label, for example `"my-wrapper use {account}"`. |
+| `account_command` | | Used in place of `claude_command` for a session that had a label, for example `"my-wrapper use {account}"`. The start file sets the `account_env` variable to the label before it runs this command, so the wrapper need not put it back. |
 | `start_command` | | Your own whole start line, in place of the three above. Placeholders: `{session_id}` `{cwd}` `{name}` `{model}` `{effort}` `{mode}` `{account}` `{tmux_session}` and `{flags}` (the session's exact flags). Each is quoted for the shell. |
 | `env_file` | | A file of `NAME=value` lines (or NUL-separated, as `env -0` writes) added to each revived session's environment. For a desktop's display and session bus, which a boot service does not have. Names that look like a secret's are left out, and so are the variables that belong to the starting shell (its folder, user id, terminal). |
 | `tmux_conf` | | A tmux config file for a tmux server that Tardigrade has to start. |
@@ -190,6 +260,7 @@ accounts, or shown in another tool.
 | `herdr_default_workspace` | | With Herdr: the workspace for a session that has a tab label and no workspace. |
 | `tsv_path` | | Also write the record as a tab-separated table with eight columns at this path, for tools that read one. `tsv_socket` limits it to one tmux socket name. |
 | `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
+| `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. For a machine where someone or something should be told. |
 
 Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is exactly what will run.
 
