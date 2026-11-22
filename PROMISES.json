@@ -348,7 +348,7 @@
   },
   {
    "id": "T25",
-   "seen": "2026-11-22, on two real machines before any reboot: at the weekly limit Claude Code shows 'Usage limit reached ... /usage-credits to continue now' under an ordinary, empty input box. Released 0.1.7 looks for 'usage credits' with a space and so misses the notice: it would type the wake-up note there. Typing it does no harm beyond a wasted message, because the box is the ordinary one and not a list of choices.",
+   "seen": "2026-11-22, on two real machines before any reboot: at the weekly limit Claude Code shows 'Usage limit reached ... /usage-credits to continue now' under an ordinary, empty input box. Released 0.1.7 looks for 'usage credits' with a space and so misses the notice: it would type the wake-up note there. Typing it does no harm beyond a wasted message, because the box is the ordinary one and not a list of choices. CORRECTED 2026-11-22, an ungraceful restart of a Mac test machine on 0.1.7: the harm is more than a wasted message. 0.1.7 typed its note into two sessions on a login at its weekly limit; Claude Code answered that the limit was hit and QUEUED the note, to run by itself as a turn at the reset, about 9 hours later, in auto mode, when what it asks ('check what was in progress') may be stale. On one of them the note line comes before the limit lines, so a resumed session may show no notice until its first turn.",
    "promise": "The wake-up note is never typed into a session whose screen shows a usage or limit notice, whatever its form.",
    "codon": "G2.40",
    "owner": "maintainer",
