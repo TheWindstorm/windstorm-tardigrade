@@ -677,7 +677,7 @@
    "first_ship_in": "0.1.8.2",
    "ship_in": "0.1.8.2",
    "test": "test_G2_49_a_start_finds_claude_by_the_path_setting_not_by_the_boot_services_path",
-   "proven": "",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM (tmux 3.4, Claude Code 2.1.330 in ~/.local/bin, no login, made-up sessions): with the released 0.1.8.1 every start at boot said \"claude: command not found\" and none came back; on commit 1e4df53 two boots each brought all three back (\"3 started, 0 failed\", count LOADED=3), each resumed as itself with its own conversation on screen, and a revived session's PATH was the default first, then the boot service's other folders (/usr/local/sbin, /usr/games, /usr/local/games, /snap/bin), once each. On five machines of ours, read only, the patch's dry run listed the same sessions with the same start lines as 0.1.8.1, and no revived session would lose a PATH folder it had before.",
    "issue": 51,
    "moved_why": "",
    "moved_by_person": ""
