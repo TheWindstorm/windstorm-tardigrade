@@ -2652,7 +2652,7 @@ class Promises(unittest.TestCase):
         import re
         self.rows = jload(os.path.join(ROOT, "PROMISES.json"))["rows"]
         self.version = self.v(re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1))
-        self.tests = set(re.findall(r"def (test_[A-Za-z0-9_]+)\(", fread(os.path.abspath(__file__))))
+        self.tests = set(gate_collected(fread(os.path.abspath(__file__)))[0])     # what the runner collects (G7.3)
         self.plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
 
     @staticmethod
