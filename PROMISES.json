@@ -793,6 +793,20 @@
    "issue": 62,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T57",
+   "seen": "2026-11-23, read from a Mac test machine's log of 2026-11-22: five sessions were started by hand the same way, through the machine's login wrapper with the account label set, and each ran its first turn on that account. Two kept the account on their rows (every later start by revive carried it: 25 of 25 and 22 of 22 start lines). Three, started together in one loop, did not: none of their 14 start lines each carries an account, so the restores of that night started them on the machine's own login. No line said so (not record, census, revive or on_done). They took turns on a login their owner never chose, and two of them met that login's weekly limit. Cause not read yet.",
+   "promise": "a session recorded with an account comes back on that account or not at all, and census names it; it never comes back on a different login in silence. A later record never drops a row's account without a log line saying so. The cause is read first; if it is T27's (a login the restore cannot give back), the two rows are joined and both say so.",
+   "codon": "G2.51",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 63,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

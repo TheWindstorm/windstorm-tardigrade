@@ -32,6 +32,9 @@
   Claude Code (2.1.113 and later ship the native program); start nothing by hand while a restore runs. The occasional
   G4.4 failure in CI was this window, seen through the test's stand-in: the suite now starts its stand-in so that it
   is named "claude" from its first instant, as the native program is.
+- Known edge until 0.1.10 (T57): a session started on an account has been seen to lose its label from its record
+  row, so the next restart started it on the machine's own login without a word. After starting such a session, check
+  that its line in `revive --dry-run --all` ends in `[account NAME]`.
 - Not in 0.1.9, moved by the skills' department head: T12, T14, T19, T27, T30 and T32 to 0.1.10 (the checks before a
   planned reboot), T11, T16 and T22 to 0.1.11. What you can meet before then is in the README: a session moved
   between logins at a restart, a session started with a login token in its environment, a variable set by hand,
