@@ -3077,11 +3077,19 @@ def report_cmd():
     print(f"  run began             {at(began)}" + (f"   ({began_text(rep)})" if rep.get("boot_run") else ""))
     print(f"  first start           {at(rep.get('first_start'))}")
     print(f"  last start            {at(rep.get('last_start'))}")
-    print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started, "
-          f"{len(rep.get('loaded', []))} loaded, {len(rep.get('not_loaded', []))} not loaded, "
-          f"{len(rep.get('down_again', []))} down again, {len(rep.get('skipped', []))} already running"
-          + (f", {len(rep['left_out'])} never started (print-mode runs, folders left alone)" if rep.get("left_out") else "")
-          + (f"   ({ago(rep['counted_at'] - booted)} after boot)" if rep.get("boot_run") and rep.get("counted_at") else ""))
+    if rep.get("cannot_tell") and not rep.get("counted_at"):
+        # T53: a run that gave up was not counted; zeros here would read like a count
+        print(f"  counted               -   not counted: it started nothing, as it could not tell which sessions "
+              f"already run ({rep['cannot_tell']})")
+    elif rep.get("cannot_tell"):
+        print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started; loaded, not "
+              f"loaded and down again not counted: it could not tell ({rep['cannot_tell']})")
+    else:
+        print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started, "
+              f"{len(rep.get('loaded', []))} loaded, {len(rep.get('not_loaded', []))} not loaded, "
+              f"{len(rep.get('down_again', []))} down again, {len(rep.get('skipped', []))} already running"
+              + (f", {len(rep['left_out'])} never started (print-mode runs, folders left alone)" if rep.get("left_out") else "")
+              + (f"   ({ago(rep['counted_at'] - booted)} after boot)" if rep.get("boot_run") and rep.get("counted_at") else ""))
     tabs = rep.get("tabs") or {}
     if tabs.get("attached") or tabs.get("not"):
         print(f"  tabs                  {len(tabs.get('attached', []))} attached, {len(tabs.get('not', []))} not")

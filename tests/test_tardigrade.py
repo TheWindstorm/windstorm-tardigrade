@@ -2049,6 +2049,16 @@ class Revive(Base):
         self.assertEqual(fread(done).strip(), "the process list could not be read (ps ended with code 1)|0|unknown")
         rc, out = self.tg("report")
         self.assertIn("nothing was started: it could not tell which sessions already run", out)
+        # its header gives no count: zeros there would read like one (seen on a real machine, 2026-11-23)
+        head = [x for x in out.splitlines() if x.strip().startswith("counted")]
+        self.assertEqual(len(head), 1, out)
+        self.assertIn("not counted: it started nothing, as it could not tell which sessions already run", head[0])
+        self.assertNotRegex(head[0], r"\d+ (loaded|not loaded|down again|already running)")
+        # a run whose count could not read the process list: what it started is a count; the rest is not
+        jdump(dict(rep, started=["Alpha Lane"], counted_at=int(time.time())), self.state("last-revive.json"))
+        head = [x for x in self.tg("report")[1].splitlines() if x.strip().startswith("counted")][0]
+        self.assertIn("1 started; loaded, not loaded and down again not counted: it could not tell", head)
+        self.assertNotRegex(head, r"\d+ (loaded|not loaded|down again)")
 
     def test_G2_50_a_start_is_decided_on_a_read_taken_after_the_load_wait(self):
         """T52, found in a trace on 2026-11-23: with load_max set, a restore read the process list, then waited for
