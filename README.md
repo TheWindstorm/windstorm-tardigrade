@@ -11,11 +11,11 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.7, a pilot.** It has been through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.9, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
-> this version found faults, which is what they were for; after the fixes every session came back every time,
-> all 98 included. That last reboot also showed what is still wrong: it took 25 minutes and told nobody what it
-> was doing. See [Tested](#tested) for what is proven, and [PROMISES.json](PROMISES.json) for what it now owes.
+> that version found faults, which is what they were for; after the fixes every session came back every time, all
+> 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
+> See [Tested](#tested) for what is proven on which version, and [PROMISES.json](PROMISES.json) for what it owes.
 
 ## Install
 
@@ -29,10 +29,9 @@ claude plugin install windstorm-tardigrade@windstorm-tardigrade
 
 Then start Claude Code and say: **set up tardigrade**.
 
-Installed as a plugin before 2026-11-22? Run `claude plugin marketplace update windstorm-tardigrade`, then `claude
-plugin update windstorm-tardigrade@windstorm-tardigrade`. If it still says an older version than 0.1.8.2, run `claude
-plugin uninstall windstorm-tardigrade@windstorm-tardigrade` and `claude plugin install
-windstorm-tardigrade@windstorm-tardigrade`, then set up again.
+Installed as a plugin before? Run `claude plugin marketplace update windstorm-tardigrade`, then `claude plugin update
+windstorm-tardigrade@windstorm-tardigrade` (seen to bring the new script once the plugin's version label had
+changed, as it has in 0.1.9), then set up again: setup is what refreshes the copy the boot service and the timer run.
 
 Without the plugin system, it is one file:
 
@@ -43,15 +42,22 @@ python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 
 Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute
 timer for your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs
-no administrator rights and it tells you who has to log in after a restart (see below). Run setup again after you
-update the plugin.
+no administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
+copy: run it again after you update the plugin.
 
-What a stock machine needs: nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
+Taking the plugin off with Claude Code's own `claude plugin uninstall` does not take off what setup installed. The
+boot service still brings your sessions back after a restart, and the 5-minute record timer still runs, both from
+the copy in `~/.local/share/windstorm-tardigrade/`. To take them off, run
+`python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall`. Your settings, record and log stay.
+
+What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
 first, then the other folders of the `PATH` of whoever runs the restore: at boot, the boot service's (which on
 Linux usually lacks `~/.local/bin`); in a `revive` you type, your shell's. If yours is elsewhere, set `path` (see
 [Settings](#settings)). 0.1.8 and 0.1.8.1 did not bring sessions back on a Linux machine whose service `PATH` lacks
-the folder Claude Code is installed in; fixed in 0.1.8.2.
+the folder Claude Code is installed in; fixed in 0.1.8.2. On a Mac it has been seen working only on Macs that already
+had Apple's developer tools and a newer Python installed; a Mac with neither has not been seen. 0.1.9 was seen
+working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 
 ## What you get
 
@@ -174,6 +180,10 @@ silently. A first message is never written down.
 
 `--remote-control` is carried. A session started with it comes back with Remote Control on, which 0.1.7 did not
 do, and the log says so the first time a record sees it.
+
+Known edge until 0.1.10 (T70): the permission mode that census and the dry run show is the start flag. A session
+that Claude Code runs in another mode was shown as "default" (seen once, with auto mode), and it came back in the
+mode Claude Code kept for it.
 
 The record, the table at `tsv_path`, the progress file and the log are readable by you only (0600), in folders
 that are yours only (0700), because they hold start flags word for word.
@@ -309,6 +319,22 @@ Before a planned reboot, run `tardigrade revive --dry-run --all` and read the li
 
 ## Tested
 
+Seen on 0.1.9, 2026-11-23:
+
+- **A real restart of a Mac** (an Intel desktop, macOS 13, in its main account, which carries Apple's developer
+  tools and a newer Python; Claude Code 2.1.330), set up over 0.1.8.1, with two sessions that had Herdr tabs and
+  Herdr not running. Both came back by themselves, one process each, were asked "trust this folder?" and answered
+  (`trust on`), and were loaded and woken four minutes after boot. The first pass said at once that Herdr was not
+  running and that 2 tabs would wait for it; 30 minutes later the log said its server never came up and left the
+  tabs as they were. Nothing tried to start Herdr. The record ran during the watch, once every start was done.
+- **A folder left alone, on that Mac:** a `claude` sat at its first screen in a `skip_cwd_prefix` folder. A
+  whole-system file watch showed nothing of Tardigrade opening its session file or its conversation. A log of every
+  `ps` and `lsof` it ran (steered: a shim on `PATH`) showed only the read of its folder naming that process. The
+  in-process read of a process's arguments could not be watched there.
+- **The uninstall line, as printed** (a fresh Ubuntu 24.04 VM, Claude Code 2.1.330, the plugin installed):
+  `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall` removed the boot service, the timer and
+  the installed copy, and kept settings, record and log.
+
 Proven on 0.1.7, on real machines, 2026-11-21:
 
 - **A real reboot of a shared Linux machine with 98 sessions**, the first time that machine relied on this skill.
@@ -347,7 +373,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 65 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 119 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
@@ -379,8 +405,8 @@ not built, and refuse the next one until the promise has been seen to work on a 
 
 ## Where it comes from
 
-The record-and-revive engine was built and run by an AI agent on The Windstorm's own fleet from November 2026, on a
-machine with about 100 Claude Code sessions. This plugin is that engine made general, with the census added.
+The record-and-revive engine was built by an AI agent in November 2026 and has run since then on the computers it was
+built on, one of them a machine with about 100 Claude Code sessions. This plugin is that engine made general, with the census added.
 
 Other tools restore terminal layouts (tmux-resurrect, tmux-continuum, Zellij) and a few small ones resume Claude
 Code sessions. Use what fits you. This one is for people who run many sessions and want them back without doing

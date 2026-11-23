@@ -523,7 +523,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G3_6_the_record_runs_again_once_every_start_is_done",
-   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM of mine (tmux 3.4, Claude Code 2.1.330, no login, made-up sessions), on 14295fa (0.1.9 cafdfc9 with the T48 fix; the same T37 code as the candidate): a boot with three sessions, one held at its folder's trust question for the whole watch. Census said \"do not start them by hand\" only until every start was done (12 s), then \"Every start is done\"; the record timer ran during the watch (\"record: 3 session(s), 0 down\" at 5:20:54 PM ET) while the run still watched. 0.1.8.1's record at the same point skipped (\"a revive is running\").",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM of mine (tmux 3.4, Claude Code 2.1.330, no login, made-up sessions), on 14295fa (0.1.9 cafdfc9 with the T48 fix; the same T37 code as the candidate): a boot with three sessions, one held at its folder's trust question for the whole watch. Census said \"do not start them by hand\" only until every start was done (12 s), then \"Every start is done\"; the record timer ran during the watch (\"record: 3 session(s), 0 down\" at 5:20:54 PM ET) while the run still watched. 0.1.8.1's record at the same point skipped (\"a revive is running\"). Also seen 2026-11-23 on a Mac (an Intel desktop, macOS 13, in its main account, which carries Apple's developer tools and a newer Python; Claude Code 2.1.330; 0.1.9 candidate 9540296), in a real restart with two sessions: the last start was 11 s after the run began; census during the watch said \"Every start is done\" and did not say to wait before starting any by hand; the record timer's first run after boot, 3 minutes after the last start, ran (\"record: 2 session(s), 0 down\") while the run still watched for Herdr's tabs, and it ran every 5 minutes after.",
    "issue": 38,
    "moved_why": "",
    "moved_by_person": ""
@@ -537,7 +537,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G2_42_only_the_newest_few_boot_markers_are_kept_and_they_are_private",
-   "proven": "",
+   "proven": "2026-11-23, on a Mac (an Intel desktop, macOS 13, in its main account, which carries Apple's developer tools and a newer Python; Claude Code 2.1.330; 0.1.9 candidate 9540296), set up over 0.1.8.1 and then a real restart: 14 boot markers before; setup kept the newest five; the two that 0.1.9 wrote (setup's and this boot's) are readable by the person only (0600); the three it kept from earlier versions kept their old, wider mode (0644) and age out as new boots replace them (within three boots there). Proven for what was seen: 0.1.9 keeps the newest five and writes its own private; tightening the ones it keeps is T69 (0.1.10).",
    "issue": 39,
    "moved_why": "",
    "moved_by_person": ""
@@ -579,7 +579,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G1_15_a_process_in_a_folder_to_leave_alone_has_only_its_folder_read",
-   "proven": "",
+   "proven": "Linux half seen 2026-11-22 on a Linux test machine (Claude Code 2.1.280), on 1310169 (the same T41 code as 0.1.9; what changed after is wording): strace, following the tool and its children, showed census, record, revive and the dry run reading only /proc/<pid>/cwd of a claude in a skip_cwd_prefix folder from the tool's own code, while the system's ps opened more of every process (procps-ng 4.0.4), as the promise says. Two reads found on 7ecdf19 were fixed first (495bacb, 1310169), and the test fails on the old code. Mac half seen 2026-11-23 on a Mac (an Intel desktop, macOS 13, in its main account, which carries Apple's developer tools and a newer Python; Claude Code 2.1.330; 0.1.9): one claude sat at its first screen in a folder named by skip_cwd_prefix and took no turn. A whole-system file watch showed nothing of the tool opening that session's file or its conversation, only the folder's own path being looked up (at that screen Claude Code had written neither yet, so an attempt would have shown as a failed open, and none did). A log of every ps and lsof the tool ran (steered: a shim on PATH) showed the read of its folder as the only call naming that process. The census said one Claude process was left alone and not brought back, the record wrote the two recorded sessions only, and the dry run did not name it. Not watched: the in-process read of a process's arguments, which could not be seen on that Mac; from the code, the skip check comes before any such read.",
    "issue": 44,
    "moved_why": "",
    "moved_by_person": ""
@@ -621,7 +621,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G4_10_a_restore_says_at_once_when_herdr_is_not_running",
-   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM of mine (tmux 3.4, Claude Code 2.1.330, no login, made-up sessions), on candidate 1e2eb14: the config named a Herdr path, no Herdr server ran, and the record's three rows had tabs. First pass \"Herdr is not running: 3 tab(s) wait for it (up to 10 minutes after the sessions have loaded); Tardigrade does not start Herdr\"; census \"Herdr is not running: 3 tab(s) not attached\"; the late line \"herdr: its server never came up; tabs left as they are\"; on_done got 3 in {herdr_tabs_not_attached} and in TARDIGRADE_HERDR_TABS_NOT_ATTACHED; report \"Herdr was not running: 3 tab(s) not attached\". Nothing tried to start Herdr.",
+   "proven": "2026-11-22, a stock Ubuntu 24.04 cloud VM of mine (tmux 3.4, Claude Code 2.1.330, no login, made-up sessions), on candidate 1e2eb14: the config named a Herdr path, no Herdr server ran, and the record's three rows had tabs. First pass \"Herdr is not running: 3 tab(s) wait for it (up to 10 minutes after the sessions have loaded); Tardigrade does not start Herdr\"; census \"Herdr is not running: 3 tab(s) not attached\"; the late line \"herdr: its server never came up; tabs left as they are\"; on_done got 3 in {herdr_tabs_not_attached} and in TARDIGRADE_HERDR_TABS_NOT_ATTACHED; report \"Herdr was not running: 3 tab(s) not attached\". Nothing tried to start Herdr. Also seen 2026-11-23 on a Mac (an Intel desktop, macOS 13, in its main account, which carries Apple's developer tools and a newer Python; Claude Code 2.1.330; 0.1.9 candidate 9540296), in a real restart, no Herdr server, two rows with tabs, and no Herdr path in the config (found on its own): first pass \"Herdr is not running: 2 tab(s) wait for it (up to 30 minutes after the sessions have loaded); Tardigrade does not start Herdr\"; census \"Herdr is not running: 2 tab(s) not attached; the restore attaches them when Herdr appears (Tardigrade does not start it)\"; 30 minutes after loading \"herdr: its server never came up; tabs left as they are\"; report \"Herdr was not running: 2 tab(s) not attached\". Nothing tried to start Herdr. on_done is not set on that Mac, so its count was not seen there.",
    "issue": 47,
    "moved_why": "",
    "moved_by_person": ""
@@ -705,7 +705,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G7_4_every_place_that_states_the_version_says_the_same_one",
-   "proven": "",
+   "proven": "2026-11-23, CI run 45123053626 on 9540296 (the 0.1.9 candidate), both jobs (Python 3.10 and 3.13): test_G7_4_every_place_that_states_the_version_says_the_same_one ... ok, among 119 tests, and \"gate: 112 named test(s) passed in this run\". The test leans on no stand-in: it reads the repository's own files. The fault it holds was seen on a fresh Ubuntu 24.04 VM on 2026-11-22 (this row's seen).",
    "issue": 54,
    "moved_why": "",
    "moved_by_person": ""

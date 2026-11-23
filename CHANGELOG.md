@@ -6,11 +6,9 @@
   running that version. The plugin's manifest (`.claude-plugin/plugin.json`) said 0.1.7 in 0.1.8, 0.1.8.1 and
   0.1.8.2, and Claude Code keys a plugin's folder on that label. Seen on a stock Ubuntu VM with Claude Code 2.1.330:
   installed at 0.1.8, then `claude plugin marketplace update` and `claude plugin update` said "already at the
-  latest version (0.1.7)" and kept 0.1.8's script, so running setup again installed 0.1.8 again. What to do:
-  `claude plugin uninstall windstorm-tardigrade@windstorm-tardigrade`, then `claude plugin install
-  windstorm-tardigrade@windstorm-tardigrade` (seen to bring the newest script), then setup again (`set up
-  tardigrade`). From 0.1.9 the manifest says the script's version, and the suite fails when they differ (T50); with
-  the label changed, `claude plugin update` was seen to update.
+  latest version (0.1.7)" and kept 0.1.8's script, so running setup again installed 0.1.8 again. From 0.1.9 the
+  manifest says the script's version, and the suite fails when they differ (T50); with the label changed, `claude
+  plugin update` was seen to update. Then run setup again: it refreshes the copy the services run.
 - **A read that failed is "cannot tell", never "nothing runs"** (T52, T53, T55; seen in a probe on 0.1.8.2, each read
   made to fail in turn). In every earlier version a process-list read that failed or timed out came back as an empty
   list. Then:
