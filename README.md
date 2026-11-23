@@ -200,6 +200,11 @@ Setup tells you this for your machine. It never changes it for you.
 
 - **Never a second copy.** A session id that any live process of yours holds is never started. Two copies of one
   session would both act.
+  Known edge in 0.1.8.x, fixed in 0.1.9 (T52, T53): when the process list cannot be read (for example, a machine so
+  loaded that `ps` fails or does not answer within 30 s), census can report running sessions as down, and a restore
+  can start a second copy of a session that was started by hand meanwhile; with `load_max` set, a session started by
+  hand during a restore's load wait can also be started again. Until 0.1.9: start nothing by hand while a restore
+  runs, and check with your terminal multiplexer (`tmux ls`) before believing "down".
 - **A session comes back with the permission mode it had.** If it ran with permission checks switched off, it comes
   back that way, with nobody watching, and the opening message gives it one turn. You chose that mode when you
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use
