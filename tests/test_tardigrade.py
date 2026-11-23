@@ -2718,6 +2718,10 @@ class Strand(unittest.TestCase):
             "marked as skipped": src[:a] + '    @unittest.skip("planted")\n' + blk + src[b:],
             "skipped with skipTest": src[:a] + blk.replace('"""\n', '"""\n        self.skipTest("planted")\n', 1) + src[b:],
             "skipIf with no reason": src[:a] + "    @unittest.skipIf(True)\n" + blk + src[b:],
+            "skipIf(True) with a reason": src[:a] + '    @unittest.skipIf(True, "needs Linux")\n' + blk + src[b:],
+            "skipUnless on a sum": src[:a] + '    @unittest.skipUnless(1 == 2, "needs tmux")\n' + blk + src[b:],
+            "skipTest under if True": src[:a] + blk.replace('"""\n', '"""\n        if True:\n            self.skipTest("needs Linux")\n', 1) + src[b:],
+            "a return before its first line": src[:a] + blk.replace('"""\n', '"""\n        return\n', 1) + src[b:],
             "shadowed by a later empty test": src[:b] + f"    def {name}(self):\n        pass\n\n" + src[b:],
             "only its text in a string at column 0": src[:a] + src[b:] + f'\nPLANTED = """\ndef {name}(self):\n"""\n',
         }
@@ -2750,6 +2754,18 @@ def gate_named():
 def _deco_kind(d):
     f = d.func if isinstance(d, ast.Call) else d
     return (f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""), d
+
+
+def _machine_free(expr):
+    """True if a skip's condition can be worked out without the machine (True, 1 == 1, not False): it names nothing,
+    so it is the same everywhere, and a skip on it is a skip whatever the machine, whatever its reason says"""
+    if any(isinstance(x, (ast.Name, ast.Attribute, ast.Call)) for x in ast.walk(expr)):
+        return False
+    try:
+        eval(compile(ast.Expression(expr), "<gate>", "eval"), {"__builtins__": {}}, {})
+        return True
+    except Exception:
+        return False
 
 
 def gate_collected(src):
@@ -2796,9 +2812,15 @@ def gate_problems(src, named):
                 probs.append(f"{n}: {kind} whatever the machine")
             elif kind in ("skipIf", "skipUnless") and not (isinstance(d, ast.Call) and len(d.args) + len(d.keywords) >= 2):
                 probs.append(f"{n}: {kind} with no reason")
+            elif kind in ("skipIf", "skipUnless") and _machine_free(d.args[0] if d.args else d.keywords[0].value):
+                probs.append(f"{n}: {kind} on a condition that is the same on every machine")
         body = [b for b in f.body if not (isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant))]
-        if not body or all(isinstance(b, ast.Pass) for b in body):
+        if not body or all(isinstance(b, ast.Pass) for b in body) or isinstance(body[0], ast.Return):
             probs.append(f"{n}: its body does nothing")
+        for b in body:
+            if isinstance(b, ast.If) and _machine_free(b.test) and any(
+                    isinstance(x, ast.Attribute) and x.attr == "skipTest" for x in ast.walk(ast.Module(b.body, []))):
+                probs.append(f"{n}: skipTest under a condition that is the same on every machine")
         for b in body:
             if (isinstance(b, ast.Expr) and isinstance(b.value, ast.Call) and isinstance(b.value.func, ast.Attribute)
                     and b.value.func.attr == "skipTest"):
