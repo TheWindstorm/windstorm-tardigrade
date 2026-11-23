@@ -1003,6 +1003,48 @@
    "issue": 77,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T72",
+   "seen": "2026-11-23, a shared Linux machine running 0.1.9 as a service: a fleet view read the service's version from the VERSION line of the installed copy on disk. That file says what is installed, not what ran. The boot run writes its version into its log line (\"=== revive v0.1.9 ...\"); the record run's log line and the record itself carry no version of the program (the record's \"version\": 1 is its table format). Read in the code the same day: setup replaces the installed copy by writing over it in place, so a record run the timer starts at that instant could read a half-written file.",
+   "promise": "every record names the program version that wrote it, as a key of its own in the record (\"tardigrade\": \"<version>\") and in its log line, so a read-only probe can say from the newest record which version runs, without matching the wording of a message: seen this version, seen an older one, or not yet readable (no record written since the installed copy changed), and the third is never counted as the first. Setup writes the copy to a temporary file in the same folder and renames it into place. The README says there is no long-lived process: the timer starts a fresh run from the installed file every five minutes, so a new version runs within five minutes of setup, and the boot run uses the file that is there at boot. A test holds the key, the log line and the rename.",
+   "codon": "G3.25",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 78,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T73",
+   "seen": "2026-11-23, another skill's round on a stock Linux virtual machine whose setup also installs a systemd user unit: setup made ~/.config, ~/.config/systemd and ~/.config/systemd/user (none exist on a stock home), uninstall left them behind empty, and its census did not name them; `systemctl --user enable` made links under default.target.wants and timers.target.wants that neither its dry run nor its list of places named. Tardigrade 0.1.9 does the same: setup makes ~/.config/systemd/user, ~/.config/windstorm-tardigrade, ~/.local/state/windstorm-tardigrade and ~/.local/share/windstorm-tardigrade with any missing parents; uninstall removes the units, the copy and the copy's folder, and no parent it made; the dry run and the README do not name the enable links.",
+   "promise": "setup writes, in its own folder, the list of folders it made that were not there before; uninstall removes those again when they are empty, deepest first, and leaves any folder with something in it; when that list cannot be read, it removes no folder and says so. The dry run, the README's list of places and the census name the two links `systemctl --user enable` makes (under default.target.wants and timers.target.wants), and the .wants folders when setup made them. A test holds the list, the removal and the unreadable-list case.",
+   "codon": "G3.26",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 79,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T74",
+   "seen": "2026-11-23, on another project: a program a skill bundles had rewritten a person's ssh authorized_keys by its own default, and nobody had looked, because each check compared only the places the skill named. Tardigrade's own proofs so far also compared the folders it names, not the whole home.",
+   "promise": "before each release, on a stock machine, the whole home is listed (every file and folder, hidden ones included: name, size, time, mode, sha256) before setup, after a real restart that brings sessions back, and after uninstall, with the same listing tool each time; every difference is one the README names. What tmux and Claude Code write because Tardigrade started them counts as Tardigrade's and is named. The bare plugin install is a proof of its own: after the two install lines, nothing of Tardigrade exists outside Claude Code's own plugin places and no process of it runs. A difference the README does not name stops the release.",
+   "codon": "G3.27",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 80,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
