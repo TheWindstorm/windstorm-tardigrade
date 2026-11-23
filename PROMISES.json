@@ -975,6 +975,20 @@
    "issue": 75,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T70",
+   "seen": "2026-11-23, a real Mac (macOS 13, Claude Code 2.1.330) at 0.1.9: a session started with no permission flag was shown as \"default\" by census and the dry run, while Claude Code showed it in auto mode, before the restart and after it (its conversation's own mode field said auto throughout; no setting named a default mode). It came back in the mode Claude Code kept for it; only the word on the screen was wrong.",
+   "promise": "census, the dry run and the record's words say what Tardigrade knows, the flags a session was started with (\"started with no mode flag; Claude Code's own setting for that conversation applies\"), and never name a mode they did not read; a test holds the words for a session started with no mode flag.",
+   "codon": "G3.23",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 76,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
