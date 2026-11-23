@@ -270,6 +270,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G5.8 | The boot run logs how long after boot it began and what it waited for: the user's services coming up (Linux) and its own fixed wait, now the setting `boot_wait_s` (default 45 s, written into the boot service by setup; a shorter default only after a real machine has shown it safe). Census's line for a running restore and `report` show it. | `test_G5_8_the_boot_run_says_when_it_began_and_what_it_waited_for` |
 | G5.9 | `setup`'s first record is a plain record: sessions that vanished together are held on the record as the timer's record holds them (G1.11), so installing or upgrading on a machine whose sessions are down forgets none of them. Only a person's own `record --force` lets them go (T35). | `test_G5_9_setup_keeps_sessions_that_are_down_on_the_record` |
 | G5.10 | Due in 0.1.10 (T51). `setup` says which version was installed and which is now, and says it plainly when the new one is older; it never moves a machine backwards in silence. | Not built yet. |
+| G5.11 | Due in 0.1.10 (T58). The lowest Python the tool runs on is named in the README and the skill, and CI runs it. Every command checks it first; below it, the command stops with the version found and where the tool does run, having made nothing. The script stays readable by Python 3.6's grammar so that line is reached. | Not built yet. |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
 ### G7 Tests
