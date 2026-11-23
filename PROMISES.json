@@ -853,7 +853,7 @@
   {
    "id": "T61",
    "seen": "2026-11-23, read in .github/workflows/tests.yml: both jobs run on ubuntu-latest, which moved under a sister skill and took Python 3.9 with it; and the workflow runs on every push and every pull request, so each commit of a pull request is checked twice.",
-   "promise": "every job names its runner image (such as ubuntu-24.04), never latest; the workflow runs on pull requests, and on pushes only to main and release-* branches; a test reads the workflow and fails on either. With T58.",
+   "promise": "every job names its runner image (such as ubuntu-24.04), never latest; the workflow runs on pull requests, and on pushes only to main and release-* branches; a newer push to a pull request cancels that pull request's older runs by itself (a concurrency group per pull request, cancel in progress), never on main or a release branch; if a Mac job is ever added, a pull request runs one (the floor's Python) and the full matrix runs on main and release-*; a test reads the workflow and fails on any of these. With T58.",
    "codon": "G7.5",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
@@ -909,7 +909,7 @@
   {
    "id": "T65",
    "seen": "2026-11-23, read in the code: the tool prints no numbered block for the person (\"tell the person 1 of N\"); the skill asks the agent to show setup's last lines word for word, and no test reads every stop and needs-you line.",
-   "promise": "what a person must hear is one numbered block printed by the tool, last before a stop, short enough to be pasted whole; every stop and needs-you line names what happened and the one next step; what is only good to know stays in the README; a test reads every such line.",
+   "promise": "what a person must hear is one numbered block printed by the tool, last before a stop, short enough to be pasted whole; every stop and needs-you line names what happened and the one next step; what is only good to know stays in the README; a test reads every such line. Every command the tool prints for a person (an install line, a switch-off line, a next step) has been run exactly as printed on that kind of system, its prompts answered by hand; where none has been, the line says what is missing, what that means and where to read, not an untried command.",
    "codon": "G3.20",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
