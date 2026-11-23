@@ -3,6 +3,7 @@
 They run a stand-in `claude` (tests/fake_claude.py) inside a private tmux folder and a private HOME, so no
 real session, no real tmux server and no service is touched. Linux only. Run: python3 -m unittest -v
 """
+import ast
 import json
 import os
 import shutil
@@ -29,24 +30,67 @@ def fread(path):
         return f.read()
 
 
+def gone_soon(find, within=5.0):
+    """What find() still lists after waiting up to `within` seconds for it to list nothing (G7.2). A process that was
+    told to end exits a moment later, so a test that reads once can see it still there; one that stays is still caught."""
+    end = time.time() + within
+    while True:
+        left = find()
+        if not left or time.time() >= end:
+            return left
+        time.sleep(0.2)
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "scripts", "tardigrade.py")
 FAKE = os.path.join(ROOT, "tests", "fake_claude.py")
 FAKE_HERDR = os.path.join(ROOT, "tests", "fake_herdr.py")
 TMUX = shutil.which("tmux")
+REAL_PS = shutil.which("ps")
 WAIT = float(os.environ.get("TARDIGRADE_TEST_WAIT", "40"))
+
+# Zero survivors: a test's tmux servers and stand-ins end even when the run itself is stopped. unittest runs no
+# tearDown or cleanup on SIGTERM (timeout, a stopped job) or SIGHUP (a closed terminal), so the live tests' own
+# cleanups run here first. Each test registers its cleanup the moment its folder exists.
+LIVE = []
+
+
+def _end_live(*_):
+    for t in list(LIVE):
+        t.end_all()
+
+
+def _on_signal(signum, _frame):
+    _end_live()
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
+for _sig in (signal.SIGTERM, signal.SIGHUP):
+    signal.signal(_sig, _on_signal)
+import atexit  # noqa: E402
+atexit.register(_end_live)
 
 
 @unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
 class Base(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="tg", dir="/tmp")
+        self.tmp = tempfile.mkdtemp(prefix="tg", dir=os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
+        self.pids, self.loose = [], []
+        LIVE.append(self)
+        self.addCleanup(self.end_all)     # runs even when setUp fails after this line, or tearDown raises
         self.home = os.path.join(self.tmp, "h")
         self.bin = os.path.join(self.tmp, "bin")
         self.work = os.path.join(self.tmp, "work")
         for d in (self.home, self.bin, self.work):
             os.makedirs(d)
-        shutil.copy(FAKE, os.path.join(self.bin, "claude"))
+        # The stand-in is named "claude" from its first instant, as the native program (and npm from 2.1.113) is: its
+        # first line names its interpreter directly, and a process started from a script keeps the script's name.
+        # Through its own /usr/bin/env line it is "python3" until Python has loaded: the window of Claude Code from npm
+        # at 2.1.112 or older (T56), kept in tests/fake_claude.py as the fixture of T56's test, built with its cure.
+        # G4.4 failed about once in a hundred runs on that window (traced 2026-11-23).
+        with open(FAKE) as f, open(os.path.join(self.bin, "claude"), "w") as g:
+            g.write(f"#!{sys.executable}\n" + f.read().split("\n", 1)[1])
         os.chmod(os.path.join(self.bin, "claude"), 0o755)
         self.path = f"{self.bin}:/usr/local/bin:/usr/bin:/bin"
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",
@@ -59,20 +103,56 @@ class Base(unittest.TestCase):
         self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1, "retry_gap_s": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
-        self.pids, self.loose = [], []
 
-    def tearDown(self):
-        # end only what this test started, each by its exact process id
-        for row in self.launches():
-            self.kill(row["pid"])
-        for pid in self.pids:
-            self.kill(pid)
-        self.end_loose()
+    def end_all(self):
+        """end only what this test started, each by its exact process id; every step runs even if one fails"""
+        if self not in LIVE:
+            return
+        LIVE.remove(self)
+        steps = [lambda: [self.kill(r.get("pid")) for r in self.launch_rows_as_far_as_written()],
+                 lambda: [self.kill(p) for p in self.pids],
+                 self.end_loose]
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                pass
         for s in self.sockets():
-            rc, out = self.tmux(s, "display", "-p", "#{pid}")
-            if rc == 0 and out.strip().isdigit():
-                self.kill(int(out.strip()))
+            try:
+                rc, out = self.tmux(s, "display", "-p", "#{pid}")
+                if rc == 0 and out.strip().isdigit():
+                    self.kill(int(out.strip()))
+            except Exception:
+                pass
+        # anything else of this test's still running: a tardigrade run in flight when the run was stopped carries
+        # the test's folder only in its HOME, not on its command line. Each is ended by its exact process id.
+        mine = self.processes_of_this_test()
+        for pid in mine:
+            self.kill(pid)
+        end = time.time() + 3
+        while time.time() < end and any(os.path.exists(f"/proc/{p}") for p in mine):
+            time.sleep(0.1)
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def processes_of_this_test(self):
+        """this user's processes whose command line or environment names this test's folder (never this one)"""
+        found, me, key = [], os.getpid(), self.tmp.encode()
+        for p in os.listdir("/proc"):
+            if not p.isdigit() or int(p) == me:
+                continue
+            try:
+                if os.stat(f"/proc/{p}").st_uid != os.getuid():
+                    continue
+                with open(f"/proc/{p}/cmdline", "rb") as f:
+                    hit = key in f.read()
+                if not hit:
+                    with open(f"/proc/{p}/environ", "rb") as f:
+                        hit = key in f.read()
+            except OSError:
+                continue
+            if hit:
+                found.append(int(p))
+        return found
 
     def end_loose(self):
         """end the sessions this test started outside tmux, each by its exact process id"""
@@ -88,8 +168,8 @@ class Base(unittest.TestCase):
     @staticmethod
     def kill(pid):
         try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
+            os.kill(int(pid), signal.SIGTERM)
+        except (OSError, TypeError, ValueError):
             pass
 
     def cfg(self, d):
@@ -119,6 +199,22 @@ class Base(unittest.TestCase):
             return [json.loads(x) for x in fread(os.path.join(self.home, "launches.jsonl")).splitlines() if x.strip()]
         except OSError:
             return []
+
+    def launch_rows_as_far_as_written(self):
+        """for the cleanup: every whole row, so a stand-in caught mid-write cannot hide the ones before it"""
+        rows = []
+        try:
+            text = fread(os.path.join(self.home, "launches.jsonl"))
+        except OSError:
+            return rows
+        for x in text.splitlines():
+            try:
+                r = json.loads(x)
+            except ValueError:
+                continue
+            if isinstance(r, dict):
+                rows.append(r)
+        return rows
 
     def wait_launches(self, n):
         end = time.time() + WAIT
@@ -200,6 +296,61 @@ class Base(unittest.TestCase):
 
     def state(self, name):
         return os.path.join(self.home, ".local", "state", "windstorm-tardigrade", name)
+
+    # ----- failed reads (T52, T53, T55): a read that failed is "cannot tell", never "nothing runs" -----
+    def ps_breaks(self):
+        """a ps in front of the real one: it fails (exit 1) while HOME/psfail exists, and notes each failure"""
+        p = os.path.join(self.bin, "ps")
+        with open(p, "w") as f:
+            f.write(f'#!/bin/sh\nif [ -e "$HOME/psfail" ]; then echo x >> "$HOME/ps-failed"; exit 1; fi\nexec {REAL_PS} "$@"\n')
+        os.chmod(p, 0o755)
+
+    def ps_fail(self, on=True):
+        f = os.path.join(self.home, "psfail")
+        if on:
+            open(f, "w").close()
+        elif os.path.exists(f):
+            os.remove(f)
+
+    def tmux_breaks(self, how, only=()):
+        """a tmux in front of the real one whose list-panes fails (exit 1) or does not answer (sleeps past the
+        6 s the script waits) while HOME/tmuxfail exists: on every socket, or only on the sockets listed in it;
+        everything else goes to the real tmux"""
+        p = os.path.join(self.bin, "tmux-breaks")
+        act = "exit 1" if how == "fails" else "exec sleep 9"
+        with open(p, "w") as f:
+            f.write('#!/bin/sh\nif [ -e "$HOME/tmuxfail" ]; then\n'
+                    '  if [ ! -s "$HOME/tmuxfail" ] || grep -qxF -- "$2" "$HOME/tmuxfail"; then\n'
+                    f'    for a; do [ "$a" = list-panes ] && {{ {act}; }}; done\n  fi\nfi\nexec {TMUX} "$@"\n')
+        os.chmod(p, 0o755)
+        self.cfg({"tmux": p})
+        with open(os.path.join(self.home, "tmuxfail"), "w") as f:
+            f.write("".join(s + "\n" for s in only))
+
+    def logged(self, text):
+        try:
+            return fread(self.state("tardigrade.log")).count(text)
+        except OSError:
+            return 0
+
+    def until(self, cond, what):
+        end = time.time() + WAIT
+        while time.time() < end:
+            if cond():
+                return
+            time.sleep(0.1)
+        self.fail(f"waited {WAIT:g} s for: {what}")
+
+    def by_hand(self, sid, session):
+        """a person starts this session by hand, in a tmux session of their own; returns when it runs"""
+        n = len(self.launches())
+        self.tmux(self.sock, "new-session", "-d", "-s", session, "-c", self.work, f"MY_SETTING=byhand claude --resume {sid}")
+        self.wait_launches(n + 1)
+
+    def revive_bg(self, boot_id, **over):
+        return subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                                env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100", TARDIGRADE_FAKE_BOOT_ID=boot_id, **over),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
 
 class Record(Base):
@@ -325,6 +476,69 @@ class Record(Base):
         self.assertEqual(([r["name"] for r in t["lanes"]], t["down"]), (["Alpha Lane"], []))
 
 
+    def test_G1_15_a_process_in_a_folder_to_leave_alone_has_only_its_folder_read(self):
+        agents = os.path.join(self.tmp, "agents")
+        os.makedirs(os.path.join(agents, "a1"))
+        a = self.start_lane("alpha", "Alpha Lane")
+        before = len(self.launches())                   # another tool's agent, with something of its own in its environment
+        rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", "agent1", "-c", os.path.join(agents, "a1"),
+                          f"AGENT_OWN_WORDS=not-for-us FAKE_SID={uuid.uuid4()} FAKE_NAME='Agent One' claude --agent-own-flag")
+        self.assertEqual(rc, 0)
+        self.wait_launches(before + 1)
+        agent_pid = self.launches()[-1]["pid"]
+        self.tg("record", "--force")                    # recorded once, before the setting: revive must still leave it
+        self.assertEqual(sorted(r["name"] for r in self.table()["lanes"]), ["Agent One", "Alpha Lane"])
+        old_row = [r for r in self.table()["lanes"] if r["name"] == "Agent One"][0]
+        self.cfg({"skip_cwd_prefix": [agents]})
+        rc, out = self.tg("record", "--force")
+        t = self.table()
+        self.assertEqual([r["name"] for r in t["lanes"]], ["Alpha Lane"], out)
+        self.assertEqual([r["name"] for r in t["down"]], [], "a session left alone is not down: it is not ours")
+        rc, out = self.tg("census")
+        self.assertIn("Left alone in a skip_cwd_prefix folder: 1 Claude process(es). Only their folder read; not brought back.", out)
+        self.assertNotIn("Agent One", out)
+        # nothing more of it is read by our code: not its environment, its arguments or its status file
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        tg.HOME, tg.CFG["skip_cwd_prefix"] = self.home, [agents]
+        read = []
+        for fn in ("env_facts", "argv_of", "session_json", "has_tty"):
+            real = getattr(tg, fn)
+            setattr(tg, fn, (lambda real: lambda pid, *x, **k: (read.append(pid), real(pid, *x, **k))[1])(real))
+        tg.live(with_launch=False)
+        tg.running_sids()
+        self.assertNotIn(agent_pid, read)
+        self.assertEqual(tg.LEFT_ALONE[0], 1)
+        # a row for it that was recorded before the setting is never started
+        self.reboot()
+        t = self.table()
+        t["lanes"] = t["lanes"] + [old_row]
+        jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        # seen on a real machine (strace): revive opened such a row's conversation, to look for an /exit, before
+        # it saw the folder. Its conversation ends on /exit here: a revive that reads it says "ended it with /exit".
+        cd = os.path.join(self.home, ".claude", "projects", "-agents-a1")
+        os.makedirs(cd, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() + 5)) + ".000Z"
+        with open(os.path.join(cd, old_row["session_id"] + ".jsonl"), "w") as f:
+            f.write(json.dumps({"type": "user", "timestamp": stamp, "entrypoint": "sdk-cli", "message": {"content":
+                                "<command-name>/exit</command-name>\n<command-message>exit</command-message>"}}) + "\n")
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 1)
+        time.sleep(2)
+        self.assertEqual([x["sid"] for x in self.launches()[n:]], [a], out)
+        self.assertIn("skip  Agent One: its folder is in skip_cwd_prefix; left alone, never started", out)
+        self.assertNotIn("ended it with /exit", out)
+        # nor does a record that finds nothing live read it (its conversation also says print-mode run: a record
+        # that read it would move it to the down list)
+        self.reboot()
+        rc, out = self.tg("record")
+        self.assertIn("record: 0 live sessions; kept the previous record (2 sessions)", out)
+        self.assertNotIn("print-mode run", out)
+        self.assertEqual(sorted(r["name"] for r in self.table()["lanes"]), ["Agent One", "Alpha Lane"])
+
     def test_G1_9_a_session_outside_tmux_is_recorded_for_the_socket_and_prefix_in_the_settings(self):
         self.cfg({"loose_socket": "work", "loose_prefix": "pane-", "loose_skip": ["^$", "^scratch"]})
         sid = self.start_loose("Docs Rewrite")
@@ -402,6 +616,63 @@ class Record(Base):
                                 "message": {"model": "claude-sonnet-5-5", "content": []}}) + "\n")
         self.tg("record", "--force")
         self.assertEqual(self.table()["lanes"][0]["model"], "claude-sonnet-5-5")
+
+    def test_G1_18_a_failed_pane_or_process_read_leaves_the_record_as_it_was(self):
+        """T55, seen 2026-11-23 in a probe on 0.1.8.2 and on the 0.1.9 candidate: with tmux list-panes failing, record
+        rewrote both sessions from their tmux places to "no terminal" under new names, so the next restore would put
+        them elsewhere. The pane list (like the process list) is one shared read: when it fails nothing is known
+        about any session's place, and record writes nothing that pass. A socket left by a tmux server that is gone
+        (after a reboot) is not a failed read."""
+        self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        before = fread(table)
+        self.ps_breaks()
+        for broken, why in (("ps", "the process list could not be read (ps ended with code 1)"),
+                            ("tmux fails", "did not list its panes (tmux ended with code 1)"),
+                            ("tmux does not answer", "did not list its panes (no answer within 6 s)")):
+            if broken == "ps":
+                self.ps_fail()
+            else:
+                self.ps_fail(False)
+                self.tmux_breaks("fails" if broken == "tmux fails" else "hangs")
+            time.sleep(1.1)                               # a record that wrote would change last_seen
+            rc, out = self.tg("record")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("record: skipped (", out, broken)
+            self.assertIn(why, out, broken)
+            self.assertIn("the record is kept as it was", out, broken)
+            self.assertEqual(fread(table), before, f"{broken}: the record changed")
+        # a skip that lasts an hour is named by census (from the review: the log alone is read by nobody)
+        sk = jload(self.state("record-skipped.json"))
+        self.assertLessEqual(sk["since"], time.time())
+        self.assertIn("did not list its panes", sk["why"])
+        jdump(dict(sk, since=sk["since"] - 3700), self.state("record-skipped.json"))
+        self.assertIn("RECORD NOT WRITTEN since", self.tg("census")[1])
+        os.remove(os.path.join(self.home, "tmuxfail"))
+        # a stale socket, left by a tmux server that was killed, is "no panes there", as before: the record is written
+        other = os.path.join(os.path.dirname(self.sock), "gone")
+        self.tmux(other, "new-session", "-d", "-s", "x", "sleep 600")
+        pid = int(self.tmux(other, "display", "-p", "#{pid}")[1].strip())
+        os.kill(pid, signal.SIGKILL)
+        self.until(lambda: not os.path.exists(f"/proc/{pid}"), "the killed tmux server to go")
+        self.assertTrue(os.path.exists(other), "the socket of a killed server stays behind")
+        rc, out = self.tg("record")
+        self.assertNotIn("skipped", out)
+        self.assertIn("record: 2 session(s)", out)
+        self.assertEqual([(r["host"], r["tmux_session"]) for r in self.table()["lanes"]], [("tmux", "alpha"), ("tmux", "beta")])
+        self.assertFalse(os.path.exists(self.state("record-skipped.json")), "the reads work again")
+        self.assertNotIn("RECORD NOT WRITTEN", self.tg("census")[1])
+        # a server that answers but cannot list its panes, on a socket no recorded session lives on (a test
+        # socket, another program's), does not stop the record: one wedged server would freeze it for days
+        stray = os.path.join(os.path.dirname(self.sock), "stray")
+        self.tmux(stray, "new-session", "-d", "-s", "y", "sleep 600")
+        self.tmux_breaks("fails", only=[stray])
+        rc, out = self.tg("record")
+        self.assertNotIn("skipped", out)
+        self.assertIn("record: 2 session(s)", out)
+        self.tmux(stray, "kill-server")
 
 
 class Revive(Base):
@@ -733,6 +1004,53 @@ class Revive(Base):
         rc, out = self.tg("revive", "--only", e)
         self.assertEqual(rc, 0, out)
         self.wait_launches(n + 1)
+
+    def print_conversation(self, sid, *entrypoints):
+        """a conversation whose lines name these entrypoints in turn, as Claude Code writes them"""
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, sid + ".jsonl"), "w") as f:
+            for ep in entrypoints:
+                for kind, text in (("user", "Run the shell command sleep 200"), ("assistant", "ok")):
+                    f.write(json.dumps({"type": kind, "entrypoint": ep, "sessionId": sid,
+                                        "message": {"role": kind, "content": text}}) + "\n")
+
+    def test_G2_47_a_row_whose_conversation_is_a_print_mode_run_is_never_started(self):
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        c = self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")                    # the record 0.1.8 could write: beta and gamma were claude -p runs
+        self.reboot()
+        self.print_conversation(b, "sdk-cli")
+        self.print_conversation(c, "sdk-cli", "cli")    # gamma's was resumed by hand in a terminal later: a session again
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        time.sleep(2)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([a, c]), out)
+        self.assertIn("skip  Beta Lane: its conversation is a print-mode or SDK run (entrypoint sdk-cli)", out)
+        # seen on a real machine: it is not "already running"; it is never started at all
+        self.assertIn("revive: 2 started, 0 already running, 0 failed, 0 need you, 1 never started (print-mode runs, "
+                      "folders left alone)", out)
+        src = fread(SCRIPT)                     # and a print-mode run still running is a helper, not a DOWN row
+        cd = src[src.index("def census_data():"):src.index("coming = [r for r in down", src.index("def census_data():"))]
+        self.assertIn('and r["session_id"] not in held_now', cd)
+        rc, out = self.tg("revive", "--only", b)
+        self.assertEqual(rc, 1, out)
+        rc, out = self.tg("census")
+        self.assertIn("a print-mode run (claude -p), never brought back", out)
+        # with nothing running, the record keeps the record before it, but not the print-mode run
+        self.reboot()
+        rc, out = self.tg("record")
+        self.assertIn("print-mode run(s) moved to the down list: Beta Lane", out)
+        t = self.table()
+        self.assertEqual(sorted(r["session_id"] for r in t["lanes"]), sorted([a, c]))
+        self.assertEqual([(r["session_id"], r.get("ended")) for r in t["down"]], [(b, "print-run")])
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 2)
+        time.sleep(2)
+        self.assertEqual(sorted(x["sid"] for x in self.launches()[n:]), sorted([a, c]), out)
 
     def test_G2_12_with_trust_on_the_question_is_answered_for_the_sessions_own_folder(self):
         rc, out = self.tg("trust", "on")
@@ -1072,6 +1390,21 @@ class Revive(Base):
         u = src[src.index("def uninstall():"):src.index("def trust_cmd():")]
         self.assertIn('shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)', u)
 
+    def test_G2_42_only_the_newest_few_boot_markers_are_kept_and_they_are_private(self):
+        # T38: seen on a Linux machine, 14 markers in two days, at mode 664, the old ones never read again
+        os.makedirs(self.state(""), exist_ok=True)
+        for i in range(8):
+            p = self.state(f"revived-old-boot-{i}")
+            with open(p, "w") as f:
+                f.write("x\n")
+            os.chmod(p, 0o664)
+            os.utime(p, (time.time() - 86400 + i * 60,) * 2)
+        self.recorded_then_rebooted()
+        self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-new")
+        left = sorted(f for f in os.listdir(self.state("")) if f.startswith("revived-"))
+        self.assertEqual(left, sorted(["revived-boot-new"] + [f"revived-old-boot-{i}" for i in (4, 5, 6, 7)]))
+        self.assertEqual(os.stat(self.state("revived-boot-new")).st_mode & 0o777, 0o600)
+
     def test_G2_16_a_start_command_from_the_settings_replaces_the_start_line(self):
         self.script("mystart", '#!/bin/bash\nprintf "%s|" "$@" >> "$HOME/mystart.log"\nexec claude --resume "$1"\n')
         self.cfg({"start_command": "mystart {session_id} {mode} {model} {name} {flags}"})
@@ -1249,7 +1582,7 @@ class Revive(Base):
             d = json.loads(self.tg("census", "--json")[1])
             self.assertIn("Echo Lane", [r["name"] for r in d["sessions"]["coming_back"]])
             self.assertNotIn("Echo Lane", [r["name"] for r in d["sessions"]["hidden"] + d["sessions"]["with_window"]])
-            self.assertIn("a revive is running", self.tg("record")[1])
+            self.assertIn("a revive is starting sessions", self.tg("record")[1])
             # a person starts delta by hand somewhere else during the wait; another closes gamma's waiting screen
             d_sid = ids[3]
             self.tmux(self.sock, "new-session", "-d", "-s", "byhand", "-c", self.work, f"claude --resume {d_sid}")
@@ -1268,18 +1601,20 @@ class Revive(Base):
             self.assertNotIn("INVOCATION_ID", x["seen"])
             self.assertNotIn("JOURNAL_STREAM", x["seen"])
             self.assertFalse(x["child"])
-        waiters = []                                               # this test's own, by the HOME it gave them
-        for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
-            try:
-                with open(f"/proc/{pid}/cmdline", "rb") as f:
-                    cmd = f.read()
-                if b"tardigrade.py\0wait" in cmd:
-                    with open(f"/proc/{pid}/environ", "rb") as f:
-                        if f"HOME={self.home}".encode() in f.read().split(b"\0"):
-                            waiters.append(pid)
-            except OSError:
-                pass
-        self.assertEqual(waiters, [], "a waiting screen outlived its turn")
+        def waiters():                                             # this test's own, by the HOME it gave them
+            found = []
+            for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        cmd = f.read()
+                    if b"tardigrade.py\0wait" in cmd:
+                        with open(f"/proc/{pid}/environ", "rb") as f:
+                            if f"HOME={self.home}".encode() in f.read().split(b"\0"):
+                                found.append(pid)
+                except OSError:
+                    pass
+            return found
+        self.assertEqual(gone_soon(waiters), [], "a waiting screen outlived its turn")
         for s in ("alpha", "beta", "gamma", "echo"):
             self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", f"={s}:", "@tardigrade_waiting")[1].strip(), "")
         rep = jload(self.state("last-revive.json"))
@@ -1382,23 +1717,23 @@ class Revive(Base):
         call = src.index("type_note(r, self.note_for")
         self.assertIn("not OTHER_DIALOG.search(near_box(screen, 15))", src[call - 500:call])
 
-    def limit_reply(self, sid, then=()):
-        """a conversation whose last turn is Claude Code's limit reply (as 2.1.330 writes it), then `then`"""
+    def limit_reply(self, sid, then=(), age_s=60, text="You've hit your weekly limit \u00b7 resets 12pm (America/New_York)"):
+        """a conversation whose last turn is Claude Code's limit reply (as 2.1.330 writes it), then `then`. By default
+        written a minute ago, so the reset it names is still ahead (G2.48)."""
         d = os.path.join(self.home, ".claude", "projects", "-work")
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, sid + ".jsonl"), "w") as f:
-            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 3 * 86400)) + ".000Z"   # 3 days old
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - age_s)) + ".000Z"
             for e in ({"type": "user", "timestamp": stamp, "message": {"content": "carry on"}},
                       {"type": "assistant", "timestamp": stamp, "isApiErrorMessage": True, "error": "rate_limit", "message": {
-                          "model": "<synthetic>", "content": [{"type": "text", "text":
-                              "You've hit your weekly limit \u00b7 resets 12pm (America/New_York)"}]}},
+                          "model": "<synthetic>", "content": [{"type": "text", "text": text}]}},
                       {"type": "system", "subtype": "informational", "level": "notice"}, {"type": "cost-state"}) + tuple(then):
                 f.write(json.dumps(e) + "\n")
 
     def test_G2_45_no_note_into_a_conversation_that_ended_on_a_limit_and_a_note_held_for_the_reset_is_named(self):
         # seen on a real machine: a note typed at the weekly limit is not lost; Claude Code holds it and runs it
-        # by itself at the reset, hours later. Alpha's conversation ended on a limit reply 3 days ago: no note for
-        # it. That reply is no evidence that the login is at its limit NOW, so Beta and Gamma, on the same
+        # by itself at the reset, hours later. Alpha's conversation ended on a limit reply a minute ago, whose reset
+        # is still ahead: no note for it. That reply is no evidence that the login is at its limit NOW, so Beta and Gamma, on the same
         # login, still get theirs.
         a = self.start_lane("alpha", "Alpha Lane")
         self.start_lane("beta", "Beta Lane")
@@ -1453,6 +1788,48 @@ class Revive(Base):
         self.assertNotEqual(k({"account": "A"}), k({"account": "B"}))
         self.assertNotEqual(k({"token_print": "p1"}), k({"token_print": "p2"}))
         self.assertNotEqual(k({}), k({"config_dir": "/elsewhere"}))
+
+    def test_G2_48_a_limit_reply_holds_the_note_only_while_its_reset_is_ahead(self):
+        import datetime as D
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        z = lambda w: D.datetime.fromisoformat(w.replace("Z", "+00:00")).timestamp()
+        weekly, five = "You've hit your weekly limit \u00b7 resets ", "You've hit your 5-hour limit \u00b7 resets "
+        # real reply texts from one weekend; the moment comes from the reply's own time and zone, never today's clock
+        for text, written, reset in [
+                (weekly + "12pm (America/New_York)", "2026-11-21T20:00:00Z", "2026-11-22T17:00:00Z"),   # the next noon there
+                (weekly + "12pm (America/New_York)", "2026-11-22T15:00:00Z", "2026-11-22T17:00:00Z"),   # the same day
+                (weekly + "Nov 24, 6pm (America/New_York)", "2026-11-22T15:00:00Z", "2026-11-24T23:00:00Z"),  # its own day
+                (weekly + "Jan 2, 6pm (America/New_York)", "2026-12-30T15:00:00Z", "2027-01-02T23:00:00Z"),   # next year
+                (five + "2:10pm (America/New_York)", "2026-11-22T16:00:00Z", "2026-11-22T19:10:00Z")]:
+            self.assertEqual(tg.limit_reset(text, z(written)), z(reset), text)
+        for text in ("Usage limit reached \u00b7 limit resets 12pm", weekly + "Nov 8, 12pm",          # no zone named
+                     weekly + "12pm (Not/AZone)", "You've hit your weekly limit"):
+            self.assertIsNone(tg.limit_reset(text, z("2026-11-22T16:00:00Z")), text)        # cannot be read: held
+        self.assertIsNone(tg.limit_reset(weekly + "12pm (America/New_York)", 0))              # no time of its own
+        # a restore: Alpha's reply reset days ago and gets its note; Beta's names a day still ahead; Gamma's names
+        # no zone; neither of those two gets one
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        c = self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")
+        ahead = D.datetime.now(D.timezone.utc) + D.timedelta(days=3)
+        self.limit_reply(a, age_s=3 * 86400)
+        self.limit_reply(b, text=weekly + ahead.strftime("%b ") + str(ahead.day) + ", 6pm (UTC)")
+        self.limit_reply(c, age_s=3 * 86400, text="Usage limit reached \u00b7 limit resets 12pm")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.wait_launches(n + 3)
+        self.assertEqual([x["sid"] for x in self.typed()], [a], out)
+        self.assertRegex(out, r"Alpha Lane: its last limit reply \(\"You've hit your weekly limit \u00b7 resets 12pm "
+                              r"\(America/New_York\)\"\) reset at \d{4}-\d\d-\d\d \d\d:\d\d .*; the wake-up note is typed")
+        self.assertIn("Beta Lane: its conversation last ended on a usage or limit reply", out)
+        self.assertIn("Gamma Lane: its conversation last ended on a usage or limit reply", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["noted"], sorted(rep["note_not_typed"])), (["Alpha Lane"], ["Beta Lane", "Gamma Lane"]))
 
     def test_G2_45_an_old_limit_reply_on_a_screen_holds_that_session_only(self):
         # after a resume the foot of the screen is history: Alpha's shows a limit reply from before the reset above
@@ -1568,6 +1945,143 @@ class Revive(Base):
         self.assertEqual((rep["loaded"], rep["not_loaded"], rep["down_again"]), ([], ["Alpha Lane"], []))
         self.assertEqual(self.typed(), [])      # and nothing is typed into a session that has not loaded
 
+    def test_G2_50_a_restore_that_cannot_read_the_process_list_starts_nothing_on_it(self):
+        """T52, seen 2026-11-23 in a probe on 0.1.8.2 and on the 0.1.9 candidate: with ps failing, a restore started a
+        second copy of a session a person had started by hand. The failed read was an empty list: "nobody holds it".
+        A failed read is "cannot tell": nothing is started in that pass, it says so, and it reads again at the next.
+        The read fails here at each point in turn: before the first start, between two starts, at a retry pass."""
+        self.ps_breaks()
+        self.cfg({"starts_at_once": 1, "retry_gap_s": 1})
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        g = self.start_lane("gamma", "Gamma Lane")
+
+        def restores(n, sid):          # starts of this session by the restore (not by hand) since launch n
+            return [x for x in self.launches()[n:] if x["sid"] == sid and x["seen"].get("MY_SETTING") != "byhand"]
+
+        def finish(run):
+            try:
+                return run.communicate(timeout=180)[0]
+            finally:
+                if run.poll() is None:
+                    run.kill()
+
+        # 1. before the first start: alpha was started by hand after the reboot, and the first read fails
+        self.tg("record", "--force")
+        self.reboot()
+        self.by_hand(a, "hand-a")
+        n, said = len(self.launches()), self.logged("so it starts nothing now")
+        self.ps_fail()
+        run = self.revive_bg("boot-1")
+        try:
+            self.until(lambda: self.logged("so it starts nothing now") > said + 1, "two passes with the first read failing")
+            self.assertEqual(self.launches()[n:], [], "something was started on a failed read")
+        finally:
+            self.ps_fail(False)
+        out = finish(run)
+        self.assertIn("It cannot tell which sessions are already running, so it starts nothing now", out)
+        self.assertIn("skip  Alpha Lane: already running on this machine", out)
+        self.assertEqual(restores(n, a), [], out)
+        self.assertEqual((len(restores(n, b)), len(restores(n, g))), (1, 1), out)
+
+        # 2. between two starts: the restore's first start (alpha) makes ps fail; gamma is started by hand meanwhile
+        self.tg("record", "--force")
+        self.reboot()
+        on = os.path.join(self.home, "psfailon")
+        with open(on, "w") as f:
+            f.write(a)
+        n, said = len(self.launches()), self.logged("so nothing is started in this pass")
+        run = self.revive_bg("boot-2")
+        try:
+            self.until(lambda: restores(n, a), "the restore's first start")
+            self.by_hand(g, "hand-g")
+            self.until(lambda: self.logged("so nothing is started in this pass") > said, "a start decided on a failed read")
+        finally:
+            os.remove(on)
+            self.ps_fail(False)
+        out = finish(run)
+        self.assertIn("cannot tell whether", out)
+        self.assertEqual(restores(n, g), [], f"gamma ran (by hand) while the read failed: never started again\n{out}")
+        self.assertIn("Gamma Lane: something else started it meanwhile (tmux default:hand-g)", out)
+        self.assertEqual((len(restores(n, a)), len(restores(n, b))), (1, 1), out)
+
+        # 3. at a retry pass: alpha's first start ends at once; before its retry a person starts it by hand, and the
+        # retry pass's read fails
+        self.tg("record", "--force")
+        self.reboot()
+        self.cfg({"retry_gap_s": 8})
+        open(os.path.join(self.home, "failonce"), "w").close()
+        n, tried, said = (len(self.launches()), self.logged("Alpha Lane: not running yet (attempt 1)"),
+                          self.logged("cannot tell whether Alpha Lane"))
+        run = self.revive_bg("boot-3")
+        try:
+            self.until(lambda: self.logged("Alpha Lane: not running yet (attempt 1)") > tried, "alpha's first start to fail")
+            self.by_hand(a, "hand-a3")
+            self.ps_fail()
+            self.until(lambda: self.logged("cannot tell whether Alpha Lane") > said, "the retry pass to read and fail")
+        finally:
+            self.ps_fail(False)
+        out = finish(run)
+        self.assertEqual(len(restores(n, a)), 1, f"alpha: its first start only (it ended at once), never again\n{out}")
+        self.assertIn("Alpha Lane: something else started it meanwhile (tmux default:hand-a3)", out)
+
+    def test_G2_50_a_restore_whose_first_read_keeps_failing_starts_nothing_and_reports_it(self):
+        """T52, from the review: a restore whose first read of the process list fails for all of retry_min starts
+        nothing, and says so where a person or a program looks: this boot's report (never the last boot's), and
+        on_done, with the reason in TARDIGRADE_CANNOT_TELL and "unknown" for what could not be counted."""
+        self.ps_breaks()
+        done = os.path.join(self.home, "done")
+        self.cfg({"retry_min": 0.05, "retry_gap_s": 1,
+                  "on_done": f'echo "$TARDIGRADE_CANNOT_TELL|{{started}}|{{down}}" > {done}'})
+        self.start_lane("alpha", "Alpha Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        self.ps_fail()
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S="100", TARDIGRADE_FAKE_BOOT_ID="boot-z")
+        self.ps_fail(False)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.launches()[n:], [], out)
+        self.assertIn("revive: started nothing: the process list could not be read", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["boot"], rep["started"]), ("boot-z", []))
+        self.assertIn("could not be read", rep["cannot_tell"])
+        self.assertEqual(fread(done).strip(), "the process list could not be read (ps ended with code 1)|0|unknown")
+        rc, out = self.tg("report")
+        self.assertIn("nothing was started: it could not tell which sessions already run", out)
+        # its header gives no count: zeros there would read like one (seen on a real machine, 2026-11-23)
+        head = [x for x in out.splitlines() if x.strip().startswith("counted")]
+        self.assertEqual(len(head), 1, out)
+        self.assertIn("not counted: it started nothing, as it could not tell which sessions already run", head[0])
+        self.assertNotRegex(head[0], r"\d+ (loaded|not loaded|down again|already running)")
+        # a run whose count could not read the process list: what it started is a count; the rest is not
+        jdump(dict(rep, started=["Alpha Lane"], counted_at=int(time.time())), self.state("last-revive.json"))
+        head = [x for x in self.tg("report")[1].splitlines() if x.strip().startswith("counted")][0]
+        self.assertIn("1 started; loaded, not loaded and down again not counted: it could not tell", head)
+        self.assertNotRegex(head, r"\d+ (loaded|not loaded|down again)")
+
+    def test_G2_50_a_start_is_decided_on_a_read_taken_after_the_load_wait(self):
+        """T52, found in a trace on 2026-11-23: with load_max set, a restore read the process list, then waited for
+        the load (up to load_wait_s, 120 s by default), then started. A session started by hand during that wait
+        was started a second time. The wait now comes first, and the read is taken right before the start."""
+        self.cfg({"load_max": 5, "load_wait_s": 4, "starts_at_once": 1})
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        n, said = len(self.launches()), self.logged("above load_max 5")
+        run = self.revive_bg("boot-1", TARDIGRADE_FAKE_LOAD="99")
+        try:
+            self.until(lambda: self.logged("above load_max 5") > said, "the first load wait")
+            self.by_hand(a, "hand-a")              # inside alpha's load wait
+            out = run.communicate(timeout=180)[0]
+        finally:
+            if run.poll() is None:
+                run.kill()
+        mine = [x for x in self.launches()[n:] if x["sid"] == a and x["seen"].get("MY_SETTING") != "byhand"]
+        self.assertEqual(mine, [], f"alpha was started a second time after the load wait\n{out}")
+        self.assertIn("Alpha Lane: something else started it meanwhile (tmux default:hand-a)", out)
+
 
 class Census(Base):
     def test_G3_1_census_names_hidden_and_down_sessions(self):
@@ -1622,7 +2136,7 @@ class Census(Base):
         # with all back while the watch still runs, it does not speak of "others" on their way (seen on a real Mac)
         src = fread(SCRIPT)
         i = src.index("A RESTORE IS RUNNING")
-        self.assertIn('if pr["back"] < pr["total"] else', src[i:i + 400])
+        self.assertIn('if pr["back"] < pr["total"] and not pr.get("starts_done") else', src[i:i + 400])
         self.assertIn("All are back; it is still watching them load", src[i:i + 600])
         notes = fread(os.path.join(self.home, "notes.log")).splitlines()
         self.assertEqual(len(notes), 2, out)
@@ -1771,6 +2285,36 @@ class Census(Base):
                           for n in ("Alpha Lane", "Beta Lane")])
         src = fread(SCRIPT)                                      # census and record use one rule, from one place
         self.assertEqual(src.count("left_out_why(r)"), 3)          # its definition, record and census
+
+    def test_G3_18_census_on_a_failed_read_says_it_cannot_tell(self):
+        """T53, seen 2026-11-23 in a probe on 0.1.8.2 and on the 0.1.9 candidate: with ps failing, census said
+        "Running: 0 ... down: 2" while both sessions ran. A person who reads "down" starts them by hand: two copies.
+        On a failed read of the process list or of a tmux server's panes, census and its --json give no count."""
+        self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.ps_breaks()
+        for broken in ("ps", "tmux fails", "tmux does not answer"):
+            if broken == "ps":
+                self.ps_fail()
+            else:
+                self.ps_fail(False)
+                self.tmux_breaks("fails" if broken == "tmux fails" else "hangs")
+            rc, out = self.tg("census")
+            self.assertEqual(rc, 1, out)
+            self.assertIn("Cannot tell which sessions run or which are down", out, broken)
+            self.assertNotIn("Running:", out, broken)
+            self.assertNotRegex(out, r"down: \d", broken)
+            self.assertNotIn("Alpha Lane", out, broken)
+            rc, out = self.tg("census", "--json")
+            d = json.loads(out)
+            self.assertEqual(rc, 1, out)
+            self.assertRegex(d["cannot_tell"], "could not be read|did not list its panes", broken)
+            self.assertNotIn("sessions", d, broken)
+            self.assertNotIn("running", d, broken)
+        os.remove(os.path.join(self.home, "tmuxfail"))
+        rc, out = self.tg("census")
+        self.assertIn("Running: 2", out, "with every read working census counts as before")
 
 
 class Setup(Base):
@@ -1936,6 +2480,186 @@ class Windows(Base):
             # typed into its tab before the first session had even been started: to its waiting screen
             self.assertLess(out.index(f"herdr {nm} Lane: the attach was typed into its tab"), first_start, out)
 
+    def herdr_missing_run(self, wait_min, on_done="", names=("alpha", "beta", "gamma")):
+        """sessions with tabs on the record (three by default), a reboot, and no Herdr server; the boot revive runs
+        in the background. Returns (the run, the file its output goes to)."""
+        herdr = self.script("herdr", fread(FAKE_HERDR))
+        for n in names:
+            self.start_lane(n, n.title() + " Lane")
+        self.tg("record", "--force")
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = jload(p)
+        for r in t["lanes"]:
+            r["herdr_tab"], r["herdr_workspace"] = r["name"], "Team"
+        jdump(t, p)
+        self.reboot()
+        os.makedirs(os.path.join(self.home, ".config", "herdr"), exist_ok=True)    # its folder, but no server
+        shell = [{"pid": 100, "name": "bash", "argv": ["bash"]}]
+        jdump({"workspaces": [{"workspace_id": "w1", "label": "Team"}],
+               "tabs": [{"tab_id": f"t{i}", "label": f"{n.title()} Lane", "workspace_id": "w1"} for i, n in enumerate(names)],
+               "panes": [{"pane_id": f"p{i}", "tab_id": f"t{i}", "workspace_id": "w1"} for i in range(len(names))],
+               "process_info": {f"p{i}": {"shell_pid": 100, "foreground_processes": shell} for i in range(len(names))},
+               "visible": {f"p{i}": "you@box:~$ \n" for i in range(len(names))}}, os.path.join(self.home, "herdr-state.json"))
+        self.cfg({"herdr": herdr, "herdr_tabs": True, "wake": "idle", "settle_s": 2, "attach_wait_min": wait_min,
+                  "on_done": on_done})
+        log = os.path.join(self.home, "revive-out.txt")
+        with open(log, "w") as f:
+            run = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                                   env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100"), stdout=f, stderr=subprocess.STDOUT)
+        return run, log
+
+    def until_said(self, log, words, run):
+        end = time.time() + WAIT
+        while time.time() < end:
+            if words in fread(log):
+                return fread(log)
+            if run.poll() is not None:
+                break
+            time.sleep(0.2)
+        self.fail(f"never said {words!r}: {fread(log)}")
+
+    def test_G4_10_a_restore_says_at_once_when_herdr_is_not_running(self):
+        # 1. Herdr comes up while the restore waits: said at the first pass, census says it, the tabs are attached
+        run, log = self.herdr_missing_run(1)
+        try:
+            self.until_said(log, "Herdr is not running: 3 tab(s) wait for it", run)
+            out = self.until_said(log, "revive: 3 started", run)
+            first = out.index("Herdr is not running: 3 tab(s) wait for it (up to 1 minutes after the sessions have loaded)")
+            self.assertLess(first, out.index("revive: 3 started"), out)          # at the first pass, not after the watch
+            self.until_said(log, "count: started=3", run)
+            text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=110)[1]
+            self.assertIn("Herdr is not running: 3 tab(s) not attached; the restore attaches them when Herdr appears", text)
+            with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+                f.write("")                                                   # Herdr's server appears
+            out = self.until_said(log, "attaching the tabs", run)
+            run.wait(timeout=WAIT)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        out = fread(log)
+        self.assertEqual(out.count("Herdr is not running:"), 1, out)          # once, not once a pass
+        self.assertNotIn("never came up", out)
+        runs = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-runs.jsonl")).splitlines()]
+        self.assertEqual(sorted(r["pane"] for r in runs if "cmd" in r), ["p0", "p1", "p2"], out)
+        self.assertNotIn("Herdr is not running", self.tg("census", TARDIGRADE_FAKE_UPTIME_S=200)[1])
+        calls = [json.loads(x) for x in fread(os.path.join(self.home, "herdr-calls.jsonl")).splitlines()]
+        self.assertFalse([c for c in calls if "server" in c], calls)         # Tardigrade never starts Herdr
+
+    def test_G3_6_the_record_runs_again_once_every_start_is_done(self):
+        # T37: the run waits for Herdr after every start is done; the record does not wait with it
+        run, log = self.herdr_missing_run(1)
+        try:
+            self.until_said(log, "count: started=3", run)
+            rc, out = self.tg("record")
+            self.assertIn("record: 3 session(s)", out)
+            self.assertNotIn("skipped", out)
+            self.assertNotIn("do not start", self.tg("census", TARDIGRADE_FAKE_UPTIME_S=110)[1])
+            self.assertTrue(jload(self.state("progress.json"))["starts_done"])
+        finally:
+            run.kill()
+            run.wait(timeout=WAIT)
+        src = fread(SCRIPT)
+        rec = src[src.index("def record():"):src.index("mine, _, _ = live()", src.index("def record():"))]
+        self.assertIn("run_going() and not starts_finished()", rec)            # still skipped while it starts them
+        loop = src[src.index("waiting += len(inflight)"):src.index("end_due()", src.index("waiting += len(inflight)"))]
+        self.assertIn('prog["starts_done"] = tries_done and not inflight', loop)
+
+    def test_G3_6_a_session_that_dies_in_the_watch_is_written_as_it_would_be_at_any_other_time(self):
+        # asked in review: the record now runs during the watch. A session that dies there alone is down, as it
+        # would be at any other time; sessions that vanish together are a crash, kept as lost and brought back
+        names = ("alpha", "beta", "gamma", "delta", "omega")
+        n0 = len(self.launches())
+        run, log = self.herdr_missing_run(1, names=names)
+        try:
+            self.until_said(log, "count: started=5", run)
+            now = {x["sid"]: x["pid"] for x in self.launches()[n0:]}
+            rows = {r["tmux_session"]: r["session_id"] for r in self.table()["lanes"]}
+            def up(*nms):
+                out = []
+                for nm in nms:
+                    try:
+                        os.kill(int(now[rows[nm]]), 0)
+                        out.append(nm)
+                    except OSError:
+                        pass
+                return out
+            self.kill(now[rows["alpha"]])                                     # one dies alone
+            self.assertEqual(gone_soon(lambda: up("alpha"), within=10), [])
+            self.assertIn("record: 4 session(s)", self.tg("record")[1])
+            t = self.table()
+            self.assertEqual(sorted(r["tmux_session"] for r in t["lanes"]), ["beta", "delta", "gamma", "omega"])
+            self.assertEqual([r["tmux_session"] for r in t["down"] if r.get("down_since")], ["alpha"])
+            for nm in ("beta", "gamma", "delta"):                             # then three of four vanish together
+                self.kill(now[rows[nm]])
+            self.assertEqual(gone_soon(lambda: up("beta", "gamma", "delta"), within=10), [])
+            out = self.tg("record")[1]
+            self.assertIn("vanished together (a crash?)", out)
+            t = self.table()
+            self.assertEqual(sorted(r["tmux_session"] for r in t["lanes"] if r.get("lost_since")), ["beta", "delta", "gamma"])
+        finally:
+            run.kill()
+            run.wait(timeout=WAIT)
+        socks = {r["tmux_session"]: r["tmux_socket"] for r in t["lanes"]}
+        for nm in ("beta", "gamma", "delta"):           # their places are free again (a revive never takes one in use)
+            self.tmux(socks[nm], "kill-session", "-t", "=" + nm)
+        self.cfg({"attach_wait_min": 0.02})
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.wait_launches(n + 3)
+        again = {x["sid"] for x in self.launches()[n:]}
+        self.assertEqual(again, {rows[nm] for nm in ("beta", "gamma", "delta")}, out)   # the lost ones, not alpha
+
+    def test_G3_17_a_session_that_goes_down_during_a_restore_stands_out_for_that_boot(self):
+        n0 = len(self.launches())
+        run, log = self.herdr_missing_run(1)
+        try:
+            self.until_said(log, "count: started=3", run)
+            end = time.time() + WAIT                         # the run has taken its own look at the count
+            while time.time() < end and not (jload(self.state("progress.json")) or {}).get("done"):
+                time.sleep(0.2)
+            now = {x["sid"]: x["pid"] for x in self.launches()[n0:]}
+            rows = {r["tmux_session"]: r["session_id"] for r in self.table()["lanes"]}
+            self.kill(now[rows["beta"]])                     # after the count, while the run waits for Herdr
+            out = self.until_said(log, "Beta Lane: went down while the restore still waits (after the count)", run)
+            self.assertEqual(out.count("went down while the restore still waits"), 1, out)     # said once
+            text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=150)[1]
+            self.assertRegex(text, r"Down during the restore: Beta Lane \(at \d\d:\d\d\): it started, then went down; "
+                                   r"it may have failed to load")
+            self.assertNotIn("Alpha Lane (at", text)
+        finally:
+            run.kill()
+            run.wait(timeout=WAIT)
+        rep = self.tg("report")[1]
+        self.assertRegex(rep, r"down during the restore:\n +Beta Lane \(at \d\d:\d\d\)")
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual([x["name"] for x in d["down_during_restore"]], ["Beta Lane"])
+        # a day later, on another boot, it is an ordinary down row again: only this boot's restore is meant
+        lr = jload(self.state("last-revive.json"))
+        lr["boot"] = "another-boot"
+        jdump(lr, self.state("last-revive.json"))
+        self.assertNotIn("Down during the restore", self.tg("census")[1])
+
+    def test_G4_10_when_herdr_never_comes_census_report_and_on_done_say_how_many_tabs_wait(self):
+        told = os.path.join(self.home, "told.txt")
+        run, log = self.herdr_missing_run(0.05, on_done=f"echo n={{herdr_tabs_not_attached}} e=$TARDIGRADE_HERDR_TABS_NOT_ATTACHED > {told}")
+        try:
+            run.wait(timeout=WAIT * 2)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        out = fread(log)
+        self.assertLess(out.index("Herdr is not running: 3 tab(s) wait for it"), out.index("herdr: its server never came up"), out)
+        self.assertIn("; Herdr is not running: 3 tab(s) not attached", out)    # the on_done line
+        self.assertEqual(fread(told).strip(), "n=3 e=3")
+        text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=300)[1]
+        self.assertIn("Herdr is not running: 3 tab(s) not attached. Tardigrade does not start Herdr", text)
+        self.assertEqual(jload(self.state("herdr-wait.json"))["tabs"], 3)
+        self.assertEqual(json.loads(self.tg("census", "--json")[1])["herdr_not_running"]["tabs"], 3)
+        self.assertIn("Herdr was not running: 3 tab(s) not attached", self.tg("report")[1])
+        # a machine without tabs on its record, or without Herdr set up, hears nothing of this
+        os.remove(self.state("herdr-wait.json"))
+        self.assertNotIn("Herdr is not running", self.tg("census")[1])
+
     def lost_workspaces(self, places, extra_state):
         """sessions whose Herdr workspaces are gone after a reboot; returns (what herdr was asked, revive's log)"""
         herdr = self.script("herdr", fread(FAKE_HERDR))
@@ -2098,6 +2822,74 @@ class Windows(Base):
         self.assertIn("Gamma Lane: its tab is running something else; left alone", out)
 
 
+@unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
+class Tests(unittest.TestCase):
+    def test_G7_1_a_run_stopped_part_way_leaves_nothing_behind(self):
+        """a real run of one test, stopped by SIGTERM once its tmux server is up, as `timeout` stops it"""
+        parent = tempfile.mkdtemp(prefix="tgstop")
+        self.addCleanup(shutil.rmtree, parent, True)
+        env = dict(os.environ, TARDIGRADE_TEST_TMP=parent)
+        run = subprocess.Popen([sys.executable, "-m", "unittest",
+                                "tests.test_tardigrade.Revive.test_G2_1_revive_brings_a_session_back_as_itself"],
+                               cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: run.poll() is None and run.kill())
+        end, up = time.time() + WAIT, False
+        while time.time() < end and run.poll() is None and not up:
+            up = any(os.path.exists(os.path.join(parent, d, f"tmux-{os.getuid()}", "default")) for d in os.listdir(parent))
+            time.sleep(0.1)
+        self.assertTrue(up, "the run never started its tmux server")
+        time.sleep(0.5)
+        run.send_signal(signal.SIGTERM)
+        run.wait(timeout=30)
+
+        def left():
+            found = []
+            for pid in os.listdir("/proc"):
+                if pid.isdigit():
+                    for part in ("cmdline", "environ"):       # a run in flight names the folder only in its HOME
+                        try:
+                            with open(f"/proc/{pid}/{part}", "rb") as f:
+                                if parent.encode() in f.read():
+                                    found.append(pid)
+                                    break
+                        except OSError:
+                            pass
+            return found
+        self.assertEqual(gone_soon(left), [], "processes of the stopped run are still alive")
+        self.assertEqual(os.listdir(parent), [], "the stopped run left its folder behind")
+        time.sleep(3)                                       # and nothing comes back to write in it later
+        self.assertEqual(left(), [], "a process of the stopped run came back")
+        self.assertEqual(os.listdir(parent), [], "something of the stopped run wrote in its folder afterwards")
+
+
+    def test_G7_2_a_check_that_a_process_is_gone_waits_for_its_exit_and_still_catches_one_that_stays(self):
+        mark = f"tg-g72-{uuid.uuid4().hex[:8]}"
+        def mine():
+            found = []
+            for pid in [x for x in os.listdir("/proc") if x.isdigit()]:
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        if mark.encode() in f.read():
+                            found.append(pid)
+                except OSError:
+                    pass
+            return found
+        late = subprocess.Popen(["bash", "-c", f"sleep 1.5; : {mark}-late"])     # told to end; exits a moment later
+        self.addCleanup(lambda: late.poll() is None and late.kill())
+        self.assertNotEqual(mine(), [], "a single read sees it still there")
+        t = time.time()
+        self.assertEqual(gone_soon(mine), [])
+        self.assertLess(time.time() - t, 5)
+        late.wait()
+        stays = subprocess.Popen(["bash", "-c", f"sleep 30; : {mark}-stays"])
+        self.addCleanup(lambda: stays.poll() is None and stays.kill())
+        t = time.time()
+        self.assertEqual(gone_soon(mine, within=1.0), [str(stays.pid)], "one that stays is still caught")
+        self.assertGreaterEqual(time.time() - t, 1.0)
+        stays.kill()
+        stays.wait()
+
+
 class Invariants(unittest.TestCase):
     def setUp(self):
         self.src = fread(SCRIPT)
@@ -2133,7 +2925,8 @@ class Invariants(unittest.TestCase):
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
         self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
                                     "signal", "termios", "select",    # the waiting screen (G4.4): standard, no network
-                                    "ctypes"})   # macOS only: a process's own argument list from the kernel (G2.39)
+                                    "ctypes",    # macOS only: a process's own argument list from the kernel (G2.39)
+                                    "zoneinfo"})  # the zone a limit reply names, to read when it resets (G2.48)
 
 
 class Promises(unittest.TestCase):
@@ -2145,7 +2938,7 @@ class Promises(unittest.TestCase):
         import re
         self.rows = jload(os.path.join(ROOT, "PROMISES.json"))["rows"]
         self.version = self.v(re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1))
-        self.tests = set(re.findall(r"def (test_[A-Za-z0-9_]+)\(", fread(os.path.abspath(__file__))))
+        self.tests = set(gate_collected(fread(os.path.abspath(__file__)))[0])     # what the runner collects (G7.3)
         self.plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
 
     @staticmethod
@@ -2191,9 +2984,59 @@ class Strand(unittest.TestCase):
         import re
         plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
         named = set(re.findall(r"`(test_[A-Za-z0-9_]+)`", plan))
-        real = set(re.findall(r"def (test_(?:G|INV)[A-Za-z0-9_]+)\(", fread(os.path.abspath(__file__))))
+        src = fread(os.path.abspath(__file__))
+        real = {n for n in gate_collected(src)[0] if re.match(r"test_(?:G|INV)", n)}   # what the runner collects
         self.assertEqual(named - real, set(), "the plan names tests that do not exist")
         self.assertEqual(real - named, set(), "tests with no codon in the plan")
+        self.assertEqual(gate_problems(src, gate_named()), [], "a named test the runner would not really run")
+
+    def test_G7_3_a_test_named_for_a_claim_counts_only_if_the_runner_really_runs_it(self):
+        """the six ways sister skills broke their own gates, planted in a copy of this file"""
+        src, name = fread(os.path.abspath(__file__)), "test_G2_49_a_start_finds_claude_by_the_path_setting_not_by_the_boot_services_path"
+        self.assertEqual(gate_problems(src, {name}), [])
+        a = src.index(f"    def {name}("); b = src.index("\n    def ", a + 10) + 1
+        blk = src[a:b]
+        ind = lambda t: "".join("    " + l if l.strip() else l for l in t.splitlines(True))
+        planted = {
+            "nested in a helper after its return": src[:a] + "    def _helper(self):\n        return\n" + ind(blk) + src[b:],
+            "renamed so it is not collected": src[:a] + blk.replace(f"def {name}(", "def check" + name[4:] + "(") + src[b:],
+            "under if False": src[:a] + "    if False:\n" + ind(blk) + src[b:],
+            "marked as skipped": src[:a] + '    @unittest.skip("planted")\n' + blk + src[b:],
+            "skipped with skipTest": src[:a] + blk.replace('"""\n', '"""\n        self.skipTest("planted")\n', 1) + src[b:],
+            "skipIf with no reason": src[:a] + "    @unittest.skipIf(True)\n" + blk + src[b:],
+            "skipIf(True) with a reason": src[:a] + '    @unittest.skipIf(True, "needs Linux")\n' + blk + src[b:],
+            "skipUnless on a sum": src[:a] + '    @unittest.skipUnless(1 == 2, "needs tmux")\n' + blk + src[b:],
+            "skipTest under if True": src[:a] + blk.replace('"""\n', '"""\n        if True:\n            self.skipTest("needs Linux")\n', 1) + src[b:],
+            "a return before its first line": src[:a] + blk.replace('"""\n', '"""\n        return\n', 1) + src[b:],
+            "shadowed by a later empty test": src[:b] + f"    def {name}(self):\n        pass\n\n" + src[b:],
+            "only its text in a string at column 0": src[:a] + src[b:] + f'\nPLANTED = """\ndef {name}(self):\n"""\n',
+        }
+        for why, bad in planted.items():
+            self.assertNotEqual(gate_problems(bad, {name}), [], f"the gate let through a test {why}")
+        # an honest skip on a condition of the machine, with its reason, is "not run here"
+        honest = src[:a] + '    @unittest.skipUnless(sys.platform == "plan9", "needs Plan 9")\n' + blk + src[b:]
+        self.assertEqual(gate_problems(honest, {name}), [])
+        # and after a run, a named test that did not pass is refused; a machine skip is listed, not counted
+        bad, here = runner_problems({"test_a", "test_b", "test_c"}, {"test_a"}, {"test_c": "needs Linux and tmux"})
+        self.assertEqual(bad, ["test_b: did not pass in this run"])
+        self.assertEqual(here, ["test_c (needs Linux and tmux)"])
+
+    def test_G7_4_every_place_that_states_the_version_says_the_same_one(self):
+        """the plugin manifest said 0.1.7 for three releases while the script moved on (T50): the script, the plugin
+        manifest, the marketplace entry and the skill file (if they carry a version) and the changelog's top entry"""
+        import re
+        v = re.search(r'^VERSION = "([^"]+)"', fread(os.path.join(ROOT, "scripts", "tardigrade.py")), re.M).group(1)
+        said = {"plugin.json": json.loads(fread(os.path.join(ROOT, ".claude-plugin", "plugin.json"))).get("version")}
+        for e in json.loads(fread(os.path.join(ROOT, ".claude-plugin", "marketplace.json"))).get("plugins", []):
+            if "version" in e:
+                said["marketplace.json " + e.get("name", "?")] = e["version"]
+        import glob
+        for f in glob.glob(os.path.join(ROOT, "skills", "*", "SKILL.md")):
+            m = re.search(r"^version:\s*['\"]?([^'\"\s]+)", fread(f).split("---", 2)[1], re.M)
+            if m:
+                said[os.path.relpath(f, ROOT)] = m.group(1)
+        said["CHANGELOG.md top entry"] = re.search(r"^## (\S+)", fread(os.path.join(ROOT, "CHANGELOG.md")), re.M).group(1)
+        self.assertEqual({k: x for k, x in said.items() if x != v}, {}, f"the script says {v}")
 
     def test_no_codon_is_used_twice_in_the_plan(self):
         import re, collections
@@ -2202,5 +3045,119 @@ class Strand(unittest.TestCase):
         self.assertEqual([c for c, n in seen.items() if n > 1], [], "a codon is used for two claims")
 
 
+# ---------- the gate: a test named for a claim must be one the runner runs (G7.3, T49) ----------
+def gate_named():
+    """every test the plan or PROMISES.json names, at any version: built rows count whenever they are due"""
+    import re
+    plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
+    rows = json.loads(fread(os.path.join(ROOT, "PROMISES.json")))["rows"]
+    return set(re.findall(r"`(test_[A-Za-z0-9_]+)`", plan)) | {r["test"] for r in rows if r.get("test")}
+
+
+def _deco_kind(d):
+    f = d.func if isinstance(d, ast.Call) else d
+    return (f.attr if isinstance(f, ast.Attribute) else f.id if isinstance(f, ast.Name) else ""), d
+
+
+def _machine_free(expr):
+    """True if a skip's condition can be worked out without the machine (True, 1 == 1, not False): it names nothing,
+    so it is the same everywhere, and a skip on it is a skip whatever the machine, whatever its reason says"""
+    if any(isinstance(x, (ast.Name, ast.Attribute, ast.Call)) for x in ast.walk(expr)):
+        return False
+    try:
+        eval(compile(ast.Expression(expr), "<gate>", "eval"), {"__builtins__": {}}, {})
+        return True
+    except Exception:
+        return False
+
+
+def gate_collected(src):
+    """{test name: [(class, its function node, the class chain's decorators)]} for tests the runner collects: a
+    method defined straight in a class body at the top of the file. Read from the syntax tree, never from text."""
+    tree = ast.parse(src)
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+
+    def chain(c, seen=()):
+        out = list(c.decorator_list)
+        for b in c.bases:
+            if isinstance(b, ast.Name) and b.id in classes and b.id not in seen:
+                out += chain(classes[b.id], seen + (c.name,))
+        return out
+    found, twice = {}, []
+    for c in classes.values():
+        mine = {}
+        for f in c.body:
+            if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and f.name.startswith("test"):
+                if f.name in mine:
+                    twice.append(f"{f.name}: defined twice in {c.name}; only the last one runs")
+                mine[f.name] = f
+        for n, f in mine.items():
+            found.setdefault(n, []).append((c.name, f, chain(c)))
+    return found, twice
+
+
+def gate_problems(src, named):
+    """why each named test would not prove its claim: not collected, defined twice, skipped whatever the machine,
+    skipped with no reason, or a body that does nothing. An honest skip (skipIf/skipUnless on a condition of the
+    machine, with its reason) is "not run here", not a problem."""
+    found, probs = gate_collected(src)
+    probs = [p for p in probs if p.split(":")[0] in named]
+    for n in sorted(named):
+        defs = found.get(n, [])
+        if not defs:
+            probs.append(f"{n}: no test the runner collects (missing, renamed, nested, under an if, or only text)")
+            continue
+        if len(defs) > 1:
+            probs.append(f"{n}: defined in {len(defs)} classes")
+        cls, f, decos = defs[-1]
+        for kind, d in [_deco_kind(d) for d in f.decorator_list + decos]:
+            if kind in ("skip", "expectedFailure"):
+                probs.append(f"{n}: {kind} whatever the machine")
+            elif kind in ("skipIf", "skipUnless") and not (isinstance(d, ast.Call) and len(d.args) + len(d.keywords) >= 2):
+                probs.append(f"{n}: {kind} with no reason")
+            elif kind in ("skipIf", "skipUnless") and _machine_free(d.args[0] if d.args else d.keywords[0].value):
+                probs.append(f"{n}: {kind} on a condition that is the same on every machine")
+        body = [b for b in f.body if not (isinstance(b, ast.Expr) and isinstance(b.value, ast.Constant))]
+        if not body or all(isinstance(b, ast.Pass) for b in body) or isinstance(body[0], ast.Return):
+            probs.append(f"{n}: its body does nothing")
+        for b in body:
+            if isinstance(b, ast.If) and _machine_free(b.test) and any(
+                    isinstance(x, ast.Attribute) and x.attr == "skipTest" for x in ast.walk(ast.Module(b.body, []))):
+                probs.append(f"{n}: skipTest under a condition that is the same on every machine")
+        for b in body:
+            if (isinstance(b, ast.Expr) and isinstance(b.value, ast.Call) and isinstance(b.value.func, ast.Attribute)
+                    and b.value.func.attr == "skipTest"):
+                probs.append(f"{n}: skipTest whatever the machine")
+    return probs
+
+
+def runner_problems(named, passed, skipped):
+    """after a whole run: a named test must have PASSED, or been skipped on a condition of the machine (the gate
+    above refuses any other skip). Returns (problems, not run here)."""
+    return sorted(f"{n}: did not pass in this run" for n in named - passed - set(skipped)), sorted(
+        f"{n} ({skipped[n]})" for n in named & set(skipped))
+
+
 if __name__ == "__main__":
-    unittest.main()
+    # G7.3: the claims count only what this run really passed
+    PASSED, SKIPPED = set(), {}
+
+    class _Kept(unittest.TextTestResult):
+        def addSuccess(self, test):
+            super().addSuccess(test)
+            PASSED.add(test.id().rsplit(".", 1)[-1])
+
+        def addSkip(self, test, reason):
+            super().addSkip(test, reason)
+            SKIPPED[test.id().rsplit(".", 1)[-1]] = reason
+
+    prog = unittest.main(exit=False, testRunner=unittest.TextTestRunner(resultclass=_Kept, verbosity=2 if "-v" in sys.argv else 1))
+    whole = len(sys.argv) == 1 or all(a.startswith("-") for a in sys.argv[1:])
+    bad, here = runner_problems(gate_named(), PASSED, SKIPPED) if whole else ([], [])
+    for line in bad:
+        print("GATE:", line)
+    if here:
+        print(f"gate: {len(here)} named test(s) not run here: " + "; ".join(here))
+    if whole:
+        print(f"gate: {len(gate_named() & PASSED)} named test(s) passed in this run")
+    sys.exit(0 if prog.result.wasSuccessful() and not bad else 1)

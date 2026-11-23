@@ -28,7 +28,8 @@ Rules it keeps:
     one-way fingerprint, so it can tell whether a session came back on the same login.
   * The record is never overwritten by a half-started machine, and never by an empty list. Sessions
     that vanish together (a crash) stay on the record for some hours, so they still come back.
-  * Other users' sessions on a shared machine are counted, never read.
+  * Other users' sessions on a shared machine are counted by program name; nothing else of them is read by
+    this code (on Linux the system's ps, run for the process list, opens more of every process).
 
 Standard library only. Record: ~/.config/windstorm-tardigrade/lanes.json
 Log: ~/.local/state/windstorm-tardigrade/tardigrade.log
@@ -45,12 +46,13 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.8.2"
+VERSION = "0.1.9"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
 STATE = os.path.join(HOME, ".local", "state", "windstorm-tardigrade")
 TABLE = os.path.join(CFG_DIR, "lanes.json")
+SKIP_PATH = os.path.join(STATE, "record-skipped.json")   # a record skipped on a failed read: since when, and why (T55)
 LOG = os.path.join(STATE, "tardigrade.log")
 INSTALL_DIR = os.path.join(HOME, ".local", "share", "windstorm-tardigrade")
 ARGS = sys.argv[2:]
@@ -80,6 +82,7 @@ CFG = {
     "attach_wait_min": 30,    # wait this long for the Herdr server after boot
     "down_keep_days": 14,     # how long a session that went down stays on the "down" list
     "skip_tmux_sockets": [],  # tmux socket names to leave alone, when another tool brings those sessions back
+    "skip_cwd_prefix": [],    # folders to leave alone: of a claude process working inside one, only its folder is read
     "answer_trust": False,    # opt-in (`trust on`): answer "trust this folder?" for a revived session's own folder
     "watch_min": 15,          # after a boot, keep looking at the started sessions this long (slow machines load late)
     "claude_command": "claude",   # the command that starts Claude Code; the flags and --resume are added to it
@@ -255,11 +258,22 @@ def slug(s):
 
 
 # ---------- processes ----------
+class Procs(dict):
+    """A process list. ok is False when the read failed (ps gave an error, or no answer within 30 s): then it is
+    empty, and empty there means "cannot tell", never "nothing runs" (T52, T53). why says what failed."""
+    ok, why = True, ""
+
+
 def procs():
     """pid -> (parent pid, user id, program name). A process that has ended and only waits to be collected
     (a zombie) is left out: it holds no session."""
     rc, out = run(["ps", "-axo", "pid=,ppid=,uid=,stat=,comm="])
-    res = {}
+    res = Procs()
+    if rc != 0 or not out.strip():       # ps always lists itself: an empty answer is a failed read too
+        res.ok = False
+        res.why = "the process list could not be read (ps " + (
+            "gave no answer within 30 s, or could not be started)" if rc == 99 else f"ended with code {rc})")
+        return res
     for line in out.splitlines():
         p = line.split(None, 4)
         if len(p) == 5 and p[0].isdigit() and not p[3].startswith("Z"):
@@ -401,6 +415,24 @@ def marker():
     return os.path.join(STATE, f"revived-{boot_id()}")
 
 
+MARKERS_KEPT = 5            # G2.42, T38: only the newest few boot markers; an old boot's is never read again
+
+
+def write_marker(text):
+    """this boot's marker, this user's only (0600); the markers of all but the newest few boots are removed"""
+    write_private(marker(), text)
+    try:
+        old = sorted((p for p in glob.glob(os.path.join(STATE, "revived-*")) if p != marker()),
+                     key=lambda p: os.path.getmtime(p), reverse=True)
+    except OSError:
+        return
+    for p in old[MARKERS_KEPT - 1:]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
 def user_services_up_s():
     """Seconds after boot at which this user's service manager started (Linux, systemd), or None. A boot
     run cannot begin before it, and on some machines the system's own start holds it back for minutes."""
@@ -456,12 +488,48 @@ def tmux(sock, *a, timeout=10, env=None):
     return run([CFG["tmux"], "-S", sock, *a], timeout=timeout, env=env)
 
 
+class Panes(dict):
+    """The tmux panes. ok is False when a server that is there could not list them: then where any session
+    lives is not known (T55). A socket left by a server that is gone (after a reboot) is not a failed read."""
+    ok, why = True, ""
+
+
+def record_sockets():
+    """the tmux sockets whose pane list the record depends on: every socket a recorded row lives on, tmux's own
+    default, this tool's own (loose_socket) and the table's (tsv_socket). A wedged server elsewhere (a test socket,
+    another program's) does not stop the record (T55, from the review: it would freeze a machine's record for days)."""
+    w = {os.path.join(tmux_dir(), "default"), own_socket()}
+    if CFG.get("tsv_socket"):
+        w.add(os.path.join(tmux_dir(), os.path.basename(str(CFG["tsv_socket"]))))
+    t = read_json(TABLE, {})
+    if isinstance(t, dict):
+        w |= {r.get("tmux_socket") for r in t.get("lanes", []) + t.get("down", []) if isinstance(r, dict)}
+    return w
+
+
 def panes():
     """pane pid -> (socket, tmux session name, windows attached). Read only."""
-    res = {}
+    res = Panes()
+    ours = None
     for s in sockets():
-        rc, out = tmux(s, "list-panes", "-a", "-F", "#{pane_pid}\t#{session_attached}\t#{session_name}", timeout=6)
+        rc, out, err = 99, "", ""
+        if CFG["tmux"]:
+            try:
+                r = subprocess.run([CFG["tmux"], "-S", s, "list-panes", "-a", "-F",
+                                    "#{pane_pid}\t#{session_attached}\t#{session_name}"],
+                                   capture_output=True, text=True, timeout=6)
+                rc, out, err = r.returncode, r.stdout, r.stderr
+            except (subprocess.TimeoutExpired, OSError):
+                pass
         if rc != 0:
+            ours = record_sockets() if ours is None else ours
+            # tmux's own words for a socket nobody listens on (a server gone at a reboot): "no server running on",
+            # or in older versions "error connecting to". Anything else, or no answer, is a failed read (T55).
+            stale = rc != 99 and ("no server running" in err or "error connecting to" in err)
+            if s in ours and not stale:
+                res.ok = False
+                res.why = f"the tmux server at {s} did not list its panes (" + (
+                    "no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})")
             continue
         for line in out.splitlines():
             p = line.split("\t", 2)
@@ -541,6 +609,36 @@ def last_model(sid, since_ms, config_dir=""):
 
 
 EXIT_CMD = re.compile(r"<command-name>/(exit|quit)</command-name>")
+
+
+def print_run(r):
+    """G2.47: the entrypoint this session's conversation last names, when it is a print-mode or SDK run's
+    ("sdk-cli", "sdk-ts", ...), else "". A session a person sits in says "cli". The last one counts: a print-mode
+    conversation that someone later resumed by hand in a terminal is a session again."""
+    base = r.get("config_dir") or os.path.join(HOME, ".claude")
+    for f in glob.glob(os.path.join(base, "projects", "*", f"{r['session_id']}.jsonl")):
+        try:
+            with open(f, "rb") as fh:
+                fh.seek(0, 2)
+                n = fh.tell()
+                fh.seek(max(0, n - 65536))
+                chunks = [fh.read()]
+                if n > 65536:
+                    fh.seek(0)
+                    chunks.insert(0, fh.read(65536))
+        except OSError:
+            continue
+        last = ""
+        for chunk in chunks:
+            for line in chunk.decode(errors="replace").splitlines():
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(d, dict) and isinstance(d.get("entrypoint"), str) and d["entrypoint"]:
+                    last = d["entrypoint"]
+        return last if last.startswith("sdk") else ""
+    return ""
 
 
 def last_turn(r):
@@ -641,6 +739,56 @@ def exited_at(r):
     except ValueError:
         return 0
     return t if t and t > seen else 0
+
+
+LIMIT_MARGIN_S = 300            # G2.48: a reset counts as passed this long after the moment it names
+MONTHS = {m: i + 1 for i, m in enumerate(("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"))}
+RESETS = re.compile(r"resets (?:(%s) (\d{1,2}), )?(\d{1,2})(?::(\d{2}))?\s*(am|pm) \(([A-Za-z0-9_+\-]+(?:/[A-Za-z0-9_+\-]+)*)\)"
+                    % "|".join(MONTHS), re.I)
+
+
+def limit_reset(text, written):
+    """G2.48: the moment a limit reply's "resets ..." words name, as a Unix time, or None when it cannot be read.
+    It is worked out from the reply's own time and the zone it names, never from today's clock: "resets 12pm
+    (Zone)" is the first 12pm in that zone after the reply was written; "resets Nov 24, 6pm (Zone)" is that day."""
+    import datetime
+    m = RESETS.search(text or "")
+    if not m or not written:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(m.group(6))
+        at = datetime.datetime.fromtimestamp(float(written), tz)
+        hour = int(m.group(3)) % 12 + (12 if m.group(5).lower() == "pm" else 0)
+        minute = int(m.group(4) or 0)
+        if hour > 23 or minute > 59:
+            return None
+        if m.group(1):
+            mon = MONTHS[m.group(1).title()]
+            t = datetime.datetime(at.year, mon, int(m.group(2)), hour, minute, tzinfo=tz)
+            if t < at - datetime.timedelta(days=1):          # a day early in the next year: "resets Jan 2" in December
+                t = datetime.datetime(at.year + 1, mon, int(m.group(2)), hour, minute, tzinfo=tz)
+        else:
+            t = at.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if t <= at:
+                t += datetime.timedelta(days=1)
+        return t.timestamp()
+    except Exception:          # no zone database, an unknown zone, a day that does not exist: it cannot be read
+        return None
+
+
+def limit_reply(r):
+    """G2.45, G2.48: (its words, when it was written) for the usage or limit reply this session's conversation
+    last ended on, or ("", 0)"""
+    import datetime
+    words = ended_on_limit(r)
+    if not words:
+        return "", 0
+    try:
+        t = datetime.datetime.fromisoformat(str(last_turn(r).get("timestamp", "")).replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        t = 0
+    return words, t
 
 
 def ended_on_limit(r):
@@ -769,6 +917,35 @@ def start_flags(a):
 
 
 PANES_NOW = []      # this scan's tmux panes, for one_shot()
+PROCS_NOW = []      # this scan's process list: its ok says whether the read worked (T53)
+LEFT_ALONE = [0]    # this scan's claude processes in a skip_cwd_prefix folder; only their folder read (G1.15)
+
+
+def proc_cwd(pid):
+    """The folder a process works in, from the system, without reading anything of the process itself."""
+    if not MAC:
+        try:
+            return os.readlink(f"/proc/{pid}/cwd")
+        except OSError:
+            return ""
+    out = run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], timeout=5)[1]
+    return next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
+
+
+def in_skip_folder(path):
+    """Is this folder inside one named in skip_cwd_prefix?"""
+    pre = [os.path.realpath(os.path.expanduser(str(x))).rstrip("/") for x in (CFG.get("skip_cwd_prefix") or []) if x]
+    if not pre or not path:
+        return False
+    path = os.path.realpath(path)
+    return any(path == x or path.startswith(x + "/") for x in pre)
+
+
+def left_alone(pid):
+    """G1.15: is this process working inside a folder named in skip_cwd_prefix? Then this code reads nothing more of it:
+    not its environment, not its arguments, not its status file or conversation. (On Linux the system's ps, which
+    procs() runs for the whole list, opens more of every process; 0.1.10 reads /proc itself, T47.)"""
+    return bool(CFG.get("skip_cwd_prefix")) and in_skip_folder(proc_cwd(pid))
 
 
 def has_tty(pid):
@@ -812,15 +989,19 @@ def one_shot(pid, sj, P):
 def live(with_launch=True):
     """(my live sessions, number of other users' Claude processes, number of helper sessions)"""
     P, PN = procs(), panes()
-    PANES_NOW[:] = [PN]
+    PANES_NOW[:], PROCS_NOW[:] = [PN], [P]
     me, mine, others, helpers = os.getuid(), [], 0, 0
+    LEFT_ALONE[0] = 0
     table = read_json(TABLE, {})
     known = {r["session_id"]: r for r in (table.get("down", []) + table.get("lanes", []))} if isinstance(table, dict) else {}
     for pid, (_, uid, comm) in sorted(P.items()):
         if not is_claude(comm):
             continue
         if uid != me:
-            others += 1        # counted, never read
+            others += 1        # counted by program name; nothing else read here
+            continue
+        if left_alone(pid):
+            LEFT_ALONE[0] += 1     # in a folder to leave alone: counted; only its folder was read
             continue
         ef = env_facts(pid)
         sj = session_json(pid, ef["config_dir"])
@@ -885,7 +1066,7 @@ def running_sids(P=None):
     """every session id held by a live Claude of this user, in any terminal"""
     held = set()
     for pid, (_, uid, comm) in (P or procs()).items():
-        if not is_claude(comm) or uid != os.getuid():
+        if not is_claude(comm) or uid != os.getuid() or left_alone(pid):
             continue
         sid = session_json(pid, env_facts(pid)["config_dir"]).get("sessionId")
         if sid:
@@ -900,13 +1081,21 @@ def holder_text(sid, P):
     """where the live process that holds this session id runs: its tmux session, else its process id"""
     PN = panes()
     for pid, (_, uid, comm) in P.items():
-        if not is_claude(comm) or uid != os.getuid():
+        if not is_claude(comm) or uid != os.getuid() or left_alone(pid):
             continue
         if session_json(pid, env_facts(pid)["config_dir"]).get("sessionId") == sid or re.search(
                 r"--resume[ =]" + re.escape(sid), " ".join(argv_of(pid))):
             kind, detail = where(pid, P, PN)
             return f"tmux {os.path.basename(detail[0])}:{detail[1]}" if kind == "tmux" else f"process {pid}"
     return "another process"
+
+
+def starts_finished():
+    """G3.6, T37: the running revive has done every start (none is waiting to be started, retried or seen up).
+    What it still waits for after that (loading, notes, tabs) does not hold the record back."""
+    pr = read_json(os.path.join(STATE, "progress.json"), {})
+    return (isinstance(pr, dict) and pr.get("boot") == boot_id() and alive(int(pr.get("pid") or 0))
+            and bool(pr.get("starts_done") or pr.get("done")))
 
 
 def run_going():
@@ -1001,10 +1190,24 @@ def record():
         if CFG["auto_revive"] and not os.path.exists(marker()):
             log("record: skipped (this boot's revive has not run; the record is kept as it was)")
             return 0
-    if not force and run_going():
-        log("record: skipped (a revive is running; waiting screens are not sessions gone)")
+    if not force and run_going() and not starts_finished():
+        log("record: skipped (a revive is starting sessions; waiting screens are not sessions gone)")
         return 0
     mine, _, _ = live()
+    # A failed read is "cannot tell", never "not running" or "no window": the process list and the pane list are
+    # each one shared read, so when one failed nothing is known about any session, and nothing is written (T55).
+    bad = [x.why for x in PROCS_NOW + PANES_NOW if not x.ok]
+    if bad:
+        log(f"record: skipped ({'; '.join(bad)}); the record is kept as it was")
+        if not DRY:     # since when: census names a skip that has lasted an hour (from the review of T55)
+            sk = read_json(SKIP_PATH, {})
+            since = sk.get("since") if isinstance(sk, dict) and sk.get("since") else int(time.time())
+            write_json(SKIP_PATH, {"since": since, "why": "; ".join(bad), "last": int(time.time())})
+        return 0
+    try:
+        os.remove(SKIP_PATH)       # the reads work again
+    except OSError:
+        pass
     old = read_table()
     old_by = {r["session_id"]: r for r in old["lanes"]}
     labels = ({}, {})
@@ -1050,11 +1253,21 @@ def record():
             if f in r["flags"] and f not in (o.get("flags") or []):
                 log(f"record: {display(r)}: {f} is carried: {what}")
     if not rows and old["lanes"]:
-        log(f"record: 0 live sessions; kept the previous record ({len(old['lanes'])} sessions)")
+        # A row for a print-mode run (one 0.1.8 wrote down) is not kept as a session even here (G2.47, T43).
+        # A row in a folder left alone: its conversation is not read even for that (G1.15: seen with strace on a real machine).
+        pr = [r for r in old["lanes"] if not in_skip_folder(r.get("cwd", "")) and print_run(r)]
+        log(f"record: 0 live sessions; kept the previous record ({len(old['lanes']) - len(pr)} sessions)"
+            + (f"; {len(pr)} print-mode run(s) moved to the down list: {', '.join(display(r) for r in pr)}" if pr else ""))
+        if pr and not DRY:
+            gone = {r["session_id"] for r in pr}
+            now = int(time.time())
+            write_json(TABLE, dict(old, lanes=[r for r in old["lanes"] if r["session_id"] not in gone],
+                                   down=old["down"] + [dict(r, down_since=now, ended="print-run") for r in pr]))
         return 0
     now, keep = int(time.time()), int(CFG["down_keep_days"]) * 86400
     live_ids = {r["session_id"] for r in rows}
-    down = [d for d in old["down"] if d["session_id"] not in live_ids and now - d.get("down_since", now) < keep]
+    down = [d for d in old["down"] if d["session_id"] not in live_ids and now - d.get("down_since", now) < keep
+            and not in_skip_folder(d.get("cwd", ""))]      # a folder left alone now: forgotten, not down (G1.15)
     known_down = {d["session_id"] for d in down}
     # Sessions that vanish together did not each end by a person's hand: that is a crash (a tmux server
     # that died, a terminal program that was closed with everything in it). They stay on the record as
@@ -1063,7 +1276,7 @@ def record():
     # conversation in the same place, or a session that came back new): it is not down, it is over.
     taken = {(r["tmux_socket"], r["tmux_session"]) for r in rows}
     gone = [r for r in old["lanes"] if r["session_id"] not in live_ids and r["session_id"] not in known_down
-            and (r["tmux_socket"], r["tmux_session"]) not in taken]
+            and (r["tmux_socket"], r["tmux_session"]) not in taken and not in_skip_folder(r.get("cwd", ""))]
     # A session its owner ended with /exit (after a record last saw it running) is over, at once, and never
     # part of a crash count. "Its pane holds the shell it left" counts only for a session that went alone:
     # a memory kill of many sessions leaves shells behind too, and that is a crash.
@@ -1073,6 +1286,9 @@ def record():
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
     lost = []
     for r in gone:
+        if print_run(r):            # a print-mode run is never kept as lost, crash or not (G2.47)
+            down.append(dict({k: v for k, v in r.items() if k != "lost_since"}, down_since=now, ended="print-run"))
+            continue
         since = 0 if exits[r["session_id"]] else (r.get("lost_since") or (now if crash else 0))
         if since and not force and now - since < float(CFG["lost_keep_h"]) * 3600:
             lost.append(dict(r, lost_since=since))
@@ -1726,6 +1942,8 @@ class Watch:
         self.queued = []                # sessions whose note met a limit and waits for the reset (G2.45)
         self.at_limit = set()           # logins known to be at their usage limit in this run (G2.45)
         self.conv_read = set()          # sessions whose conversation was looked at for a limit reply
+        self.stale_limit = set()        # sessions whose last limit reply has reset since (G2.48)
+        self.gone_at = {}               # sid: when the watch saw it go down (G3.17)
         self.after_due = {}             # sid: (when its note was typed, its screen just before, its row) (G2.45)
 
     def take_gone(self):
@@ -1757,7 +1975,12 @@ class Watch:
         if not (CFG["herdr"] and CFG["herdr_tabs"]):
             return
         due = [r for r in self.tab_rows if r.get("herdr_tab") and r["session_id"] not in self.tabs_done]
-        if due and (last or herdr_up()):
+        if not due:
+            return
+        up = herdr_up()
+        if not up:
+            herdr_missing(len(due))       # G4.10: said at the first pass, not only after the last wait
+        if last or up:
             self.tabs_done |= attach_tabs(due, wait=last)
 
     def reattach(self, sid):
@@ -1769,6 +1992,9 @@ class Watch:
         self.tabs()
         self.after_looks()
         waiting, P = 0, procs()               # one process list per pass, for every session in it
+        if not P.ok:       # T53: cannot tell is not "went down": this pass concludes nothing about any session
+            log(f"  {P.why}: this look at the started sessions concludes nothing; the next one reads again")
+            return len([r for r in started if r["session_id"] not in self.settled and r["session_id"] not in self.gone])
         for r in started:
             sid = r["session_id"]
             if sid in self.settled or sid in self.gone:
@@ -1777,6 +2003,7 @@ class Watch:
             if not pid:
                 log(f"  {display(r)}: went down again while being watched")
                 self.gone.add(sid)
+                self.gone_at[sid] = int(time.time())     # G3.17
                 self.gone_new.append(r)
                 continue
             sj = session_json(pid, r.get("config_dir", ""))
@@ -1788,8 +2015,15 @@ class Watch:
             final = (HELD_CONV, HELD_ACCOUNT)
             if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final:
                 # its own reasons first: an old limit reply in its conversation (looked at once), its screen now
-                limit = "" if sid in self.conv_read else ended_on_limit(r)
+                limit, written = ("", 0) if sid in self.conv_read else limit_reply(r)
                 self.conv_read.add(sid)
+                reset = limit_reset(limit, written) if limit else None
+                if limit and reset is not None and time.time() >= reset + LIMIT_MARGIN_S:
+                    # G2.48: that limit has reset since; Claude Code holds nothing, and the note just runs
+                    self.stale_limit.add(sid)
+                    log(f"  {display(r)}: its last limit reply (\"{limit}\") reset at "
+                        f"{time.strftime('%Y-%m-%d %H:%M %Z', time.localtime(reset))}; the wake-up note is typed")
+                    limit = ""
                 if limit:
                     self.held[sid] = HELD_CONV
                     log(f"  {display(r)}: its conversation last ended on a usage or limit reply (\"{limit}\"); the "
@@ -1801,10 +2035,12 @@ class Watch:
                     and not (self.held.get(sid) == HELD_SCREEN and login_key(r) in self.at_limit):
                 styled = tmux(r["tmux_socket"], "capture-pane", "-e", "-p", "-t", f"={r['tmux_session']}:", timeout=6)[1]
                 screen = SGR.sub("", styled)
-                if OTHER_DIALOG.search(near_box(screen, 15)):
+                # G2.48: a session whose last limit reply has reset shows that reply in its history on the screen
+                old = sid in self.stale_limit
+                if OTHER_DIALOG.search(near_box(screen, 15)) and not old:
                     self.held[sid] = HELD_SCREEN   # this session only: after a resume, its screen is history
                 if sj.get("status") == "idle" and not QUESTION.search(near_box(screen, 15)) and box_empty(styled) \
-                        and not OTHER_DIALOG.search(near_box(screen, 15)) and self.may_note() \
+                        and (old or not OTHER_DIALOG.search(near_box(screen, 15))) and self.may_note() \
                         and login_key(r) not in {login_key(x[2]) for x in self.after_due.values()}:
                     self.note_times.append(time.time())
                     type_note(r, self.note_for[sid])
@@ -1843,8 +2079,17 @@ class Watch:
         res = {"trust_answered": self.answered, "noted": self.noted, "loaded": [], "not_loaded": [],
                "down_again": [], "note_not_typed": [], "note_queued": self.queued, "note_held_login_at_limit": []}
         why = {}
-        P = procs()
-        for r in started:
+        for k in range(4):     # T53: the count says nothing on a failed read; it reads again before it gives up
+            P = procs()
+            if P.ok or k == 3:
+                break
+            log(f"  {P.why}: the count reads again in {float(CFG['retry_gap_s']):g} s")
+            time.sleep(float(CFG["retry_gap_s"]))
+        if not P.ok:
+            res["cannot_tell"] = P.why
+            log(f"  count: cannot tell which of the {len(started)} started sessions are up ({P.why}); none is "
+                "counted as loaded or down")
+        for r in (started if P.ok else []):
             pid = came_up(r, P)
             if not pid:
                 res["down_again"].append(display(r))
@@ -1928,12 +2173,13 @@ def _revive(boot):
         if len(rows) > 1:
             # A name is not an identity: a copy started by hand carries the real session's name. Guessing
             # which one was meant is how a session its owner had just closed got started again.
-            held = running_sids()
+            P = procs()
+            held = running_sids(P)
             log(f"revive --only: {len(rows)} sessions on the record match {want!r}; started nothing. "
                 "Give the session id of the one you mean:")
             for r in rows:
                 log(f"  {r['session_id']}  {display(r)}  tmux {r['tmux_session']}  "
-                    f"{'running' if r['session_id'] in held else 'not running'}  {r['cwd']}")
+                    f"{('running' if r['session_id'] in held else 'not running') if P.ok else 'cannot tell'}  {r['cwd']}")
             return 1
     log(f"=== revive v{VERSION} (boot={boot}, dry-run={DRY}) uptime={int(uptime_s())} s, {len(rows)} to look at")
     up_s = user_services_up_s() if boot else None
@@ -1947,16 +2193,48 @@ def _revive(boot):
         log(f"skip  {i}: the record holds {ids.count(i)} rows with this session id; started none of them. "
             "Two starts of one id would be two copies. Run `record --force` while the session runs, then revive.")
     rows = [r for r in rows if r["session_id"] not in twice]
-    held = running_sids()
-    EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held], [True]
+    # T52: what runs already is read before anything is started. A read that failed is "cannot tell", never
+    # "nothing runs": started on it, a session already running elsewhere would run twice. Nothing is started
+    # until a read works; after retry_min of failed reads the run ends having started nothing.
+    began, up_began = time.time(), uptime_s()
+    P, gap = procs(), float(CFG["retry_gap_s"])
+    give_up = time.time() + float(CFG["retry_min"]) * 60
+    while not P.ok:
+        log(f"revive: {P.why}. It cannot tell which sessions are already running, so it starts nothing now"
+            + ("." if DRY else f"; it reads again in {gap:g} s"))
+        if DRY or time.time() >= give_up:
+            log(f"revive: started nothing: {P.why}" + ("" if DRY else f" for {CFG['retry_min']} min")
+                + ". The record is kept as it was. Check what runs with your terminal multiplexer (tmux ls) "
+                "before starting anything by hand, then run revive again.")
+            if not DRY:    # this boot's report says so, and on_done is told (from the review): never last time's
+                report = {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": [], "left_out": [],
+                          "cannot_tell": P.why, "at": int(time.time()), "boot": boot_id(), "on_record": len(rows),
+                          "began": int(began), "uptime_at_start": int(up_began), "boot_run": boot, "user_up_s": up_s,
+                          "boot_wait_s": int(float(CFG["boot_wait_s"]))}
+                write_json(os.path.join(STATE, "last-revive.json"), report)
+                on_done(report)
+            return 1
+        time.sleep(gap)
+        P = procs()
+    held = running_sids(P)
+    EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held
+                                    and not in_skip_folder(r.get("cwd", ""))], [True]
     note = wake_note(boot)
-    todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": []}
+    todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": [], "left_out": []}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
     # login than it had (possible where sessions on one machine are pinned to accounts) is listed as
     # "needs you" and gets no note, so nothing runs on the wrong account.
     as_if_down = DRY and "--all" in ARGS      # show every start line, as if nothing ran: for checking before a reboot
     for r in rows:
         nm = display(r)
+        if in_skip_folder(r.get("cwd", "")):
+            # its folder is left alone now: its live process, if any, is not read, so starting it could make a copy.
+            # First of all: nothing more of it is read, not even its conversation for an /exit (G1.15; seen with strace).
+            log(f"skip  {nm}: its folder is in skip_cwd_prefix; left alone, never started")
+            report["left_out"].append(nm)        # not "already running": it is never started at all
+            if want:
+                return 1
+            continue
         if r["session_id"] in held and not as_if_down:
             log(f"skip  {nm}: already running on this machine")
             report["skipped"].append(nm)
@@ -1967,6 +2245,14 @@ def _revive(boot):
             log(f"skip  {nm}: its owner ended it with /exit at {time.strftime('%Y-%m-%d %H:%M', time.localtime(ex))}"
                 + (f". To bring it back anyway: revive --only {r['session_id']}" if want else ""))
             report["ended"].append(nm)
+            if want:
+                return 1
+            continue
+        ep = print_run(r)
+        if ep:
+            log(f"skip  {nm}: its conversation is a print-mode or SDK run (entrypoint {ep}), not a session a person "
+                "sits in; it is never started (G2.47). The next record moves it to the down list.")
+            report["left_out"].append(nm)
             if want:
                 return 1
             continue
@@ -1994,6 +2280,10 @@ def _revive(boot):
         pass
     created, came, note_for = set(), [], {}
     pending = {r["session_id"]: [r, 0] for r in todo}
+    try:
+        os.remove(herdr_wait_path())       # G4.10: what an earlier run found about Herdr is not this run's
+    except OSError:
+        pass
     prog = {"pid": os.getpid(), "boot": boot_id(), "began": int(time.time()), "uptime_at_start": int(uptime_s()),
             "total": len(todo), "back": 0, "done": False, "boot_run": boot, "user_up_s": up_s,
             "boot_wait_s": int(float(CFG["boot_wait_s"])),
@@ -2017,6 +2307,7 @@ def _revive(boot):
     w = Watch(note_for, rows)
     w.tabs()                   # each tab at once, to its session's waiting screen
     next_try, last_up, tries_done, said = 0.0, time.time(), False, False
+    cannot_tell = ""      # T52: why the last pass started nothing, when its read failed
 
     inflight = {}          # session id -> (row, when it was started): started, not yet seen up
     at_once = max(1, int(float(CFG.get("starts_at_once") or 1)))
@@ -2092,6 +2383,7 @@ def _revive(boot):
                 came.remove(r)
             note_for.pop(sid, None)
             w.gone.discard(sid)
+            w.gone_at.pop(sid, None)       # started new: not down
             prog["back"] -= 1
             prog["sessions"][sid]["state"] = "starting"
             write_progress(prog)
@@ -2146,7 +2438,17 @@ def _revive(boot):
                     continue
                 settle()               # at most starts_at_once started and not yet seen up
                 nm = display(r)
+                # load_max is read again before each start. Its wait comes BEFORE the read: a session started by
+                # hand during that wait (up to load_wait_s) is then seen, not started a second time (T52).
+                pace()
                 P = procs()            # taken fresh for each session, right before the decision to start it
+                if not P.ok:
+                    # T52: a failed read is "cannot tell": nothing is started in this pass, not this one, not the next
+                    cannot_tell = P.why
+                    log(f"  {P.why}: cannot tell whether {nm} or any other session is already running, so nothing "
+                        f"is started in this pass; it tries again in {float(CFG['retry_gap_s']):g} s")
+                    break
+                cannot_tell = ""
                 late = came_up(r, P) if n else None
                 if late:
                     came_late(sid, r, late)
@@ -2165,7 +2467,6 @@ def _revive(boot):
                 if (r["tmux_socket"], r["tmux_session"]) in created and not has_session(
                         r["tmux_socket"], r["tmux_session"]):
                     w.reattach(sid)    # its waiting screen was closed: a new session, and its tab attached again
-                pace()                 # load_max is read again before each start
                 if start_lane(r, created):
                     inflight[sid] = (r, time.time())
                     report.setdefault("first_start", int(time.time()))
@@ -2180,17 +2481,18 @@ def _revive(boot):
         if not tries_done and (not pending or time.time() >= deadline):
             tries_done = True
             for sid, (r, n) in pending.items():
-                log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}")
+                log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}"
+                    + (f". Not started at the last pass: {cannot_tell}" if cannot_tell else ""))
                 report["failed"].append(display(r))
             report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows), began=prog["began"],
                           uptime_at_start=prog["uptime_at_start"], boot_run=boot, user_up_s=up_s,
                           boot_wait_s=prog["boot_wait_s"])
             write_json(os.path.join(STATE, "last-revive.json"), report)
             if boot:
-                with open(marker(), "w") as f:
-                    f.write(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+                write_marker(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
             log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
-                f"{len(report['failed'])} failed, {len(report['needs_you'])} need you")
+                f"{len(report['failed'])} failed, {len(report['needs_you'])} need you"
+                + (f", {len(report['left_out'])} never started (print-mode runs, folders left alone)" if report["left_out"] else ""))
         # the sessions that are up are looked after in every pass, also while another start is being retried
         if inflight:
             settle()
@@ -2198,6 +2500,9 @@ def _revive(boot):
         waiting = w.look(came)
         no_conversation_late()
         waiting += len(inflight)
+        if prog.get("starts_done") != (tries_done and not inflight):
+            prog["starts_done"] = tries_done and not inflight     # G3.6: from here the record runs again
+            write_progress(prog)
         end_due()
         if tries_done and (not waiting or time.time() >= last_up + watch_s):
             break
@@ -2206,15 +2511,38 @@ def _revive(boot):
             said = True
         time.sleep(1 if TESTING else 10)
     end_due(all_now=True)
+    down_during = {}
+
+    def went_down(at_count=False):
+        """G3.17: each session this run started and that is not running now: down during the restore, with when"""
+        P, new = procs(), False
+        if not P.ok:       # T53: a failed read says nothing went down
+            return False
+        for r in came:
+            sid = r["session_id"]
+            if sid in down_during or came_up(r, P):
+                continue
+            down_during[sid] = {"name": display(r), "session_id": sid, "at": int(w.gone_at.get(sid) or time.time())}
+            new = True
+            if not at_count:
+                log(f"  {display(r)}: went down while the restore still waits (after the count)")
+        if new:
+            report["down_during"] = sorted(down_during.values(), key=lambda x: x["at"])
+            write_json(os.path.join(STATE, "last-revive.json"), report)
     if came:
         report.update(w.count(came))
         report["counted_at"] = int(time.time())
         write_json(os.path.join(STATE, "last-revive.json"), report)
+        went_down(at_count=True)
+        AFTER_COUNT[0] = went_down          # looked at again while the run waits for Herdr
     prog.update(done=True, ended=int(time.time()))
     write_progress(prog)
     notify(f"Restore done: {len(report['started'])} session(s) brought back, "
            f"{len(report['failed']) + len(report['needs_you'])} need you")
     w.tabs(last=True)
+    if came:
+        went_down()
+    AFTER_COUNT[0] = None
     report["tabs"] = TAB_LOG
     write_json(os.path.join(STATE, "last-revive.json"), report)
     if want:
@@ -2250,14 +2578,21 @@ def on_done(report):
     counts = {"started": len(report.get("started", [])), "loaded": len(report.get("loaded", [])),
               "not_loaded": len(report.get("not_loaded", [])), "down": len(report.get("down_again", [])),
               "failed": len(report.get("failed", [])), "needs_you": len(report.get("needs_you", []))}
-    line = cmd
+    if report.get("cannot_tell"):      # T53: the count could not read the process list: no number stands for it
+        counts.update(loaded="unknown", not_loaded="unknown", down="unknown")
+    no_herdr = int((report.get("tabs") or {}).get("herdr_not_running") or 0)      # G4.10
+    line = cmd.replace("{herdr_tabs_not_attached}", str(no_herdr))
     for k, v in counts.items():
         line = line.replace("{" + k + "}", str(v))
     env = server_env()
     env.update({"TARDIGRADE_" + k.upper(): str(v) for k, v in counts.items()})
+    env["TARDIGRADE_HERDR_TABS_NOT_ATTACHED"] = str(no_herdr)
+    if report.get("cannot_tell"):
+        env["TARDIGRADE_CANNOT_TELL"] = str(report["cannot_tell"])
     rc = run(["/bin/sh", "-c", line], timeout=60, env=env)[0]
     log(f"on_done ran (exit {rc}): " + ", ".join(f"{v} {k.replace('_', ' ').replace('needs', 'need')}"
-                                                 for k, v in counts.items()))
+                                                 for k, v in counts.items())
+        + (f"; Herdr is not running: {no_herdr} tab(s) not attached" if no_herdr else ""))
 
 
 def notify(text):
@@ -2286,6 +2621,51 @@ def q_target(name):
 
 
 TAB_LOG = {"attached": [], "not": []}     # what this run did about each tab, for `report` (G3.8)
+HERDR_DOWN = {}                            # G4.10: when this run found Herdr not running, and how many tabs wait
+AFTER_COUNT = [None]                       # G3.17: a look for sessions gone, while the run waits after its count
+
+
+def herdr_wait_path():
+    return os.path.join(STATE, "herdr-wait.json")
+
+
+def herdr_missing(n):
+    """G4.10: a restore whose record has tabs says so as soon as it finds Herdr not running, and census can
+    read it. Tardigrade never starts Herdr itself: the tabs are attached when Herdr appears."""
+    first = not HERDR_DOWN.get("since")
+    HERDR_DOWN.update(tabs=n, since=HERDR_DOWN.get("since") or int(time.time()))
+    if first:
+        log(f"Herdr is not running: {n} tab(s) wait for it (up to {float(CFG['attach_wait_min']):g} minutes after "
+            "the sessions have loaded); Tardigrade does not start Herdr")
+    try:
+        write_json(herdr_wait_path(), {"tabs": n, "since": HERDR_DOWN["since"], "pid": os.getpid(), "boot": boot_id()})
+    except OSError:
+        pass
+
+
+def herdr_back():
+    """G4.10: Herdr came up during the run: say so, and census stops saying it is not running"""
+    if HERDR_DOWN.get("since"):
+        log(f"herdr: its server is up now ({ago(time.time() - HERDR_DOWN['since'])} after it was found not running); "
+            "attaching the tabs")
+        HERDR_DOWN.clear()
+    try:
+        os.remove(herdr_wait_path())
+    except OSError:
+        pass
+
+
+def herdr_wait_now():
+    """census (G4.10): {"tabs": N, "running": the restore still waits for it} while this boot's restore found Herdr
+    not running and it is still not, else {}"""
+    w = read_json(herdr_wait_path(), {})
+    if not isinstance(w, dict) or w.get("boot") != boot_id() or not int(w.get("tabs") or 0):
+        return {}
+    if CFG["herdr"] and CFG["herdr_tabs"] and herdr_up():
+        return {}
+    return {"tabs": int(w["tabs"]), "since": int(w.get("since") or 0), "running": alive(int(w.get("pid") or 0))}
+
+
 MADE = {}      # workspace label -> what this run made again: {"ws", "tab", "pane", "used"}
 
 
@@ -2352,10 +2732,15 @@ def attach_tabs(rows, wait=True):
         return done
     end = time.time() + (float(CFG["attach_wait_min"]) * 60 if wait else 0)
     while not herdr_up():
+        herdr_missing(len([r for r in want if has_session(r["tmux_socket"], r["tmux_session"])]) or len(want))
         if time.time() > end:
             log("herdr: its server never came up; tabs left as they are")
+            TAB_LOG["herdr_not_running"] = HERDR_DOWN.get("tabs", len(want))
             return done
+        if AFTER_COUNT[0]:
+            AFTER_COUNT[0]()
         time.sleep(1 if TESTING else 30)
+    herdr_back()
     pl, tl, wl = herdr("pane", "list"), herdr("tab", "list") or {}, herdr("workspace", "list") or {}
     tabs, pns, typed = tl.get("tabs", []), (pl or {}).get("panes", []), []
     for r in want:
@@ -2418,15 +2803,21 @@ def attach_tabs(rows, wait=True):
 # ---------- census ----------
 def census_data():
     mine, others, helpers = live(with_launch=False)
+    bad = [x.why for x in PROCS_NOW + PANES_NOW if not x.ok]
+    if bad:     # T53: a failed read gives no count at all: "down" read off a failed read gets sessions started twice
+        return {"cannot_tell": "; ".join(bad), "uptime_s": uptime_s(), "record_not_written": record_not_written()}
     table = read_table()
     live_ids = {r["session_id"] for r in mine}
-    down = [dict(r, ended="exit") if exited_at(r) else r for r in table["lanes"] if r["session_id"] not in live_ids]
+    held_now = running_sids(PROCS_NOW[0])  # a print-mode run still running is a helper now, not down (T43)
+    down = [dict(r, ended="exit") if exited_at(r) else dict(r, ended="print-run") if print_run(r) else r
+            for r in table["lanes"] if r["session_id"] not in live_ids and not in_skip_folder(r.get("cwd", ""))
+            and r["session_id"] not in held_now]
     coming = [r for r in down if r.get("tmux_session") and is_waiting(r["tmux_socket"], r["tmux_session"])]
     down = [r for r in down if r not in coming]
     going = restore_now()
     stopped = [] if going else coming        # a waiting screen left by a restore that is no longer running
     coming = coming if going else []
-    down += [r for r in table["down"] if r["session_id"] not in live_ids]
+    down += [r for r in table["down"] if r["session_id"] not in live_ids and not in_skip_folder(r.get("cwd", ""))]
     # G3.16: a session started new under a new id (Claude Code had no conversation for it) runs in its old tmux
     # session, under its old name. Its old id is not down: the lane is up, and the next record takes the new id.
     taken = {(r.get("tmux_socket"), r.get("tmux_session")): r for r in mine if r.get("tmux_session")}
@@ -2474,13 +2865,17 @@ def census_data():
     return {
         "at": int(time.time()), "uptime_s": int(uptime_s()), "running": len(mine), "with_window": len(shown),
         "hidden": len(hidden), "down": len(down), "other_users": others, "helpers": helpers,
+        "left_alone": LEFT_ALONE[0],
         "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
         "trust": len([r for r in mine if r["status"] == "trust?"]),
         "lost": len([r for r in down if r.get("lost_since") and not r.get("ended")]), "comes_back": comes_back(),
+        "record_not_written": record_not_written(),
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "not_kept": not_kept, "replaced": replaced, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
+        "herdr_not_running": herdr_wait_now(),
+        "down_during_restore": down_during_restore(live_ids),
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
                     for r in mine if r.get("by_hand")],
         "sessions": {"hidden": hidden, "with_window": shown, "down": down, "coming_back": coming,
@@ -2488,12 +2883,25 @@ def census_data():
     }
 
 
+def down_during_restore(live_ids):
+    """G3.17: the sessions this boot's restore started that went down during it and are not running now"""
+    lr = read_json(os.path.join(STATE, "last-revive.json"), {})
+    if not isinstance(lr, dict) or lr.get("boot") != boot_id():
+        return []
+    return [x for x in lr.get("down_during") or [] if isinstance(x, dict) and x.get("session_id") not in live_ids]
+
+
+def clock(t):
+    return time.strftime("%H:%M", time.localtime(t))
+
+
 def restore_now():
     """the restore running now, from its own progress file, or {} when none is"""
     pr = read_json(progress_path(), {})
     if not isinstance(pr, dict) or pr.get("done") or pr.get("boot") != boot_id() or not alive(int(pr.get("pid") or 0)):
         return {}
-    return {k: pr.get(k) for k in ("began", "total", "back", "uptime_at_start", "boot_run", "user_up_s", "boot_wait_s")}
+    return {k: pr.get(k) for k in ("began", "total", "back", "uptime_at_start", "boot_run", "user_up_s", "boot_wait_s",
+                                   "starts_done")}
 
 
 def began_text(d):
@@ -2513,8 +2921,36 @@ def where_text(r):
             "none": "no terminal at all"}.get(r["host"], r["host"])
 
 
+def record_not_written():
+    """the record skipped on failed reads for an hour or more: {since, why}, else None"""
+    sk = read_json(SKIP_PATH, {})
+    if isinstance(sk, dict) and sk.get("since") and time.time() - sk["since"] >= 3600:
+        return {"since": sk["since"], "why": sk.get("why", "")}
+    return None
+
+
+def record_not_written_text(x):
+    return (f"RECORD NOT WRITTEN since {time.strftime('%Y-%m-%d %H:%M', time.localtime(x['since']))} "
+            f"({ago(time.time() - x['since'])}): {x['why']}. A restart now brings back the sessions recorded before then.")
+
+
+def cannot_tell_text(why):
+    return (f"Cannot tell which sessions run or which are down ({why}). Nothing here says a session is down: "
+            "do not start any by hand on the strength of this. Check with your terminal multiplexer (tmux ls), "
+            "then run census again.")
+
+
 def census():
     d = census_data()
+    if d.get("cannot_tell"):
+        if "--json" in ARGS:
+            print(json.dumps(d, indent=1, sort_keys=True))
+        else:
+            print(f"Windstorm Tardigrade census, {time.strftime('%Y-%m-%d %H:%M %Z')}")
+            print(cannot_tell_text(d["cannot_tell"]))
+            if d.get("record_not_written"):
+                print(record_not_written_text(d["record_not_written"]))
+        return 1
     if "--json" in ARGS:
         print(json.dumps(d, indent=1, sort_keys=True))
         return 0
@@ -2530,14 +2966,27 @@ def census():
         print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
+    if d.get("record_not_written"):
+        print(record_not_written_text(d["record_not_written"]))
     pr = d["restore"]
     if pr:
         print(f"A RESTORE IS RUNNING: {pr['back']} of {pr['total']} sessions back, since "
               f"{time.strftime('%H:%M', time.localtime(pr['began']))} ({ago(now - pr['began'])}). "
-              + ("The others are on their way: do not start them by hand." if pr["back"] < pr["total"] else
-                 "All are back; it is still watching them load (questions, notes, tabs): do not start any by hand."))
+              + ("The others are on their way: do not start them by hand." if pr["back"] < pr["total"] and not pr.get("starts_done") else
+                 "All are back; it is still watching them load (questions, notes, tabs). Every start is done."
+                 if pr["back"] >= pr["total"] else
+                 "Every start is done; the others did not come back (see `tardigrade report`). It is still watching "
+                 "the ones that did load (questions, notes, tabs)."))
         if began_text(pr):
             print(f"  This boot's restore {began_text(pr)}.")
+    for x in d["down_during_restore"]:
+        print(f"Down during the restore: {x['name']} (at {clock(x['at'])}): it started, then went down; it may have "
+              "failed to load. `tardigrade report` has the restore's account.")
+    hw = d["herdr_not_running"]
+    if hw:
+        print(f"Herdr is not running: {hw['tabs']} tab(s) not attached"
+              + ("; the restore attaches them when Herdr appears (Tardigrade does not start it)." if hw["running"] else
+                 ". Tardigrade does not start Herdr; start it, then `tardigrade revive --only NAME` attaches one."))
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
@@ -2552,7 +3001,8 @@ def census():
             if down:
                 t = r.get("down_since") or r.get("last_seen") or 0
                 how = {"exit": "   ended by its owner (/exit)",
-                       "shell": "   ended (its pane holds the shell it left)"}.get(r.get("ended"), "")
+                       "shell": "   ended (its pane holds the shell it left)",
+                       "print-run": "   a print-mode run (claude -p), never brought back"}.get(r.get("ended"), "")
                 print(f"  {display(r):<34} last seen {ago(now - t)} ago   {r.get('cwd', '')}{how}")
             else:
                 q = ago(now - r["updated_at"]) if r["updated_at"] else "?"
@@ -2587,9 +3037,11 @@ def census():
         print(f"\n{b['name']} ({b['session_id'][:8]}) was started by hand while the restore was bringing back "
               f"{b['in_place_of'][:8]} under that name. Two sessions may now do one job: end the one you do not want.")
     if d["other_users"]:
-        print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; not read.")
+        print(f"\nOther users on this machine: {d['other_users']} Claude process(es). Not yours; counted by program name only.")
     if d["helpers"]:
         print(f"Helper sessions started by other sessions: {d['helpers']} (not brought back after a reboot).")
+    if d.get("left_alone"):
+        print(f"Left alone in a skip_cwd_prefix folder: {d['left_alone']} Claude process(es). Only their folder read; not brought back.")
     if d["not_kept"]:
         print(f"\nRUNNING, BUT WILL NOT COME BACK after a reboot ({len(d['not_kept'])}):")
         for x in sorted(d["not_kept"], key=lambda x: x["name"].lower()):
@@ -2625,19 +3077,38 @@ def report_cmd():
     print(f"  run began             {at(began)}" + (f"   ({began_text(rep)})" if rep.get("boot_run") else ""))
     print(f"  first start           {at(rep.get('first_start'))}")
     print(f"  last start            {at(rep.get('last_start'))}")
-    print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started, "
-          f"{len(rep.get('loaded', []))} loaded, {len(rep.get('not_loaded', []))} not loaded, "
-          f"{len(rep.get('down_again', []))} down again, {len(rep.get('skipped', []))} already running"
-          + (f"   ({ago(rep['counted_at'] - booted)} after boot)" if rep.get("boot_run") and rep.get("counted_at") else ""))
+    if rep.get("cannot_tell") and not rep.get("counted_at"):
+        # T53: a run that gave up was not counted; zeros here would read like a count
+        print(f"  counted               -   not counted: it started nothing, as it could not tell which sessions "
+              f"already run ({rep['cannot_tell']})")
+    elif rep.get("cannot_tell"):
+        print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started; loaded, not "
+              f"loaded and down again not counted: it could not tell ({rep['cannot_tell']})")
+    else:
+        print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started, "
+              f"{len(rep.get('loaded', []))} loaded, {len(rep.get('not_loaded', []))} not loaded, "
+              f"{len(rep.get('down_again', []))} down again, {len(rep.get('skipped', []))} already running"
+              + (f", {len(rep['left_out'])} never started (print-mode runs, folders left alone)" if rep.get("left_out") else "")
+              + (f"   ({ago(rep['counted_at'] - booted)} after boot)" if rep.get("boot_run") and rep.get("counted_at") else ""))
     tabs = rep.get("tabs") or {}
     if tabs.get("attached") or tabs.get("not"):
         print(f"  tabs                  {len(tabs.get('attached', []))} attached, {len(tabs.get('not', []))} not")
+    if tabs.get("herdr_not_running"):
+        print(f"  tabs                  Herdr was not running: {tabs['herdr_not_running']} tab(s) not attached")
     d = census_data()
-    need = [("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
+    if d.get("cannot_tell"):
+        print("\n" + cannot_tell_text(d["cannot_tell"]))
+        d = {"same_name": {}, "by_hand": []}
+    need = [(("count not taken: cannot tell which sessions are up" if rep.get("counted_at") else
+              "nothing was started: it could not tell which sessions already run"),
+             [rep["cannot_tell"]] if rep.get("cannot_tell") else []),
+            ("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
             ("not loaded (a question on its screen?)", rep.get("not_loaded")),
             ("loaded, note not typed", rep.get("note_not_typed")),
             ("note waiting in Claude Code's queue for the limit to reset", rep.get("note_queued")),
-            ("note not typed (its login is at its usage limit)", rep.get("note_held_login_at_limit")), ("down again", rep.get("down_again")),
+            ("note not typed (its login is at its usage limit)", rep.get("note_held_login_at_limit")),
+            ("down during the restore", [f"{x['name']} (at {clock(x['at'])})" for x in rep.get("down_during") or []]
+             if "down_during" in rep else rep.get("down_again")),
             ("ended by its owner, not brought back", rep.get("ended")),
             ("running elsewhere by its turn", rep.get("elsewhere")), ("tab not attached", tabs.get("not")),
             ("a name carried by more than one session", [f"{n}: {', '.join(i)}" for n, i in d["same_name"].items()]),
@@ -2811,8 +3282,7 @@ def setup():
             return 1
     save_cfg_key("auto_revive", True)
     # this boot counts as revived: the sessions running now are the ones to remember
-    with open(marker(), "w") as f:
-        f.write("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+    write_marker("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
     # T35: a plain record, not a forced one: sessions that vanished are held as the timer's record holds them,
     # so installing or upgrading on a machine whose sessions are down forgets none of them
     HERDR_WAIT["s"] = 120          # setup's first record: give a loaded machine's Herdr time to answer

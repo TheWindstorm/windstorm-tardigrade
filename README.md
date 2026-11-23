@@ -11,11 +11,11 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.7, a pilot.** It has been through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.9, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
-> this version found faults, which is what they were for; after the fixes every session came back every time,
-> all 98 included. That last reboot also showed what is still wrong: it took 25 minutes and told nobody what it
-> was doing. See [Tested](#tested) for what is proven, and [PROMISES.json](PROMISES.json) for what it now owes.
+> that version found faults, which is what they were for; after the fixes every session came back every time, all
+> 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
+> See [Tested](#tested) for what is proven on which version, and [PROMISES.json](PROMISES.json) for what it owes.
 
 ## Install
 
@@ -29,10 +29,9 @@ claude plugin install windstorm-tardigrade@windstorm-tardigrade
 
 Then start Claude Code and say: **set up tardigrade**.
 
-Installed as a plugin before 2026-11-22? Run `claude plugin marketplace update windstorm-tardigrade`, then `claude
-plugin update windstorm-tardigrade@windstorm-tardigrade`. If it still says an older version than 0.1.8.2, run `claude
-plugin uninstall windstorm-tardigrade@windstorm-tardigrade` and `claude plugin install
-windstorm-tardigrade@windstorm-tardigrade`, then set up again.
+Installed as a plugin before? Run `claude plugin marketplace update windstorm-tardigrade`, then `claude plugin update
+windstorm-tardigrade@windstorm-tardigrade` (seen to bring the new script once the plugin's version label had
+changed, as it has in 0.1.9), then set up again: setup is what refreshes the copy the boot service and the timer run.
 
 Without the plugin system, it is one file:
 
@@ -43,15 +42,22 @@ python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 
 Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute
 timer for your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs
-no administrator rights and it tells you who has to log in after a restart (see below). Run setup again after you
-update the plugin.
+no administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
+copy: run it again after you update the plugin.
 
-What a stock machine needs: nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
+Taking the plugin off with Claude Code's own `claude plugin uninstall` does not take off what setup installed. The
+boot service still brings your sessions back after a restart, and the 5-minute record timer still runs, both from
+the copy in `~/.local/share/windstorm-tardigrade/`. To take them off, run
+`python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall`. Your settings, record and log stay.
+
+What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
 first, then the other folders of the `PATH` of whoever runs the restore: at boot, the boot service's (which on
 Linux usually lacks `~/.local/bin`); in a `revive` you type, your shell's. If yours is elsewhere, set `path` (see
 [Settings](#settings)). 0.1.8 and 0.1.8.1 did not bring sessions back on a Linux machine whose service `PATH` lacks
-the folder Claude Code is installed in; fixed in 0.1.8.2.
+the folder Claude Code is installed in; fixed in 0.1.8.2. On a Mac it has been seen working only on Macs that already
+had Apple's developer tools and a newer Python installed; a Mac with neither has not been seen. 0.1.9 was seen
+working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 
 ## What you get
 
@@ -116,7 +122,7 @@ session at its limit that has not yet met it in its own conversation can still g
 after each note, and if it is held for the reset, the log and the counts say so ("note queued until the reset"). A
 limit belongs to the login, not to one conversation: once a note just typed meets the limit (the limit words appear
 after it), no other session on the same login gets a note in that run. A limit reply already in a conversation, or on
-a screen after a resume (which shows history), holds that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. To drop a held note, press Esc in that
+a screen after a resume (which shows history), holds that session's note only, since the limit may long have reset, so they do not all wait and run at once at the reset. And it holds it only while its reset is still ahead: when the reply says when it resets ("resets 12pm (America/New_York)", "resets Nov 24, 6pm (…)"), that moment is worked out from the reply's own time and zone, and once it has passed (with five minutes' margin) the note is typed and the log says so. A reply that does not say when, or names no zone, still holds it. To drop a held note, press Esc in that
 session. Tardigrade does not press it for you. Your own words for the note (`wake_text`) must not read like a limit
 notice ("hit your weekly limit", "continue automatically", "/usage-credits"): `setup` names such words, and the
 default note is used in their place. The same goes for your status line: Tardigrade reads the lines under Claude
@@ -134,6 +140,10 @@ moment of a restart (ended with `/exit` and resumed on the other login seconds l
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
 "needs you" and nothing is typed into it.
+
+**A variable you set by hand** (an `export` in the shell before you started the session) is not given back: a
+revived session gets what your shell's usual setup gives it, the `env_file` and the names in `carry_env`, nothing
+else. Name the ones a session needs in `carry_env` or `env_file`.
 
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
 session with the same name, folder and flags.
@@ -171,6 +181,10 @@ silently. A first message is never written down.
 `--remote-control` is carried. A session started with it comes back with Remote Control on, which 0.1.7 did not
 do, and the log says so the first time a record sees it.
 
+Known edge until 0.1.10 (T70): the permission mode that census and the dry run show is the start flag. A session
+that Claude Code runs in another mode was shown as "default" (seen once, with auto mode), and it came back in the
+mode Claude Code kept for it.
+
 The record, the table at `tsv_path`, the progress file and the log are readable by you only (0600), in folders
 that are yours only (0700), because they hold start flags word for word.
 
@@ -200,11 +214,21 @@ Setup tells you this for your machine. It never changes it for you.
 
 - **Never a second copy.** A session id that any live process of yours holds is never started. Two copies of one
   session would both act.
-  Known edge in 0.1.8.x, fixed in 0.1.9 (T52, T53): when the process list cannot be read (for example, a machine so
-  loaded that `ps` fails or does not answer within 30 s), census can report running sessions as down, and a restore
-  can start a second copy of a session that was started by hand meanwhile; with `load_max` set, a session started by
-  hand during a restore's load wait can also be started again. Until 0.1.9: start nothing by hand while a restore
-  runs, and check with your terminal multiplexer (`tmux ls`) before believing "down".
+- **A read that failed is "cannot tell", never "nothing runs".** Each start is decided on a read of the process list
+  taken right before it, after any `load_max` wait. If that read fails (`ps` gives an error, or no answer within
+  30 s), a restore starts nothing in that pass, says so in its log, and reads again at the next. If the process list
+  or a tmux server's list of panes cannot be read, census says it cannot tell and gives no count of running or down
+  sessions, and the record is kept exactly as it was. Only the tmux servers the record depends on count (each
+  recorded session's, tmux's default, `loose_socket`, `tsv_socket`). Census names a record that has not been written
+  for an hour, and why. A restore that cannot read the process list for all of `retry_min` starts nothing, and
+  `report` and `on_done` say so. Known edge until 0.1.10 (T54): if the session file Claude Code
+  keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
+  `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
+  Known edge until 0.1.10 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
+  -v claude)` ends in `cli.js`), a session started by hand cannot be seen as running until it has loaded: Claude Code
+  runs under node's name at first, then renames itself and drops its start arguments. A restore can start a second
+  copy of such a session. Update Claude Code (2.1.113 and later ship the native program, through npm too), and start
+  nothing by hand while a restore runs.
 - **A session comes back with the permission mode it had.** If it ran with permission checks switched off, it comes
   back that way, with nobody watching, and the opening message gives it one turn. You chose that mode when you
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use
@@ -222,7 +246,9 @@ Setup tells you this for your machine. It never changes it for you.
   fingerprint, and uses it to check that a session came back on the same login. The check comes before anything
   is typed: a session whose login changed is listed as "needs you", with no message typed and nothing run on the
   wrong account. A variable whose name looks like a secret's is never recorded or copied, whatever the settings say.
-- On a shared machine it counts other users' Claude processes and reads nothing of theirs.
+- On a shared machine it counts other users' Claude processes by program name; its own code reads nothing else of
+  theirs. (On Linux the system's `ps`, which it runs for the process list, opens more of every process: see
+  `skip_cwd_prefix`.)
 - Python standard library only. No network. It prints names, folders and counts, never message text.
 - The record is never overwritten by a machine that is still starting, and never by an empty list.
 
@@ -244,11 +270,12 @@ Setup tells you this for your machine. It never changes it for you.
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
 | `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
-| `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. |
+| `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. Tardigrade attaches tabs to a Herdr that is running; it never starts Herdr itself. When Herdr is not running, the log says so at once and `census` says how many tabs wait for it. Have Herdr's server start at login by itself (a launch agent on a Mac, a user service on Linux, running `herdr server`), not only from a terminal window that the desktop may or may not reopen. |
 | `answer_trust` | `false` | Set by `trust on` / `trust off`. Answer "trust this folder?" for a revived session's own folder. |
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
+| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted, and Tardigrade's own code reads only its folder (from the system): not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. On Linux, the system's `ps`, which Tardigrade runs to list processes, opens more than that for every process on the machine (its environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only process id, parent, user, state and program name. From 0.1.10 the list is read from /proc directly (T47). |
 
 On a small machine, set `starts_at_once` to 2, and, if the machine must stay usable while sessions come back, a
 `load_max` of about twice its number of cores. Right after a boot most of the load is the boot itself.
@@ -260,6 +287,14 @@ The record is `~/.config/windstorm-tardigrade/lanes.json`. The log is
 
 Most people need none of these. They are for machines where sessions are started through a wrapper, pinned to
 accounts, or shown in another tool.
+
+Check this before the first reboot on a machine. A session started with a login token in its environment, and no
+label your start can read, comes back on whatever login the plain `claude` finds, which may be another account.
+If every session on the machine should run on one login, put the wrapper that fetches it into `claude_command`.
+`tardigrade revive --dry-run --all` shows each session's start line, so you can see this before you need it.
+Known edge until 0.1.10 (T57): a session started on an account has been seen to lose its label from its
+record row, so the next restart started it on the machine's own login without a word. After starting such a session,
+check that its line in `tardigrade revive --dry-run --all` ends in `[account NAME]`.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -278,11 +313,27 @@ accounts, or shown in another tool.
 | `herdr_default_workspace` | | With Herdr: the workspace for a session that has a tab label and no workspace. |
 | `tsv_path` | | Also write the record as a tab-separated table with eight columns at this path, for tools that read one. `tsv_socket` limits it to one tmux socket name. |
 | `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
-| `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. For a machine where someone or something should be told. |
+| `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. `{herdr_tabs_not_attached}` (and `TARDIGRADE_HERDR_TABS_NOT_ATTACHED`) is how many tabs were left because Herdr was not running. For a machine where someone or something should be told. |
 
 Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is exactly what will run.
 
 ## Tested
+
+Seen on 0.1.9, 2026-11-23:
+
+- **A real restart of a Mac** (an Intel desktop, macOS 13, in its main account, which carries Apple's developer
+  tools and a newer Python; Claude Code 2.1.330), set up over 0.1.8.1, with two sessions that had Herdr tabs and
+  Herdr not running. Both came back by themselves, one process each, were asked "trust this folder?" and answered
+  (`trust on`), and were loaded and woken four minutes after boot. The first pass said at once that Herdr was not
+  running and that 2 tabs would wait for it; 30 minutes later the log said its server never came up and left the
+  tabs as they were. Nothing tried to start Herdr. The record ran during the watch, once every start was done.
+- **A folder left alone, on that Mac:** a `claude` sat at its first screen in a `skip_cwd_prefix` folder. A
+  whole-system file watch showed nothing of Tardigrade opening its session file or its conversation. A log of every
+  `ps` and `lsof` it ran (steered: a shim on `PATH`) showed only the read of its folder naming that process. The
+  in-process read of a process's arguments could not be watched there.
+- **The uninstall line, as printed** (a fresh Ubuntu 24.04 VM, Claude Code 2.1.330, the plugin installed):
+  `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall` removed the boot service, the timer and
+  the installed copy, and kept settings, record and log.
 
 Proven on 0.1.7, on real machines, 2026-11-21:
 
@@ -322,7 +373,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 65 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 119 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
@@ -354,8 +405,8 @@ not built, and refuse the next one until the promise has been seen to work on a 
 
 ## Where it comes from
 
-The record-and-revive engine was built and run by an AI agent on The Windstorm's own fleet from November 2026, on a
-machine with about 100 Claude Code sessions. This plugin is that engine made general, with the census added.
+The record-and-revive engine was built by an AI agent in November 2026 and has run since then on the computers it was
+built on, one of them a machine with about 100 Claude Code sessions. This plugin is that engine made general, with the census added.
 
 Other tools restore terminal layouts (tmux-resurrect, tmux-continuum, Zellij) and a few small ones resume Claude
 Code sessions. Use what fits you. This one is for people who run many sessions and want them back without doing

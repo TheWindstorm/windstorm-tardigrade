@@ -9,6 +9,8 @@ import sys
 home = os.environ["HOME"]
 a = sys.argv[1:]
 state = json.load(open(os.path.join(home, "herdr-state.json")))
+with open(os.path.join(home, "herdr-calls.jsonl"), "a") as f:     # every call, to show what was never asked
+    f.write(json.dumps(a) + "\n")
 
 
 def out(result):

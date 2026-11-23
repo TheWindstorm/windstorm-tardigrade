@@ -10,7 +10,8 @@ another dialog open under it, and write down every key received), `failonce` (en
 `failsid` (session ids whose start always fails), `limitnotice` (show the usage-limit notice under
 the empty box), `limitqueue` (a line typed in meets the weekly limit and is held for the reset), `oldlimit` (session ids whose
 redrawn history shows an old limit reply above a newer short turn), `tallstatus` (that many status-line
-lines drawn at the very foot, under the box and any notice)."""
+lines drawn at the very foot, under the box and any notice), `psfailon` (session ids whose start, unless
+started by hand with MY_SETTING=byhand, makes the test's stand-in `ps` fail from that moment: HOME/psfail)."""
 import ctypes
 import json
 import os
@@ -50,6 +51,8 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
                         "path": os.environ.get("PATH", ""),
                         "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME", "PWD", "INVOCATION_ID", "JOURNAL_STREAM",
                                                            "CLAUDE_CODE_AUTO_COMPACT_WINDOW") if k in os.environ}}) + "\n")
+if listed("psfailon", sid) and os.environ.get("MY_SETTING") != "byhand":
+    open(os.path.join(home, "psfail"), "w").close()
 if "--resume" in a and listed("noconv", sid):
     print(f"No conversation found with session ID: {sid}")     # what Claude Code says for a session nobody wrote in
     sys.exit(1)

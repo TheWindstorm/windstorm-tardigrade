@@ -1,6 +1,47 @@
 # Changelog
 
-## Unreleased
+## 0.1.9 (2026-11-23)
+
+- **If you installed through the plugin system** (`claude plugin install`) at 0.1.8 or 0.1.8.1, you may still be
+  running that version. The plugin's manifest (`.claude-plugin/plugin.json`) said 0.1.7 in 0.1.8, 0.1.8.1 and
+  0.1.8.2, and Claude Code keys a plugin's folder on that label. Seen on a stock Ubuntu VM with Claude Code 2.1.330:
+  installed at 0.1.8, then `claude plugin marketplace update` and `claude plugin update` said "already at the
+  latest version (0.1.7)" and kept 0.1.8's script, so running setup again installed 0.1.8 again. From 0.1.9 the
+  manifest says the script's version, and the suite fails when they differ (T50); with the label changed, `claude
+  plugin update` was seen to update. Then run setup again: it refreshes the copy the services run.
+- **A read that failed is "cannot tell", never "nothing runs"** (T52, T53, T55; seen in a probe on 0.1.8.2, each read
+  made to fail in turn). In every earlier version a process-list read that failed or timed out came back as an empty
+  list. Then:
+  - a restore could start a second copy of a session that was already running, for example one started by hand;
+  - census said "Running: 0 ... down: N" while those sessions ran;
+  - when tmux's pane list failed, record rewrote where each session lives.
+  Now a restore starts nothing in a pass whose read failed and reads again at the next. Census and `report` say they
+  cannot tell and give no counts. A restore's count and `on_done` say "unknown". The record is kept as it was.
+  A stale tmux socket left after a reboot still counts as no panes. Only the tmux servers the record depends on count:
+  each recorded session's, tmux's default, `loose_socket` and `tsv_socket`. A record skipped for an hour or more is
+  named by census ("RECORD NOT WRITTEN since ..."). A restore whose first read keeps failing for `retry_min` starts
+  nothing; this boot's report and `on_done` say so (`TARDIGRADE_CANNOT_TELL`). Each start is decided on a read taken right before
+  it: with `load_max` set, the load wait now comes before that read, not after it, so a session started by hand during
+  the wait is seen, not started again (T52, found in a trace on a loaded machine).
+- Known edge until 0.1.10 (T54): a running session whose own session file cannot be read, and that was not started
+  with `--resume` of a recorded id, is counted by record as ended, so the next restart does not bring it back.
+- Known edge until 0.1.10 (T56): with Claude Code installed through npm at 2.1.112 or older (run by node), a session
+  started by hand cannot be seen as running until it has loaded, and a restore can start a second copy of it. Update
+  Claude Code (2.1.113 and later ship the native program); start nothing by hand while a restore runs. The occasional
+  G4.4 failure in CI was this window, seen through the test's stand-in: the suite now starts its stand-in so that it
+  is named "claude" from its first instant, as the native program is.
+- Known edge until 0.1.10 (T57): a session started on an account has been seen to lose its label from its record
+  row, so the next restart started it on the machine's own login without a word. After starting such a session, check
+  that its line in `revive --dry-run --all` ends in `[account NAME]`.
+- Not in 0.1.9, moved by the skills' department head: T12, T14, T19, T27, T30 and T32 to 0.1.10 (the checks before a
+  planned reboot), T11, T16 and T22 to 0.1.11. What you can meet before then is in the README: a session moved
+  between logins at a restart, a session started with a login token in its environment, a variable set by hand,
+  and sessions that come back with no window.
+
+- Known edge (T41, G1.15; fix due in 0.1.10, T47): of a process in a `skip_cwd_prefix` folder, Tardigrade's own
+  code reads only its folder. On Linux the system's `ps`, which it runs for the process list, opens more of every
+  process on the machine (environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only
+  process id, parent, user, state and program name.
 
 ## 0.1.8.2 (2026-11-22)
 A fix to how a session is started at boot (G2.49, T48). **0.1.8 and 0.1.8.1 did not bring sessions back on a Linux
