@@ -494,18 +494,6 @@ class Panes(dict):
     ok, why = True, ""
 
 
-def server_answers(sock):
-    """a tmux server is listening on this socket (a stale socket left after a reboot refuses the connection)"""
-    import socket
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as c:
-            c.settimeout(2)
-            c.connect(sock)
-        return True
-    except OSError:
-        return False
-
-
 def record_sockets():
     """the tmux sockets whose pane list the record depends on: every socket a recorded row lives on, tmux's own
     default, this tool's own (loose_socket) and the table's (tsv_socket). A wedged server elsewhere (a test socket,
@@ -524,10 +512,21 @@ def panes():
     res = Panes()
     ours = None
     for s in sockets():
-        rc, out = tmux(s, "list-panes", "-a", "-F", "#{pane_pid}\t#{session_attached}\t#{session_name}", timeout=6)
+        rc, out, err = 99, "", ""
+        if CFG["tmux"]:
+            try:
+                r = subprocess.run([CFG["tmux"], "-S", s, "list-panes", "-a", "-F",
+                                    "#{pane_pid}\t#{session_attached}\t#{session_name}"],
+                                   capture_output=True, text=True, timeout=6)
+                rc, out, err = r.returncode, r.stdout, r.stderr
+            except (subprocess.TimeoutExpired, OSError):
+                pass
         if rc != 0:
             ours = record_sockets() if ours is None else ours
-            if s in ours and (rc == 99 or server_answers(s)):
+            # tmux's own words for a socket nobody listens on (a server gone at a reboot): "no server running on",
+            # or in older versions "error connecting to". Anything else, or no answer, is a failed read (T55).
+            stale = rc != 99 and ("no server running" in err or "error connecting to" in err)
+            if s in ours and not stale:
                 res.ok = False
                 res.why = f"the tmux server at {s} did not list its panes (" + (
                     "no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})")
@@ -2080,13 +2079,12 @@ class Watch:
         res = {"trust_answered": self.answered, "noted": self.noted, "loaded": [], "not_loaded": [],
                "down_again": [], "note_not_typed": [], "note_queued": self.queued, "note_held_login_at_limit": []}
         why = {}
-        P = procs()
-        for _ in range(3):     # T53: the count says nothing on a failed read; it reads again before it gives up
-            if P.ok:
+        for k in range(4):     # T53: the count says nothing on a failed read; it reads again before it gives up
+            P = procs()
+            if P.ok or k == 3:
                 break
             log(f"  {P.why}: the count reads again in {float(CFG['retry_gap_s']):g} s")
             time.sleep(float(CFG["retry_gap_s"]))
-            P = procs()
         if not P.ok:
             res["cannot_tell"] = P.why
             log(f"  count: cannot tell which of the {len(started)} started sessions are up ({P.why}); none is "

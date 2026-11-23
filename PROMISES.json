@@ -769,7 +769,7 @@
   {
    "id": "T55",
    "seen": "2026-11-23, a probe on 0.1.8.2 and on the 0.1.9 candidate, each read made to fail in turn: with tmux list-panes failing, record kept both sessions but rewrote them from tmux alpha/beta to host \"none\" under new names, so the next restore would put them elsewhere; census showed them as \"no terminal at all\". 0.1.9 runs the record earlier, during a restore's watch, while the machine is still loaded, so this read fails more often there than on anything released.",
-   "promise": "a failed read of the process list or of a tmux server's panes (one that still answers, or gave no answer within 6 s) leaves the record exactly as it was and says why on every pass; a stale socket after a reboot is \"no panes there\", as before.",
+   "promise": "a failed read of the process list or of a tmux server's panes (any failure but tmux's own \"no server running\", or no answer within 6 s) leaves the record exactly as it was and says why on every pass; a stale socket after a reboot is \"no panes there\", as before.",
    "codon": "G1.18",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
