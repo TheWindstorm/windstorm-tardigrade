@@ -593,7 +593,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G7_2_a_check_that_a_process_is_gone_waits_for_its_exit_and_still_catches_one_that_stays",
-   "proven": "",
+   "proven": "2026-11-23, with its limit: on a 2-vCPU VM under a load up to 5.29, the candidate passed G4.4 15 of 15 and the whole suite, but the old single read also passed there, so that machine did not bring the flake back. G7.2 shows the bounded wait still catches a process that stays. CI history: before the fix 1 failure in 120 jobs (run 45038237868 at f51665c, Python 3.13), after it 0 in 64; at that rate 0 in 64 happens about 6 times in 10 without any fix. A harsher try (1 vCPU, load 10-18, 36 traced runs of G4.4 on the candidate and the old tree): T42's fault (a waiting screen outliving its turn) never showed; G4.4 failed 8 times on another assertion (\"delta was started a second time\"), traced to the test's stand-in being named late (T56), which the suite's stand-in no longer is. G7.2 passed there too.",
    "issue": 45,
    "moved_why": "",
    "moved_by_person": ""
@@ -691,7 +691,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G7_3_a_test_named_for_a_claim_counts_only_if_the_runner_really_runs_it",
-   "proven": "",
+   "proven": "2026-11-22: CI run 45098703054 on 58df935, both test jobs (Python 3.10 and 3.13, through the suite's entry point) printed \"gate: 107 named test(s) passed in this run\". The static gate's refusal of each of the six planted breaks was run on a copy; the seventh case (a skip whose condition names nothing) is planted in G7.3's self-test. The runner gate's refusal was run once: a copy of bafe95f with the static gate off and G2.49's test renamed: unittest printed \"Ran 112 tests ... OK\", the runner printed \"GATE: test_G2_49_...: did not pass in this run\" and exited 1. For cases 1, 3 and 6 the runner's refusal was read in the code: the same path as the rename (not collected, so not passed).",
    "issue": 53,
    "moved_why": "",
    "moved_by_person": ""
