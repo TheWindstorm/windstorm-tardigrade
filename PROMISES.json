@@ -978,8 +978,8 @@
   },
   {
    "id": "T70",
-   "seen": "2026-11-23, a real Mac (macOS 13, Claude Code 2.1.330) at 0.1.9: a session started with no permission flag was shown as \"default\" by census and the dry run, while Claude Code showed it in auto mode, before the restart and after it (its conversation's own mode field said auto throughout; no setting named a default mode). It came back in the mode Claude Code kept for it; only the word on the screen was wrong.",
-   "promise": "census, the dry run and the record's words say what Tardigrade knows, the flags a session was started with (\"started with no mode flag; Claude Code's own setting for that conversation applies\"), and never name a mode they did not read; a test holds the words for a session started with no mode flag.",
+   "seen": "2026-11-23, a real Mac (macOS 13, Claude Code 2.1.330) at 0.1.9: a session started with no permission flag was shown as \"default\" by census and the dry run, while Claude Code showed it in auto mode, before the restart and after it (its conversation's own mode field said auto throughout; no setting named a default mode). It came back in the mode Claude Code kept for it; only the word on the screen was wrong. Same day, on a shared Linux machine: a session's arguments changed while it ran, when Claude Code's own in-place restart reordered them and wrote out `--allow-dangerously-skip-permissions` on sessions already in bypass mode.",
+   "promise": "census, the dry run and the record's words say what Tardigrade knows, the flags a session was started with (\"started with no mode flag; Claude Code's own setting for that conversation applies\"), and never name a mode they did not read; a test holds the words for a session started with no mode flag. Where the README says start flags are carried word for word, one sentence says that a session's arguments can change while it runs (Claude Code's own in-place restart has been seen to reorder them and to write out `--allow-dangerously-skip-permissions` on a session already in bypass mode), and that a session comes back with what the record's last pass saw.",
    "codon": "G3.23",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
@@ -987,6 +987,20 @@
    "test": "",
    "proven": "",
    "issue": 76,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T71",
+   "seen": "2026-11-23, a shared Linux machine with 100 sessions, where a helper restarts an idle session in place every two minutes: an upgrade from 0.1.8.1 to 0.1.9 was checked by comparing a dry run taken before setup with one taken after it, and twice one or two start lines differed. Setup's record had been taken after a session restarted itself with changed arguments, while the first dry run read a record from minutes before. Both versions read a session's flags with the same code. Given the same record, the two versions printed the same 100 start lines, before setup and again after it.",
+   "promise": "the dry run's header names the record it read: its path, the time it was written and a short sha256, so two dry runs that read different records show it at a glance. The README's upgrade advice says how to check an upgrade: run both versions' `revive --dry-run --all` on the same record, the old one from its kept copy by its path, before setup and again after it, with the record's sha256 the same before and after both. A test holds the header. Whether this becomes a `--compare-with` mode is a design note for 0.1.10, not decided.",
+   "codon": "G3.24",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 77,
    "moved_why": "",
    "moved_by_person": ""
   }
