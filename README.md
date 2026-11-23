@@ -29,6 +29,11 @@ claude plugin install windstorm-tardigrade@windstorm-tardigrade
 
 Then start Claude Code and say: **set up tardigrade**.
 
+Installed as a plugin before 2026-11-22? Run `claude plugin marketplace update windstorm-tardigrade`, then `claude
+plugin update windstorm-tardigrade@windstorm-tardigrade`. If it still says an older version than 0.1.8.2, run `claude
+plugin uninstall windstorm-tardigrade@windstorm-tardigrade` and `claude plugin install
+windstorm-tardigrade@windstorm-tardigrade`, then set up again.
+
 Without the plugin system, it is one file:
 
 ```bash

@@ -17,6 +17,11 @@ waiting screen) also gains those other folders now. Before, a new pane had the s
 only. The default still comes first, so nothing is lost; a `revive` typed by hand passes on the folders of the shell
 it is typed in.
 
+Note added 2026-11-22, after the release: the plugin manifests of 0.1.8, 0.1.8.1 and 0.1.8.2 named an older version
+(0.1.7). Claude Code keys an installed plugin on that label, so for a plugin install `claude plugin update` reported
+"already at the latest version" and kept the old script. Corrected on main on 2026-11-22: the manifest now says
+0.1.8.2. The tagged commit v0.1.8.2 itself still carries the old label; the script is the same.
+
 ## 0.1.8.1 (2026-11-22)
 A fix to what 0.1.8 counts as a session (G1.14, T40). A `claude -p` run, which Claude Code marks "interactive"
 in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could
