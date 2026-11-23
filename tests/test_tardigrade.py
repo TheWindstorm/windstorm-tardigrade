@@ -306,17 +306,20 @@ class Base(unittest.TestCase):
         elif os.path.exists(f):
             os.remove(f)
 
-    def tmux_breaks(self, how):
+    def tmux_breaks(self, how, only=()):
         """a tmux in front of the real one whose list-panes fails (exit 1) or does not answer (sleeps past the
-        6 s the script waits) while HOME/tmuxfail exists; everything else goes to the real tmux"""
+        6 s the script waits) while HOME/tmuxfail exists: on every socket, or only on the sockets listed in it;
+        everything else goes to the real tmux"""
         p = os.path.join(self.bin, "tmux-breaks")
         act = "exit 1" if how == "fails" else "exec sleep 9"
         with open(p, "w") as f:
-            f.write(f'#!/bin/sh\nif [ -e "$HOME/tmuxfail" ]; then for a; do [ "$a" = list-panes ] && {{ {act}; }}; done; fi\n'
-                    f'exec {TMUX} "$@"\n')
+            f.write('#!/bin/sh\nif [ -e "$HOME/tmuxfail" ]; then\n'
+                    '  if [ ! -s "$HOME/tmuxfail" ] || grep -qxF -- "$2" "$HOME/tmuxfail"; then\n'
+                    f'    for a; do [ "$a" = list-panes ] && {{ {act}; }}; done\n  fi\nfi\nexec {TMUX} "$@"\n')
         os.chmod(p, 0o755)
         self.cfg({"tmux": p})
-        open(os.path.join(self.home, "tmuxfail"), "w").close()
+        with open(os.path.join(self.home, "tmuxfail"), "w") as f:
+            f.write("".join(s + "\n" for s in only))
 
     def logged(self, text):
         try:
@@ -635,6 +638,12 @@ class Record(Base):
             self.assertIn(why, out, broken)
             self.assertIn("the record is kept as it was", out, broken)
             self.assertEqual(fread(table), before, f"{broken}: the record changed")
+        # a skip that lasts an hour is named by census (from the review: the log alone is read by nobody)
+        sk = jload(self.state("record-skipped.json"))
+        self.assertLessEqual(sk["since"], time.time())
+        self.assertIn("did not list its panes", sk["why"])
+        jdump(dict(sk, since=sk["since"] - 3700), self.state("record-skipped.json"))
+        self.assertIn("RECORD NOT WRITTEN since", self.tg("census")[1])
         os.remove(os.path.join(self.home, "tmuxfail"))
         # a stale socket, left by a tmux server that was killed, is "no panes there", as before: the record is written
         other = os.path.join(os.path.dirname(self.sock), "gone")
@@ -647,6 +656,17 @@ class Record(Base):
         self.assertNotIn("skipped", out)
         self.assertIn("record: 2 session(s)", out)
         self.assertEqual([(r["host"], r["tmux_session"]) for r in self.table()["lanes"]], [("tmux", "alpha"), ("tmux", "beta")])
+        self.assertFalse(os.path.exists(self.state("record-skipped.json")), "the reads work again")
+        self.assertNotIn("RECORD NOT WRITTEN", self.tg("census")[1])
+        # a server that answers but cannot list its panes, on a socket no recorded session lives on (a test
+        # socket, another program's), does not stop the record: one wedged server would freeze it for days
+        stray = os.path.join(os.path.dirname(self.sock), "stray")
+        self.tmux(stray, "new-session", "-d", "-s", "y", "sleep 600")
+        self.tmux_breaks("fails", only=[stray])
+        rc, out = self.tg("record")
+        self.assertNotIn("skipped", out)
+        self.assertIn("record: 2 session(s)", out)
+        self.tmux(stray, "kill-server")
 
 
 class Revive(Base):
@@ -1998,6 +2018,31 @@ class Revive(Base):
         out = finish(run)
         self.assertEqual(len(restores(n, a)), 1, f"alpha: its first start only (it ended at once), never again\n{out}")
         self.assertIn("Alpha Lane: something else started it meanwhile (tmux default:hand-a3)", out)
+
+    def test_G2_50_a_restore_whose_first_read_keeps_failing_starts_nothing_and_reports_it(self):
+        """T52, from the review: a restore whose first read of the process list fails for all of retry_min starts
+        nothing, and says so where a person or a program looks: this boot's report (never the last boot's), and
+        on_done, with the reason in TARDIGRADE_CANNOT_TELL and "unknown" for what could not be counted."""
+        self.ps_breaks()
+        done = os.path.join(self.home, "done")
+        self.cfg({"retry_min": 0.05, "retry_gap_s": 1,
+                  "on_done": f'echo "$TARDIGRADE_CANNOT_TELL|{{started}}|{{down}}" > {done}'})
+        self.start_lane("alpha", "Alpha Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        n = len(self.launches())
+        self.ps_fail()
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S="100", TARDIGRADE_FAKE_BOOT_ID="boot-z")
+        self.ps_fail(False)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(self.launches()[n:], [], out)
+        self.assertIn("revive: started nothing: the process list could not be read", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["boot"], rep["started"]), ("boot-z", []))
+        self.assertIn("could not be read", rep["cannot_tell"])
+        self.assertEqual(fread(done).strip(), "the process list could not be read (ps ended with code 1)|0|unknown")
+        rc, out = self.tg("report")
+        self.assertIn("nothing was started: it could not tell which sessions already run", out)
 
     def test_G2_50_a_start_is_decided_on_a_read_taken_after_the_load_wait(self):
         """T52, found in a trace on 2026-11-23: with load_max set, a restore read the process list, then waited for

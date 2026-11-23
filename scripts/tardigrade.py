@@ -52,6 +52,7 @@ MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
 STATE = os.path.join(HOME, ".local", "state", "windstorm-tardigrade")
 TABLE = os.path.join(CFG_DIR, "lanes.json")
+SKIP_PATH = os.path.join(STATE, "record-skipped.json")   # a record skipped on a failed read: since when, and why (T55)
 LOG = os.path.join(STATE, "tardigrade.log")
 INSTALL_DIR = os.path.join(HOME, ".local", "share", "windstorm-tardigrade")
 ARGS = sys.argv[2:]
@@ -505,13 +506,28 @@ def server_answers(sock):
         return False
 
 
+def record_sockets():
+    """the tmux sockets whose pane list the record depends on: every socket a recorded row lives on, tmux's own
+    default, this tool's own (loose_socket) and the table's (tsv_socket). A wedged server elsewhere (a test socket,
+    another program's) does not stop the record (T55, from the review: it would freeze a machine's record for days)."""
+    w = {os.path.join(tmux_dir(), "default"), own_socket()}
+    if CFG.get("tsv_socket"):
+        w.add(os.path.join(tmux_dir(), os.path.basename(str(CFG["tsv_socket"]))))
+    t = read_json(TABLE, {})
+    if isinstance(t, dict):
+        w |= {r.get("tmux_socket") for r in t.get("lanes", []) + t.get("down", []) if isinstance(r, dict)}
+    return w
+
+
 def panes():
     """pane pid -> (socket, tmux session name, windows attached). Read only."""
     res = Panes()
+    ours = None
     for s in sockets():
         rc, out = tmux(s, "list-panes", "-a", "-F", "#{pane_pid}\t#{session_attached}\t#{session_name}", timeout=6)
         if rc != 0:
-            if rc == 99 or server_answers(s):
+            ours = record_sockets() if ours is None else ours
+            if s in ours and (rc == 99 or server_answers(s)):
                 res.ok = False
                 res.why = f"the tmux server at {s} did not list its panes (" + (
                     "no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})")
@@ -1184,7 +1200,15 @@ def record():
     bad = [x.why for x in PROCS_NOW + PANES_NOW if not x.ok]
     if bad:
         log(f"record: skipped ({'; '.join(bad)}); the record is kept as it was")
+        if not DRY:     # since when: census names a skip that has lasted an hour (from the review of T55)
+            sk = read_json(SKIP_PATH, {})
+            since = sk.get("since") if isinstance(sk, dict) and sk.get("since") else int(time.time())
+            write_json(SKIP_PATH, {"since": since, "why": "; ".join(bad), "last": int(time.time())})
         return 0
+    try:
+        os.remove(SKIP_PATH)       # the reads work again
+    except OSError:
+        pass
     old = read_table()
     old_by = {r["session_id"]: r for r in old["lanes"]}
     labels = ({}, {})
@@ -2174,6 +2198,7 @@ def _revive(boot):
     # T52: what runs already is read before anything is started. A read that failed is "cannot tell", never
     # "nothing runs": started on it, a session already running elsewhere would run twice. Nothing is started
     # until a read works; after retry_min of failed reads the run ends having started nothing.
+    began, up_began = time.time(), uptime_s()
     P, gap = procs(), float(CFG["retry_gap_s"])
     give_up = time.time() + float(CFG["retry_min"]) * 60
     while not P.ok:
@@ -2183,6 +2208,13 @@ def _revive(boot):
             log(f"revive: started nothing: {P.why}" + ("" if DRY else f" for {CFG['retry_min']} min")
                 + ". The record is kept as it was. Check what runs with your terminal multiplexer (tmux ls) "
                 "before starting anything by hand, then run revive again.")
+            if not DRY:    # this boot's report says so, and on_done is told (from the review): never last time's
+                report = {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": [], "left_out": [],
+                          "cannot_tell": P.why, "at": int(time.time()), "boot": boot_id(), "on_record": len(rows),
+                          "began": int(began), "uptime_at_start": int(up_began), "boot_run": boot, "user_up_s": up_s,
+                          "boot_wait_s": int(float(CFG["boot_wait_s"]))}
+                write_json(os.path.join(STATE, "last-revive.json"), report)
+                on_done(report)
             return 1
         time.sleep(gap)
         P = procs()
@@ -2775,7 +2807,7 @@ def census_data():
     mine, others, helpers = live(with_launch=False)
     bad = [x.why for x in PROCS_NOW + PANES_NOW if not x.ok]
     if bad:     # T53: a failed read gives no count at all: "down" read off a failed read gets sessions started twice
-        return {"cannot_tell": "; ".join(bad), "uptime_s": uptime_s()}
+        return {"cannot_tell": "; ".join(bad), "uptime_s": uptime_s(), "record_not_written": record_not_written()}
     table = read_table()
     live_ids = {r["session_id"] for r in mine}
     held_now = running_sids(PROCS_NOW[0])  # a print-mode run still running is a helper now, not down (T43)
@@ -2839,6 +2871,7 @@ def census_data():
         "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
         "trust": len([r for r in mine if r["status"] == "trust?"]),
         "lost": len([r for r in down if r.get("lost_since") and not r.get("ended")]), "comes_back": comes_back(),
+        "record_not_written": record_not_written(),
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
@@ -2890,6 +2923,19 @@ def where_text(r):
             "none": "no terminal at all"}.get(r["host"], r["host"])
 
 
+def record_not_written():
+    """the record skipped on failed reads for an hour or more: {since, why}, else None"""
+    sk = read_json(SKIP_PATH, {})
+    if isinstance(sk, dict) and sk.get("since") and time.time() - sk["since"] >= 3600:
+        return {"since": sk["since"], "why": sk.get("why", "")}
+    return None
+
+
+def record_not_written_text(x):
+    return (f"RECORD NOT WRITTEN since {time.strftime('%Y-%m-%d %H:%M', time.localtime(x['since']))} "
+            f"({ago(time.time() - x['since'])}): {x['why']}. A restart now brings back the sessions recorded before then.")
+
+
 def cannot_tell_text(why):
     return (f"Cannot tell which sessions run or which are down ({why}). Nothing here says a session is down: "
             "do not start any by hand on the strength of this. Check with your terminal multiplexer (tmux ls), "
@@ -2904,6 +2950,8 @@ def census():
         else:
             print(f"Windstorm Tardigrade census, {time.strftime('%Y-%m-%d %H:%M %Z')}")
             print(cannot_tell_text(d["cannot_tell"]))
+            if d.get("record_not_written"):
+                print(record_not_written_text(d["record_not_written"]))
         return 1
     if "--json" in ARGS:
         print(json.dumps(d, indent=1, sort_keys=True))
@@ -2920,6 +2968,8 @@ def census():
         print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
+    if d.get("record_not_written"):
+        print(record_not_written_text(d["record_not_written"]))
     pr = d["restore"]
     if pr:
         print(f"A RESTORE IS RUNNING: {pr['back']} of {pr['total']} sessions back, since "
@@ -3043,7 +3093,9 @@ def report_cmd():
     if d.get("cannot_tell"):
         print("\n" + cannot_tell_text(d["cannot_tell"]))
         d = {"same_name": {}, "by_hand": []}
-    need = [("count not taken: cannot tell which sessions are up", [rep["cannot_tell"]] if rep.get("cannot_tell") else []),
+    need = [(("count not taken: cannot tell which sessions are up" if rep.get("counted_at") else
+              "nothing was started: it could not tell which sessions already run"),
+             [rep["cannot_tell"]] if rep.get("cannot_tell") else []),
             ("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
             ("not loaded (a question on its screen?)", rep.get("not_loaded")),
             ("loaded, note not typed", rep.get("note_not_typed")),

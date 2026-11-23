@@ -208,7 +208,10 @@ Setup tells you this for your machine. It never changes it for you.
   taken right before it, after any `load_max` wait. If that read fails (`ps` gives an error, or no answer within
   30 s), a restore starts nothing in that pass, says so in its log, and reads again at the next. If the process list
   or a tmux server's list of panes cannot be read, census says it cannot tell and gives no count of running or down
-  sessions, and the record is kept exactly as it was. Known edge until 0.1.10 (T54): if the session file Claude Code
+  sessions, and the record is kept exactly as it was. Only the tmux servers the record depends on count (each
+  recorded session's, tmux's default, `loose_socket`, `tsv_socket`). Census names a record that has not been written
+  for an hour, and why. A restore that cannot read the process list for all of `retry_min` starts nothing, and
+  `report` and `on_done` say so. Known edge until 0.1.10 (T54): if the session file Claude Code
   keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
   `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
 - **A session comes back with the permission mode it had.** If it ran with permission checks switched off, it comes

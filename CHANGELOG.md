@@ -19,7 +19,10 @@
   - when tmux's pane list failed, record rewrote where each session lives.
   Now a restore starts nothing in a pass whose read failed and reads again at the next. Census and `report` say they
   cannot tell and give no counts. A restore's count and `on_done` say "unknown". The record is kept as it was.
-  A stale tmux socket left after a reboot still counts as no panes. Each start is decided on a read taken right before
+  A stale tmux socket left after a reboot still counts as no panes. Only the tmux servers the record depends on count:
+  each recorded session's, tmux's default, `loose_socket` and `tsv_socket`. A record skipped for an hour or more is
+  named by census ("RECORD NOT WRITTEN since ..."). A restore whose first read keeps failing for `retry_min` starts
+  nothing; this boot's report and `on_done` say so (`TARDIGRADE_CANNOT_TELL`). Each start is decided on a read taken right before
   it: with `load_max` set, the load wait now comes before that read, not after it, so a session started by hand during
   the wait is seen, not started again (T52, found in a trace on a loaded machine).
 - Known edge until 0.1.10 (T54): a running session whose own session file cannot be read, and that was not started
