@@ -713,7 +713,7 @@
   {
    "id": "T51",
    "seen": "2026-11-22, read in the code: setup copies whatever script it is run from, older or newer, with no version compare and no word about it; an agent running setup from an old clone would move a machine backwards in silence. 2026-11-23: test machines had the plugin installed at 0.1.6 and 0.1.7 beside an installed copy of 0.1.8.1; the skill an agent loads there runs the plugin's older script, so a setup asked for there would have moved the machine back.",
-   "promise": "setup run from a script older than the installed copy stops, names both versions and has changed nothing; it moves a machine down only on an explicit word (`setup --downgrade`). From the same or a newer script it says which version was installed and which is now. The census and the boot report name a Claude Code plugin whose version differs from the installed copy's, with three answers: the same, differs (both versions named), or could not be read.",
+   "promise": "setup run from a script older than the installed copy stops, names both versions and has changed nothing; it moves a machine down only on an explicit word (`setup --downgrade`), and the stop line says that word is the person's choice: an agent does not give it for them unasked. From the same or a newer script it says which version was installed and which is now. The census and the boot report name a Claude Code plugin whose version differs from the installed copy's, with three answers: the same, differs (both versions named), or could not be read.",
    "codon": "G5.10",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
@@ -951,7 +951,7 @@
   {
    "id": "T68",
    "seen": "2026-11-23, read in the code: `wait` (an internal waiting screen) is a top-level command in the help; `status` is a second name for `census`; `trust on` does not say what it trusts.",
-   "promise": "`status` is the first name and `census` a second name for a version; `wait` leaves the help; `trust on` gets a name that says what is trusted; the old names keep working for one version and say the new one.",
+   "promise": "`status` is the first name, and `census` works for one more version and says so; `wait` leaves the help (the waiting screens still run it); `trust on|off` becomes `answer-trust on|off`, the words of its setting `answer_trust`, and its help line carries the whole sentence: it answers Claude Code's \"trust this folder?\" question for folders that already had a session of yours. `trust` works for one more version and says the new name.",
    "codon": "G3.22",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
