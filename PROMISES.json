@@ -698,7 +698,7 @@
   },
   {
    "id": "T50",
-   "seen": "2026-11-22: .claude-plugin/plugin.json said \"version\": \"0.1.7\" in the v0.1.8, v0.1.8.1 and v0.1.8.2 tags, while the script said 0.1.8, 0.1.8.1 and 0.1.8.2; nothing compared them. The README's first install path is the plugin.",
+   "seen": "2026-11-22: .claude-plugin/plugin.json said \"version\": \"0.1.7\" in the v0.1.8, v0.1.8.1 and v0.1.8.2 tags, while the script said 0.1.8, 0.1.8.1 and 0.1.8.2; nothing compared them. The README's first install path is the plugin. Seen on a stock Ubuntu VM (Claude Code 2.1.330): installed through `claude plugin install` at 0.1.8, `claude plugin marketplace update` then `claude plugin update` said \"already at the latest version (0.1.7)\" and kept 0.1.8's script (33fdde1abc409bee); uninstall and install again brought 0.1.8.2's (23536274a04ad21d); with the label changed to 0.1.8.2, `plugin update` updated.",
    "promise": "every place that states the version (the script's VERSION, the plugin manifest, the marketplace entry and the skill file if they carry one, the changelog's top entry) says the same one, and the suite fails when one differs.",
    "codon": "G7.4",
    "owner": "maintainer",

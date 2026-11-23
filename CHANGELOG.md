@@ -2,8 +2,15 @@
 
 ## 0.1.9 (not yet tagged)
 
-- The plugin's manifest (`.claude-plugin/plugin.json`) still said 0.1.7 in 0.1.8, 0.1.8.1 and 0.1.8.2; it now says
-  0.1.9, as the script does.
+- **If you installed through the plugin system** (`claude plugin install`) at 0.1.8 or 0.1.8.1, you may still be
+  running that version. The plugin's manifest (`.claude-plugin/plugin.json`) said 0.1.7 in 0.1.8, 0.1.8.1 and
+  0.1.8.2, and Claude Code keys a plugin's folder on that label. Seen on a stock Ubuntu VM with Claude Code 2.1.330:
+  installed at 0.1.8, then `claude plugin marketplace update` and `claude plugin update` said "already at the
+  latest version (0.1.7)" and kept 0.1.8's script, so running setup again installed 0.1.8 again. What to do:
+  `claude plugin uninstall windstorm-tardigrade@windstorm-tardigrade`, then `claude plugin install
+  windstorm-tardigrade@windstorm-tardigrade` (seen to bring the newest script), then setup again (`set up
+  tardigrade`). From 0.1.9 the manifest says the script's version, and the suite fails when they differ (T50); with
+  the label changed, `claude plugin update` was seen to update.
 - Not in 0.1.9, moved by the skills' department head: T12, T14, T19, T27, T30 and T32 to 0.1.10 (the checks before a
   planned reboot), T11, T16 and T22 to 0.1.11. What you can meet before then is in the README: a session moved
   between logins at a restart, a session started with a login token in its environment, a variable set by hand,
