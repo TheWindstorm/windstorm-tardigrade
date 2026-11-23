@@ -22,6 +22,13 @@ Note added 2026-11-22, after the release: the plugin manifests of 0.1.8, 0.1.8.1
 "already at the latest version" and kept the old script. Corrected on main on 2026-11-22: the manifest now says
 0.1.8.2. The tagged commit v0.1.8.2 itself still carries the old label; the script is the same.
 
+Note added 2026-11-23, a known edge of 0.1.8.x found in a probe: a failed read of the process list came back as an
+empty list. On a machine so loaded that `ps` fails or does not answer within 30 s, census can then report running
+sessions as down, and a restore can start a second copy of a session that was started by hand meanwhile; with
+`load_max` set, a session started by hand during a restore's load wait can also be started again. Fixed in 0.1.9
+(T52, T53). Until then: start nothing by hand while a restore runs, and check with your terminal multiplexer
+(`tmux ls`) before believing "down".
+
 ## 0.1.8.1 (2026-11-22)
 A fix to what 0.1.8 counts as a session (G1.14, T40). A `claude -p` run, which Claude Code marks "interactive"
 in its status file, was written down as a session when it ran in a terminal or a tmux pane, and a restart could
