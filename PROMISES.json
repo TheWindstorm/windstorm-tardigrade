@@ -961,6 +961,20 @@
    "issue": 73,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T69",
+   "seen": "2026-11-23, a real Mac (macOS 13, Claude Code 2.1.330) upgraded to 0.1.9 and then restarted: 0.1.9 kept the newest five per-boot markers and wrote its own two readable by the person only (0600), but the three it kept from earlier versions were still readable by others (0644). They would age out only as new boots replaced them.",
+   "promise": "setup and each boot run make every marker they keep readable by the person only, not only the ones they write; a test plants an old marker with a wider mode and sees it tightened.",
+   "codon": "G2.52",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 75,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

@@ -226,6 +226,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G2.22 | A start that fails is tried again for up to `retry_min` minutes (the network can lag at boot), in the tmux session the first try made, and only while that session holds a bare shell. | `test_G2_22_a_start_that_fails_is_tried_again_in_the_same_tmux_session` |
 | G2.23 | With `load_max` set, each start waits (up to `load_wait_s`) while the machine's load is above it. Off by default. | `test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts` |
 | G2.24 | After the starts it keeps looking for up to `watch_min` minutes, then counts: LOADED (Claude Code has written the session's own file), UP-NOT-LOADED and DOWN, the last two by name. "A process is up" is not counted as loaded. | `test_G2_24_after_the_starts_it_counts_loaded_and_names_what_is_not` |
+| G2.52 | Due in 0.1.10 (T69). Setup and each boot run make every marker they keep readable by the person only, not only the ones they write; a test plants an old marker with a wider mode and sees it tightened. | Not built yet. |
 
 ### G3 Census: say what is running and what is not
 
