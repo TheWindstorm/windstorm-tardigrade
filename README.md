@@ -130,6 +130,10 @@ moment of a restart (ended with `/exit` and resumed on the other login seconds l
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
 "needs you" and nothing is typed into it.
 
+**A variable you set by hand** (an `export` in the shell before you started the session) is not given back: a
+revived session gets what your shell's usual setup gives it, the `env_file` and the names in `carry_env`, nothing
+else. Name the ones a session needs in `carry_env` or `env_file`.
+
 **A session nobody ever wrote in** has no conversation, so Claude Code cannot resume it. It comes back as a new
 session with the same name, folder and flags.
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The plugin's manifest (`.claude-plugin/plugin.json`) still said 0.1.7 in 0.1.8, 0.1.8.1 and 0.1.8.2; it now says
+  0.1.9, as the script does.
+- Not in 0.1.9, moved by the skills' department head: T12, T14, T19, T27, T30 and T32 to 0.1.10 (the checks before a
+  planned reboot), T11, T16 and T22 to 0.1.11. What you can meet before then is in the README: a session moved
+  between logins at a restart, a session started with a login token in its environment, a variable set by hand,
+  and sessions that come back with no window.
+
 - Known edge (T41, G1.15; fix due in 0.1.10, T47): of a process in a `skip_cwd_prefix` folder, Tardigrade's own
   code reads only its folder. On Linux the system's `ps`, which it runs for the process list, opens more of every
   process on the machine (environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only

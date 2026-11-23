@@ -156,12 +156,12 @@
    "codon": "G4.6",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 12,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T12",
@@ -170,12 +170,12 @@
    "codon": "G3.9",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.10",
    "test": "",
    "proven": "",
    "issue": 13,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T13",
@@ -198,12 +198,12 @@
    "codon": "G3.10",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.10",
    "test": "",
    "proven": "",
    "issue": 15,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T15",
@@ -226,12 +226,12 @@
    "codon": "G5.7",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 17,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T17",
@@ -269,12 +269,12 @@
    "codon": "G3.11",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.10",
    "test": "",
    "proven": "",
    "issue": 20,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T20",
@@ -311,12 +311,12 @@
    "codon": "G3.13",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 23,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T23",
@@ -381,12 +381,12 @@
    "codon": "G3.14",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.10",
    "test": "",
    "proven": "",
    "issue": 28,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T28",
@@ -423,12 +423,12 @@
    "codon": "G3.15",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.10",
    "test": "",
    "proven": "",
    "issue": 31,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T31",
@@ -451,12 +451,12 @@
    "codon": "G2.46",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.9",
+   "ship_in": "0.1.10",
    "test": "",
    "proven": "",
    "issue": 33,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_by_person": "the skills' department head"
   },
   {
    "id": "T33",
