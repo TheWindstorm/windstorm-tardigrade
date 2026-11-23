@@ -8,7 +8,12 @@
   "plugins": [
     {
       "name": "windstorm-tardigrade",
-      "source": "./",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/TheWindstorm/windstorm-tardigrade.git",
+        "ref": "v0.1.9",
+        "sha": "f083567252fd74096486cc3c3d1fa5b387a6ff59"
+      },
       "description": "Windstorm Tardigrade: Claude Code sessions come back after a reboot or crash, as themselves, and one command lists what is running, hidden or down."
     }
   ]
