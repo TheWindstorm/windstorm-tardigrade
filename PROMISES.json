@@ -733,7 +733,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G2_50_a_restore_that_cannot_read_the_process_list_starts_nothing_on_it",
-   "proven": "",
+   "proven": "2026-11-23, on veron-vm1 (stock Ubuntu 24.04, tmux 3.4, Claude Code 2.1.330 native, not logged in, so the sessions sat at the folder-trust screen and never took a turn), candidate eb1a8e5 installed by its own setup. The read made to fail for real: prlimit --nproc=1 on the Tardigrade process alone (its fork fails, EAGAIN, as on a machine out of processes, so ps cannot start); for the give-up, ps made not runnable (chmod a-x, put back after) so that on_done's shell could still run. (1) Before the first start, Lab B started by hand: three passes of \"it cannot tell which sessions are already running, so it starts nothing now\"; limit lifted: \"skip Lab B: already running\", A and C started. (2) Between starts, limit put on the moment Lab A's start was logged, Lab C started by hand: \"cannot tell whether Lab B or any other session is already running, so nothing is started in this pass\"; lifted: B started, \"Lab C: something else started it meanwhile (tmux default:hand-c); left alone\". (3) Give-up (retry_min 1), Lab A by hand: four failed passes, \"started nothing ... for 1 min\", this boot's last-revive.json with cannot_tell, on_done told. Every session had exactly one process holding it after each run.",
    "issue": 57,
    "moved_why": "",
    "moved_by_person": ""
@@ -747,7 +747,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G3_18_census_on_a_failed_read_says_it_cannot_tell",
-   "proven": "",
+   "proven": "2026-11-23, on veron-vm1 (stock Ubuntu 24.04, tmux 3.4, Claude Code 2.1.330 native, not logged in, so the sessions sat at the folder-trust screen and never took a turn), candidate eb1a8e5 installed by its own setup. With the census process's fork failing (prlimit --nproc=1): \"Cannot tell which sessions run or which are down (the process list could not be read ...; the tmux server at /tmp/tmux-1000/default did not list its panes ...)\", exit 1, no counts; --json held only cannot_tell, record_not_written and uptime_s. During a restore whose reads failed, the watch said \"this look at the started sessions concludes nothing\". After a give-up, on_done printed loaded=unknown down=unknown with the reason, and report said \"nothing was started: it could not tell which sessions already run\"; its header line still printed zeros, and from 371cc80 says \"not counted\".",
    "issue": 58,
    "moved_why": "",
    "moved_by_person": ""
