@@ -779,6 +779,20 @@
    "issue": 60,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T56",
+   "seen": "2026-11-23, on a stock Ubuntu 24.04 VM (node 18.19), each process read every 50 ms from its start. Claude Code installed through npm at 2.1.112 or older (bin cli.js, run by node), started with --resume <id>: named node, with --resume in its arguments, for 0.82 s idle (1.6-1.7 s at load 11.5 for 1.0.100); then it renames itself claude and rewrites its arguments to just \"claude\", so --resume is gone; its session file was not yet written 6 s later (it sat at the folder-trust question). From 2.1.113 npm ships the native program: named claude with --resume in its arguments from the first read. Tardigrade counts a process as a Claude by its name first, so on such an install a session started by hand cannot be seen as running until its session file is written, and a restore can start a second copy. The old G4.4 flake in CI (1 in 120 jobs before 0.1.9) was this window, seen through the test's stand-in, which starts through /usr/bin/env python3 and names itself late.",
+   "promise": "which process holds which session is decided on every install, through both phases (the runtime's name, and the gap after the rename until the session file is written), as one design with T47's direct read of /proc. A Claude process that cannot yet be told apart, in the same folder as a session about to be started, is \"cannot tell\" for that session only: the restore holds that one back and goes on with the rest; census names such a process. Its test uses the late-named stand-in (tests/fake_claude.py run through its own /usr/bin/env shebang). Until then a known edge in the README: update Claude Code; start nothing by hand while a restore runs.",
+   "codon": "G1.19",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 62,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

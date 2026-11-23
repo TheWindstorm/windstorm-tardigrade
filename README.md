@@ -214,6 +214,11 @@ Setup tells you this for your machine. It never changes it for you.
   `report` and `on_done` say so. Known edge until 0.1.10 (T54): if the session file Claude Code
   keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
   `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
+  Known edge until 0.1.10 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
+  -v claude)` ends in `cli.js`), a session started by hand cannot be seen as running until it has loaded: Claude Code
+  runs under node's name at first, then renames itself and drops its start arguments. A restore can start a second
+  copy of such a session. Update Claude Code (2.1.113 and later ship the native program, through npm too), and start
+  nothing by hand while a restore runs.
 - **A session comes back with the permission mode it had.** If it ran with permission checks switched off, it comes
   back that way, with nobody watching, and the opening message gives it one turn. You chose that mode when you
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use

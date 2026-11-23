@@ -84,7 +84,13 @@ class Base(unittest.TestCase):
         self.work = os.path.join(self.tmp, "work")
         for d in (self.home, self.bin, self.work):
             os.makedirs(d)
-        shutil.copy(FAKE, os.path.join(self.bin, "claude"))
+        # The stand-in is named "claude" from its first instant, as the native program (and npm from 2.1.113) is: its
+        # first line names its interpreter directly, and a process started from a script keeps the script's name.
+        # Through its own /usr/bin/env line it is "python3" until Python has loaded: the window of Claude Code from npm
+        # at 2.1.112 or older (T56), kept in tests/fake_claude.py as the fixture of T56's test, built with its cure.
+        # G4.4 failed about once in a hundred runs on that window (traced 2026-11-23).
+        with open(FAKE) as f, open(os.path.join(self.bin, "claude"), "w") as g:
+            g.write(f"#!{sys.executable}\n" + f.read().split("\n", 1)[1])
         os.chmod(os.path.join(self.bin, "claude"), 0o755)
         self.path = f"{self.bin}:/usr/local/bin:/usr/bin:/bin"
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",

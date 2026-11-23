@@ -27,6 +27,11 @@
   the wait is seen, not started again (T52, found in a trace on a loaded machine).
 - Known edge until 0.1.10 (T54): a running session whose own session file cannot be read, and that was not started
   with `--resume` of a recorded id, is counted by record as ended, so the next restart does not bring it back.
+- Known edge until 0.1.10 (T56): with Claude Code installed through npm at 2.1.112 or older (run by node), a session
+  started by hand cannot be seen as running until it has loaded, and a restore can start a second copy of it. Update
+  Claude Code (2.1.113 and later ship the native program); start nothing by hand while a restore runs. The occasional
+  G4.4 failure in CI was this window, seen through the test's stand-in: the suite now starts its stand-in so that it
+  is named "claude" from its first instant, as the native program is.
 - Not in 0.1.9, moved by the skills' department head: T12, T14, T19, T27, T30 and T32 to 0.1.10 (the checks before a
   planned reboot), T11, T16 and T22 to 0.1.11. What you can meet before then is in the README: a session moved
   between logins at a restart, a session started with a login token in its environment, a variable set by hand,
