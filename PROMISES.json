@@ -775,7 +775,7 @@
    "first_ship_in": "0.1.9",
    "ship_in": "0.1.9",
    "test": "test_G1_18_a_failed_pane_or_process_read_leaves_the_record_as_it_was",
-   "proven": "",
+   "proven": "2026-11-23, on veron-vm1 (stock Ubuntu 24.04, tmux 3.4, Claude Code 2.1.330 native, not logged in, so the sessions sat at the folder-trust screen and never took a turn), candidate eb1a8e5 installed by its own setup (the script at 2e42185 differs from it only in report's header). The record's own tmux server (three sessions, in tmux sessions hand-a, lab-b and lab-c) was wedged for real with SIGSTOP at 12:10:49 AM ET and held so for a real hour. Every record timer pass logged \"record: skipped (the tmux server at /tmp/tmux-1000/default did not list its panes (no answer within 6 s)); the record is kept as it was\" (12 passes); at every 5-minute look lanes.json was byte-identical to the record at the wedge (sha256 b40bf374d9968e84) and record-skipped.json kept its first time. After the hour, census, with the server still wedged: \"Cannot tell which sessions run or which are down ...\" and \"RECORD NOT WRITTEN since 2026-11-23 05:10 (65 min): the tmux server at /tmp/tmux-1000/default did not list its panes (no answer within 6 s). A restart now brings back the sessions recorded before then.\"; --json held only cannot_tell, record_not_written and uptime_s. After SIGCONT at 1:16:30 AM ET the next record wrote \"3 session(s), 0 down\", record-skipped.json was gone, and the three sessions kept their places (tmux hand-a, lab-b, lab-c); census counted 3 running, 0 down.",
    "issue": 60,
    "moved_why": "",
    "moved_by_person": ""
