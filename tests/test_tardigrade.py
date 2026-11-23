@@ -46,6 +46,7 @@ SCRIPT = os.path.join(ROOT, "scripts", "tardigrade.py")
 FAKE = os.path.join(ROOT, "tests", "fake_claude.py")
 FAKE_HERDR = os.path.join(ROOT, "tests", "fake_herdr.py")
 TMUX = shutil.which("tmux")
+REAL_PS = shutil.which("ps")
 WAIT = float(os.environ.get("TARDIGRADE_TEST_WAIT", "40"))
 
 # Zero survivors: a test's tmux servers and stand-ins end even when the run itself is stopped. unittest runs no
@@ -289,6 +290,58 @@ class Base(unittest.TestCase):
 
     def state(self, name):
         return os.path.join(self.home, ".local", "state", "windstorm-tardigrade", name)
+
+    # ----- failed reads (T52, T53, T55): a read that failed is "cannot tell", never "nothing runs" -----
+    def ps_breaks(self):
+        """a ps in front of the real one: it fails (exit 1) while HOME/psfail exists, and notes each failure"""
+        p = os.path.join(self.bin, "ps")
+        with open(p, "w") as f:
+            f.write(f'#!/bin/sh\nif [ -e "$HOME/psfail" ]; then echo x >> "$HOME/ps-failed"; exit 1; fi\nexec {REAL_PS} "$@"\n')
+        os.chmod(p, 0o755)
+
+    def ps_fail(self, on=True):
+        f = os.path.join(self.home, "psfail")
+        if on:
+            open(f, "w").close()
+        elif os.path.exists(f):
+            os.remove(f)
+
+    def tmux_breaks(self, how):
+        """a tmux in front of the real one whose list-panes fails (exit 1) or does not answer (sleeps past the
+        6 s the script waits) while HOME/tmuxfail exists; everything else goes to the real tmux"""
+        p = os.path.join(self.bin, "tmux-breaks")
+        act = "exit 1" if how == "fails" else "exec sleep 9"
+        with open(p, "w") as f:
+            f.write(f'#!/bin/sh\nif [ -e "$HOME/tmuxfail" ]; then for a; do [ "$a" = list-panes ] && {{ {act}; }}; done; fi\n'
+                    f'exec {TMUX} "$@"\n')
+        os.chmod(p, 0o755)
+        self.cfg({"tmux": p})
+        open(os.path.join(self.home, "tmuxfail"), "w").close()
+
+    def logged(self, text):
+        try:
+            return fread(self.state("tardigrade.log")).count(text)
+        except OSError:
+            return 0
+
+    def until(self, cond, what):
+        end = time.time() + WAIT
+        while time.time() < end:
+            if cond():
+                return
+            time.sleep(0.1)
+        self.fail(f"waited {WAIT:g} s for: {what}")
+
+    def by_hand(self, sid, session):
+        """a person starts this session by hand, in a tmux session of their own; returns when it runs"""
+        n = len(self.launches())
+        self.tmux(self.sock, "new-session", "-d", "-s", session, "-c", self.work, f"MY_SETTING=byhand claude --resume {sid}")
+        self.wait_launches(n + 1)
+
+    def revive_bg(self, boot_id, **over):
+        return subprocess.Popen([sys.executable, "-I", SCRIPT, "revive", "--boot"],
+                                env=dict(self.env, TARDIGRADE_FAKE_UPTIME_S="100", TARDIGRADE_FAKE_BOOT_ID=boot_id, **over),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
 
 class Record(Base):
@@ -554,6 +607,46 @@ class Record(Base):
                                 "message": {"model": "claude-sonnet-5-5", "content": []}}) + "\n")
         self.tg("record", "--force")
         self.assertEqual(self.table()["lanes"][0]["model"], "claude-sonnet-5-5")
+
+    def test_G1_18_a_failed_pane_or_process_read_leaves_the_record_as_it_was(self):
+        """T55, seen 2026-11-23 in a probe on 0.1.8.2 and on the 0.1.9 candidate: with tmux list-panes failing, record
+        rewrote both sessions from their tmux places to "no terminal" under new names, so the next restore would put
+        them elsewhere. The pane list (like the process list) is one shared read: when it fails nothing is known
+        about any session's place, and record writes nothing that pass. A socket left by a tmux server that is gone
+        (after a reboot) is not a failed read."""
+        self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        before = fread(table)
+        self.ps_breaks()
+        for broken, why in (("ps", "the process list could not be read (ps ended with code 1)"),
+                            ("tmux fails", "did not list its panes (tmux ended with code 1)"),
+                            ("tmux does not answer", "did not list its panes (no answer within 6 s)")):
+            if broken == "ps":
+                self.ps_fail()
+            else:
+                self.ps_fail(False)
+                self.tmux_breaks("fails" if broken == "tmux fails" else "hangs")
+            time.sleep(1.1)                               # a record that wrote would change last_seen
+            rc, out = self.tg("record")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("record: skipped (", out, broken)
+            self.assertIn(why, out, broken)
+            self.assertIn("the record is kept as it was", out, broken)
+            self.assertEqual(fread(table), before, f"{broken}: the record changed")
+        os.remove(os.path.join(self.home, "tmuxfail"))
+        # a stale socket, left by a tmux server that was killed, is "no panes there", as before: the record is written
+        other = os.path.join(os.path.dirname(self.sock), "gone")
+        self.tmux(other, "new-session", "-d", "-s", "x", "sleep 600")
+        pid = int(self.tmux(other, "display", "-p", "#{pid}")[1].strip())
+        os.kill(pid, signal.SIGKILL)
+        self.until(lambda: not os.path.exists(f"/proc/{pid}"), "the killed tmux server to go")
+        self.assertTrue(os.path.exists(other), "the socket of a killed server stays behind")
+        rc, out = self.tg("record")
+        self.assertNotIn("skipped", out)
+        self.assertIn("record: 2 session(s)", out)
+        self.assertEqual([(r["host"], r["tmux_session"]) for r in self.table()["lanes"]], [("tmux", "alpha"), ("tmux", "beta")])
 
 
 class Revive(Base):
@@ -1826,6 +1919,108 @@ class Revive(Base):
         self.assertEqual((rep["loaded"], rep["not_loaded"], rep["down_again"]), ([], ["Alpha Lane"], []))
         self.assertEqual(self.typed(), [])      # and nothing is typed into a session that has not loaded
 
+    def test_G2_50_a_restore_that_cannot_read_the_process_list_starts_nothing_on_it(self):
+        """T52, seen 2026-11-23 in a probe on 0.1.8.2 and on the 0.1.9 candidate: with ps failing, a restore started a
+        second copy of a session a person had started by hand. The failed read was an empty list: "nobody holds it".
+        A failed read is "cannot tell": nothing is started in that pass, it says so, and it reads again at the next.
+        The read fails here at each point in turn: before the first start, between two starts, at a retry pass."""
+        self.ps_breaks()
+        self.cfg({"starts_at_once": 1, "retry_gap_s": 1})
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        g = self.start_lane("gamma", "Gamma Lane")
+
+        def restores(n, sid):          # starts of this session by the restore (not by hand) since launch n
+            return [x for x in self.launches()[n:] if x["sid"] == sid and x["seen"].get("MY_SETTING") != "byhand"]
+
+        def finish(run):
+            try:
+                return run.communicate(timeout=180)[0]
+            finally:
+                if run.poll() is None:
+                    run.kill()
+
+        # 1. before the first start: alpha was started by hand after the reboot, and the first read fails
+        self.tg("record", "--force")
+        self.reboot()
+        self.by_hand(a, "hand-a")
+        n, said = len(self.launches()), self.logged("so it starts nothing now")
+        self.ps_fail()
+        run = self.revive_bg("boot-1")
+        try:
+            self.until(lambda: self.logged("so it starts nothing now") > said + 1, "two passes with the first read failing")
+            self.assertEqual(self.launches()[n:], [], "something was started on a failed read")
+        finally:
+            self.ps_fail(False)
+        out = finish(run)
+        self.assertIn("It cannot tell which sessions are already running, so it starts nothing now", out)
+        self.assertIn("skip  Alpha Lane: already running on this machine", out)
+        self.assertEqual(restores(n, a), [], out)
+        self.assertEqual((len(restores(n, b)), len(restores(n, g))), (1, 1), out)
+
+        # 2. between two starts: the restore's first start (alpha) makes ps fail; gamma is started by hand meanwhile
+        self.tg("record", "--force")
+        self.reboot()
+        on = os.path.join(self.home, "psfailon")
+        with open(on, "w") as f:
+            f.write(a)
+        n, said = len(self.launches()), self.logged("so nothing is started in this pass")
+        run = self.revive_bg("boot-2")
+        try:
+            self.until(lambda: restores(n, a), "the restore's first start")
+            self.by_hand(g, "hand-g")
+            self.until(lambda: self.logged("so nothing is started in this pass") > said, "a start decided on a failed read")
+        finally:
+            os.remove(on)
+            self.ps_fail(False)
+        out = finish(run)
+        self.assertIn("cannot tell whether", out)
+        self.assertEqual(restores(n, g), [], f"gamma ran (by hand) while the read failed: never started again\n{out}")
+        self.assertIn("Gamma Lane: something else started it meanwhile (tmux default:hand-g)", out)
+        self.assertEqual((len(restores(n, a)), len(restores(n, b))), (1, 1), out)
+
+        # 3. at a retry pass: alpha's first start ends at once; before its retry a person starts it by hand, and the
+        # retry pass's read fails
+        self.tg("record", "--force")
+        self.reboot()
+        self.cfg({"retry_gap_s": 8})
+        open(os.path.join(self.home, "failonce"), "w").close()
+        n, tried, said = (len(self.launches()), self.logged("Alpha Lane: not running yet (attempt 1)"),
+                          self.logged("cannot tell whether Alpha Lane"))
+        run = self.revive_bg("boot-3")
+        try:
+            self.until(lambda: self.logged("Alpha Lane: not running yet (attempt 1)") > tried, "alpha's first start to fail")
+            self.by_hand(a, "hand-a3")
+            self.ps_fail()
+            self.until(lambda: self.logged("cannot tell whether Alpha Lane") > said, "the retry pass to read and fail")
+        finally:
+            self.ps_fail(False)
+        out = finish(run)
+        self.assertEqual(len(restores(n, a)), 1, f"alpha: its first start only (it ended at once), never again\n{out}")
+        self.assertIn("Alpha Lane: something else started it meanwhile (tmux default:hand-a3)", out)
+
+    def test_G2_50_a_start_is_decided_on_a_read_taken_after_the_load_wait(self):
+        """T52, found in a trace on 2026-11-23: with load_max set, a restore read the process list, then waited for
+        the load (up to load_wait_s, 120 s by default), then started. A session started by hand during that wait
+        was started a second time. The wait now comes first, and the read is taken right before the start."""
+        self.cfg({"load_max": 5, "load_wait_s": 4, "starts_at_once": 1})
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        n, said = len(self.launches()), self.logged("above load_max 5")
+        run = self.revive_bg("boot-1", TARDIGRADE_FAKE_LOAD="99")
+        try:
+            self.until(lambda: self.logged("above load_max 5") > said, "the first load wait")
+            self.by_hand(a, "hand-a")              # inside alpha's load wait
+            out = run.communicate(timeout=180)[0]
+        finally:
+            if run.poll() is None:
+                run.kill()
+        mine = [x for x in self.launches()[n:] if x["sid"] == a and x["seen"].get("MY_SETTING") != "byhand"]
+        self.assertEqual(mine, [], f"alpha was started a second time after the load wait\n{out}")
+        self.assertIn("Alpha Lane: something else started it meanwhile (tmux default:hand-a)", out)
+
 
 class Census(Base):
     def test_G3_1_census_names_hidden_and_down_sessions(self):
@@ -2029,6 +2224,36 @@ class Census(Base):
                           for n in ("Alpha Lane", "Beta Lane")])
         src = fread(SCRIPT)                                      # census and record use one rule, from one place
         self.assertEqual(src.count("left_out_why(r)"), 3)          # its definition, record and census
+
+    def test_G3_18_census_on_a_failed_read_says_it_cannot_tell(self):
+        """T53, seen 2026-11-23 in a probe on 0.1.8.2 and on the 0.1.9 candidate: with ps failing, census said
+        "Running: 0 ... down: 2" while both sessions ran. A person who reads "down" starts them by hand: two copies.
+        On a failed read of the process list or of a tmux server's panes, census and its --json give no count."""
+        self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.ps_breaks()
+        for broken in ("ps", "tmux fails", "tmux does not answer"):
+            if broken == "ps":
+                self.ps_fail()
+            else:
+                self.ps_fail(False)
+                self.tmux_breaks("fails" if broken == "tmux fails" else "hangs")
+            rc, out = self.tg("census")
+            self.assertEqual(rc, 1, out)
+            self.assertIn("Cannot tell which sessions run or which are down", out, broken)
+            self.assertNotIn("Running:", out, broken)
+            self.assertNotRegex(out, r"down: \d", broken)
+            self.assertNotIn("Alpha Lane", out, broken)
+            rc, out = self.tg("census", "--json")
+            d = json.loads(out)
+            self.assertEqual(rc, 1, out)
+            self.assertRegex(d["cannot_tell"], "could not be read|did not list its panes", broken)
+            self.assertNotIn("sessions", d, broken)
+            self.assertNotIn("running", d, broken)
+        os.remove(os.path.join(self.home, "tmuxfail"))
+        rc, out = self.tg("census")
+        self.assertIn("Running: 2", out, "with every read working census counts as before")
 
 
 class Setup(Base):

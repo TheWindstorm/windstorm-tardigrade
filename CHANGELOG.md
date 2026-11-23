@@ -11,6 +11,19 @@
   windstorm-tardigrade@windstorm-tardigrade` (seen to bring the newest script), then setup again (`set up
   tardigrade`). From 0.1.9 the manifest says the script's version, and the suite fails when they differ (T50); with
   the label changed, `claude plugin update` was seen to update.
+- **A read that failed is "cannot tell", never "nothing runs"** (T52, T53, T55; seen in a probe on 0.1.8.2, each read
+  made to fail in turn). In every earlier version a process-list read that failed or timed out came back as an empty
+  list. Then:
+  - a restore could start a second copy of a session that was already running, for example one started by hand;
+  - census said "Running: 0 ... down: N" while those sessions ran;
+  - when tmux's pane list failed, record rewrote where each session lives.
+  Now a restore starts nothing in a pass whose read failed and reads again at the next. Census and `report` say they
+  cannot tell and give no counts. A restore's count and `on_done` say "unknown". The record is kept as it was.
+  A stale tmux socket left after a reboot still counts as no panes. Each start is decided on a read taken right before
+  it: with `load_max` set, the load wait now comes before that read, not after it, so a session started by hand during
+  the wait is seen, not started again (T52, found in a trace on a loaded machine).
+- Known edge until 0.1.10 (T54): a running session whose own session file cannot be read, and that was not started
+  with `--resume` of a recorded id, is counted by record as ended, so the next restart does not bring it back.
 - Not in 0.1.9, moved by the skills' department head: T12, T14, T19, T27, T30 and T32 to 0.1.10 (the checks before a
   planned reboot), T11, T16 and T22 to 0.1.11. What you can meet before then is in the README: a session moved
   between logins at a restart, a session started with a login token in its environment, a variable set by hand,

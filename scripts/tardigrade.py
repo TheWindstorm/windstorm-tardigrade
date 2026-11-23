@@ -257,11 +257,22 @@ def slug(s):
 
 
 # ---------- processes ----------
+class Procs(dict):
+    """A process list. ok is False when the read failed (ps gave an error, or no answer within 30 s): then it is
+    empty, and empty there means "cannot tell", never "nothing runs" (T52, T53). why says what failed."""
+    ok, why = True, ""
+
+
 def procs():
     """pid -> (parent pid, user id, program name). A process that has ended and only waits to be collected
     (a zombie) is left out: it holds no session."""
     rc, out = run(["ps", "-axo", "pid=,ppid=,uid=,stat=,comm="])
-    res = {}
+    res = Procs()
+    if rc != 0 or not out.strip():       # ps always lists itself: an empty answer is a failed read too
+        res.ok = False
+        res.why = "the process list could not be read (ps " + (
+            "gave no answer within 30 s, or could not be started)" if rc == 99 else f"ended with code {rc})")
+        return res
     for line in out.splitlines():
         p = line.split(None, 4)
         if len(p) == 5 and p[0].isdigit() and not p[3].startswith("Z"):
@@ -476,12 +487,34 @@ def tmux(sock, *a, timeout=10, env=None):
     return run([CFG["tmux"], "-S", sock, *a], timeout=timeout, env=env)
 
 
+class Panes(dict):
+    """The tmux panes. ok is False when a server that is there could not list them: then where any session
+    lives is not known (T55). A socket left by a server that is gone (after a reboot) is not a failed read."""
+    ok, why = True, ""
+
+
+def server_answers(sock):
+    """a tmux server is listening on this socket (a stale socket left after a reboot refuses the connection)"""
+    import socket
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as c:
+            c.settimeout(2)
+            c.connect(sock)
+        return True
+    except OSError:
+        return False
+
+
 def panes():
     """pane pid -> (socket, tmux session name, windows attached). Read only."""
-    res = {}
+    res = Panes()
     for s in sockets():
         rc, out = tmux(s, "list-panes", "-a", "-F", "#{pane_pid}\t#{session_attached}\t#{session_name}", timeout=6)
         if rc != 0:
+            if rc == 99 or server_answers(s):
+                res.ok = False
+                res.why = f"the tmux server at {s} did not list its panes (" + (
+                    "no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})")
             continue
         for line in out.splitlines():
             p = line.split("\t", 2)
@@ -869,6 +902,7 @@ def start_flags(a):
 
 
 PANES_NOW = []      # this scan's tmux panes, for one_shot()
+PROCS_NOW = []      # this scan's process list: its ok says whether the read worked (T53)
 LEFT_ALONE = [0]    # this scan's claude processes in a skip_cwd_prefix folder; only their folder read (G1.15)
 
 
@@ -940,7 +974,7 @@ def one_shot(pid, sj, P):
 def live(with_launch=True):
     """(my live sessions, number of other users' Claude processes, number of helper sessions)"""
     P, PN = procs(), panes()
-    PANES_NOW[:] = [PN]
+    PANES_NOW[:], PROCS_NOW[:] = [PN], [P]
     me, mine, others, helpers = os.getuid(), [], 0, 0
     LEFT_ALONE[0] = 0
     table = read_json(TABLE, {})
@@ -1145,6 +1179,12 @@ def record():
         log("record: skipped (a revive is starting sessions; waiting screens are not sessions gone)")
         return 0
     mine, _, _ = live()
+    # A failed read is "cannot tell", never "not running" or "no window": the process list and the pane list are
+    # each one shared read, so when one failed nothing is known about any session, and nothing is written (T55).
+    bad = [x.why for x in PROCS_NOW + PANES_NOW if not x.ok]
+    if bad:
+        log(f"record: skipped ({'; '.join(bad)}); the record is kept as it was")
+        return 0
     old = read_table()
     old_by = {r["session_id"]: r for r in old["lanes"]}
     labels = ({}, {})
@@ -1929,6 +1969,9 @@ class Watch:
         self.tabs()
         self.after_looks()
         waiting, P = 0, procs()               # one process list per pass, for every session in it
+        if not P.ok:       # T53: cannot tell is not "went down": this pass concludes nothing about any session
+            log(f"  {P.why}: this look at the started sessions concludes nothing; the next one reads again")
+            return len([r for r in started if r["session_id"] not in self.settled and r["session_id"] not in self.gone])
         for r in started:
             sid = r["session_id"]
             if sid in self.settled or sid in self.gone:
@@ -2014,7 +2057,17 @@ class Watch:
                "down_again": [], "note_not_typed": [], "note_queued": self.queued, "note_held_login_at_limit": []}
         why = {}
         P = procs()
-        for r in started:
+        for _ in range(3):     # T53: the count says nothing on a failed read; it reads again before it gives up
+            if P.ok:
+                break
+            log(f"  {P.why}: the count reads again in {float(CFG['retry_gap_s']):g} s")
+            time.sleep(float(CFG["retry_gap_s"]))
+            P = procs()
+        if not P.ok:
+            res["cannot_tell"] = P.why
+            log(f"  count: cannot tell which of the {len(started)} started sessions are up ({P.why}); none is "
+                "counted as loaded or down")
+        for r in (started if P.ok else []):
             pid = came_up(r, P)
             if not pid:
                 res["down_again"].append(display(r))
@@ -2098,12 +2151,13 @@ def _revive(boot):
         if len(rows) > 1:
             # A name is not an identity: a copy started by hand carries the real session's name. Guessing
             # which one was meant is how a session its owner had just closed got started again.
-            held = running_sids()
+            P = procs()
+            held = running_sids(P)
             log(f"revive --only: {len(rows)} sessions on the record match {want!r}; started nothing. "
                 "Give the session id of the one you mean:")
             for r in rows:
                 log(f"  {r['session_id']}  {display(r)}  tmux {r['tmux_session']}  "
-                    f"{'running' if r['session_id'] in held else 'not running'}  {r['cwd']}")
+                    f"{('running' if r['session_id'] in held else 'not running') if P.ok else 'cannot tell'}  {r['cwd']}")
             return 1
     log(f"=== revive v{VERSION} (boot={boot}, dry-run={DRY}) uptime={int(uptime_s())} s, {len(rows)} to look at")
     up_s = user_services_up_s() if boot else None
@@ -2117,7 +2171,22 @@ def _revive(boot):
         log(f"skip  {i}: the record holds {ids.count(i)} rows with this session id; started none of them. "
             "Two starts of one id would be two copies. Run `record --force` while the session runs, then revive.")
     rows = [r for r in rows if r["session_id"] not in twice]
-    held = running_sids()
+    # T52: what runs already is read before anything is started. A read that failed is "cannot tell", never
+    # "nothing runs": started on it, a session already running elsewhere would run twice. Nothing is started
+    # until a read works; after retry_min of failed reads the run ends having started nothing.
+    P, gap = procs(), float(CFG["retry_gap_s"])
+    give_up = time.time() + float(CFG["retry_min"]) * 60
+    while not P.ok:
+        log(f"revive: {P.why}. It cannot tell which sessions are already running, so it starts nothing now"
+            + ("." if DRY else f"; it reads again in {gap:g} s"))
+        if DRY or time.time() >= give_up:
+            log(f"revive: started nothing: {P.why}" + ("" if DRY else f" for {CFG['retry_min']} min")
+                + ". The record is kept as it was. Check what runs with your terminal multiplexer (tmux ls) "
+                "before starting anything by hand, then run revive again.")
+            return 1
+        time.sleep(gap)
+        P = procs()
+    held = running_sids(P)
     EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held
                                     and not in_skip_folder(r.get("cwd", ""))], [True]
     note = wake_note(boot)
@@ -2208,6 +2277,7 @@ def _revive(boot):
     w = Watch(note_for, rows)
     w.tabs()                   # each tab at once, to its session's waiting screen
     next_try, last_up, tries_done, said = 0.0, time.time(), False, False
+    cannot_tell = ""      # T52: why the last pass started nothing, when its read failed
 
     inflight = {}          # session id -> (row, when it was started): started, not yet seen up
     at_once = max(1, int(float(CFG.get("starts_at_once") or 1)))
@@ -2338,7 +2408,17 @@ def _revive(boot):
                     continue
                 settle()               # at most starts_at_once started and not yet seen up
                 nm = display(r)
+                # load_max is read again before each start. Its wait comes BEFORE the read: a session started by
+                # hand during that wait (up to load_wait_s) is then seen, not started a second time (T52).
+                pace()
                 P = procs()            # taken fresh for each session, right before the decision to start it
+                if not P.ok:
+                    # T52: a failed read is "cannot tell": nothing is started in this pass, not this one, not the next
+                    cannot_tell = P.why
+                    log(f"  {P.why}: cannot tell whether {nm} or any other session is already running, so nothing "
+                        f"is started in this pass; it tries again in {float(CFG['retry_gap_s']):g} s")
+                    break
+                cannot_tell = ""
                 late = came_up(r, P) if n else None
                 if late:
                     came_late(sid, r, late)
@@ -2357,7 +2437,6 @@ def _revive(boot):
                 if (r["tmux_socket"], r["tmux_session"]) in created and not has_session(
                         r["tmux_socket"], r["tmux_session"]):
                     w.reattach(sid)    # its waiting screen was closed: a new session, and its tab attached again
-                pace()                 # load_max is read again before each start
                 if start_lane(r, created):
                     inflight[sid] = (r, time.time())
                     report.setdefault("first_start", int(time.time()))
@@ -2372,7 +2451,8 @@ def _revive(boot):
         if not tries_done and (not pending or time.time() >= deadline):
             tries_done = True
             for sid, (r, n) in pending.items():
-                log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}")
+                log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}"
+                    + (f". Not started at the last pass: {cannot_tell}" if cannot_tell else ""))
                 report["failed"].append(display(r))
             report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows), began=prog["began"],
                           uptime_at_start=prog["uptime_at_start"], boot_run=boot, user_up_s=up_s,
@@ -2406,6 +2486,8 @@ def _revive(boot):
     def went_down(at_count=False):
         """G3.17: each session this run started and that is not running now: down during the restore, with when"""
         P, new = procs(), False
+        if not P.ok:       # T53: a failed read says nothing went down
+            return False
         for r in came:
             sid = r["session_id"]
             if sid in down_during or came_up(r, P):
@@ -2466,6 +2548,8 @@ def on_done(report):
     counts = {"started": len(report.get("started", [])), "loaded": len(report.get("loaded", [])),
               "not_loaded": len(report.get("not_loaded", [])), "down": len(report.get("down_again", [])),
               "failed": len(report.get("failed", [])), "needs_you": len(report.get("needs_you", []))}
+    if report.get("cannot_tell"):      # T53: the count could not read the process list: no number stands for it
+        counts.update(loaded="unknown", not_loaded="unknown", down="unknown")
     no_herdr = int((report.get("tabs") or {}).get("herdr_not_running") or 0)      # G4.10
     line = cmd.replace("{herdr_tabs_not_attached}", str(no_herdr))
     for k, v in counts.items():
@@ -2473,6 +2557,8 @@ def on_done(report):
     env = server_env()
     env.update({"TARDIGRADE_" + k.upper(): str(v) for k, v in counts.items()})
     env["TARDIGRADE_HERDR_TABS_NOT_ATTACHED"] = str(no_herdr)
+    if report.get("cannot_tell"):
+        env["TARDIGRADE_CANNOT_TELL"] = str(report["cannot_tell"])
     rc = run(["/bin/sh", "-c", line], timeout=60, env=env)[0]
     log(f"on_done ran (exit {rc}): " + ", ".join(f"{v} {k.replace('_', ' ').replace('needs', 'need')}"
                                                  for k, v in counts.items())
@@ -2687,9 +2773,12 @@ def attach_tabs(rows, wait=True):
 # ---------- census ----------
 def census_data():
     mine, others, helpers = live(with_launch=False)
+    bad = [x.why for x in PROCS_NOW + PANES_NOW if not x.ok]
+    if bad:     # T53: a failed read gives no count at all: "down" read off a failed read gets sessions started twice
+        return {"cannot_tell": "; ".join(bad), "uptime_s": uptime_s()}
     table = read_table()
     live_ids = {r["session_id"] for r in mine}
-    held_now = running_sids()          # a print-mode run still running is a helper now, not down (T43)
+    held_now = running_sids(PROCS_NOW[0])  # a print-mode run still running is a helper now, not down (T43)
     down = [dict(r, ended="exit") if exited_at(r) else dict(r, ended="print-run") if print_run(r) else r
             for r in table["lanes"] if r["session_id"] not in live_ids and not in_skip_folder(r.get("cwd", ""))
             and r["session_id"] not in held_now]
@@ -2801,8 +2890,21 @@ def where_text(r):
             "none": "no terminal at all"}.get(r["host"], r["host"])
 
 
+def cannot_tell_text(why):
+    return (f"Cannot tell which sessions run or which are down ({why}). Nothing here says a session is down: "
+            "do not start any by hand on the strength of this. Check with your terminal multiplexer (tmux ls), "
+            "then run census again.")
+
+
 def census():
     d = census_data()
+    if d.get("cannot_tell"):
+        if "--json" in ARGS:
+            print(json.dumps(d, indent=1, sort_keys=True))
+        else:
+            print(f"Windstorm Tardigrade census, {time.strftime('%Y-%m-%d %H:%M %Z')}")
+            print(cannot_tell_text(d["cannot_tell"]))
+        return 1
     if "--json" in ARGS:
         print(json.dumps(d, indent=1, sort_keys=True))
         return 0
@@ -2938,7 +3040,11 @@ def report_cmd():
     if tabs.get("herdr_not_running"):
         print(f"  tabs                  Herdr was not running: {tabs['herdr_not_running']} tab(s) not attached")
     d = census_data()
-    need = [("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
+    if d.get("cannot_tell"):
+        print("\n" + cannot_tell_text(d["cannot_tell"]))
+        d = {"same_name": {}, "by_hand": []}
+    need = [("count not taken: cannot tell which sessions are up", [rep["cannot_tell"]] if rep.get("cannot_tell") else []),
+            ("failed to start", rep.get("failed")), ("came back on another login (needs you)", rep.get("needs_you")),
             ("not loaded (a question on its screen?)", rep.get("not_loaded")),
             ("loaded, note not typed", rep.get("note_not_typed")),
             ("note waiting in Claude Code's queue for the limit to reset", rep.get("note_queued")),

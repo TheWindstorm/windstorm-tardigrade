@@ -204,6 +204,13 @@ Setup tells you this for your machine. It never changes it for you.
 
 - **Never a second copy.** A session id that any live process of yours holds is never started. Two copies of one
   session would both act.
+- **A read that failed is "cannot tell", never "nothing runs".** Each start is decided on a read of the process list
+  taken right before it, after any `load_max` wait. If that read fails (`ps` gives an error, or no answer within
+  30 s), a restore starts nothing in that pass, says so in its log, and reads again at the next. If the process list
+  or a tmux server's list of panes cannot be read, census says it cannot tell and gives no count of running or down
+  sessions, and the record is kept exactly as it was. Known edge until 0.1.10 (T54): if the session file Claude Code
+  keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
+  `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
 - **A session comes back with the permission mode it had.** If it ran with permission checks switched off, it comes
   back that way, with nobody watching, and the opening message gives it one turn. You chose that mode when you
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use

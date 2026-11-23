@@ -723,6 +723,62 @@
    "issue": 55,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T52",
+   "seen": "2026-11-23, a probe on 0.1.8.2 and on the 0.1.9 candidate, each read made to fail in turn: two sessions on the record, a reboot, one started by hand, then ps made to fail, then revive --boot: the session started by hand was started a second time (two copies). The failed read was an empty list, taken as \"nobody holds it\". The same night a trace on a loaded machine showed a second way: with load_max set, the start waited for the load (up to load_wait_s) after its read, so a session started by hand during the wait was started again.",
+   "promise": "a restore decides each start on a process-list read taken right before it, after any load wait; a read that failed is \"cannot tell\": nothing is started in that pass, the log says so, and the next pass reads again. A session already running is never started twice on a failed or stale read.",
+   "codon": "G2.50",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "test_G2_50_a_restore_that_cannot_read_the_process_list_starts_nothing_on_it",
+   "proven": "",
+   "issue": 57,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T53",
+   "seen": "2026-11-23, a probe on 0.1.8.2 and on the 0.1.9 candidate, each read made to fail in turn: with ps failing, census printed \"Running: 0 ... down: 2\" while both sessions ran. A person who reads \"down\" starts sessions by hand: the likeliest road to two copies.",
+   "promise": "on a failed read of the process list or of a tmux server's panes, census and report say they cannot tell and give no count of running or down sessions; a restore's count and on_done say \"unknown\".",
+   "codon": "G3.18",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "test_G3_18_census_on_a_failed_read_says_it_cannot_tell",
+   "proven": "",
+   "issue": 58,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T54",
+   "seen": "2026-11-23, a probe on 0.1.8.2 and on the 0.1.9 candidate, each read made to fail in turn: with one of three sessions' own session file unreadable, record put that session on the down list, so the next reboot would not bring it back. (A whole sessions folder unreadable is held.)",
+   "promise": "a session whose own session file cannot be read keeps its previous row as it was, marked \"could not be read at\" a time, and the rest of the record is written. Not a skip of the whole pass: one file that stays unreadable would freeze the record for every session on the machine, and a restart weeks later would bring back a list from the day the file went bad.",
+   "codon": "G1.17",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 59,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T55",
+   "seen": "2026-11-23, a probe on 0.1.8.2 and on the 0.1.9 candidate, each read made to fail in turn: with tmux list-panes failing, record kept both sessions but rewrote them from tmux alpha/beta to host \"none\" under new names, so the next restore would put them elsewhere; census showed them as \"no terminal at all\". 0.1.9 runs the record earlier, during a restore's watch, while the machine is still loaded, so this read fails more often there than on anything released.",
+   "promise": "a failed read of the process list or of a tmux server's panes (one that still answers, or gave no answer within 6 s) leaves the record exactly as it was and says why on every pass; a stale socket after a reboot is \"no panes there\", as before.",
+   "codon": "G1.18",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "test_G1_18_a_failed_pane_or_process_read_leaves_the_record_as_it_was",
+   "proven": "",
+   "issue": 60,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

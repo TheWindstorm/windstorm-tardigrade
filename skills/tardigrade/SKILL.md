@@ -48,6 +48,10 @@ After the plugin is updated, run `setup` again so the installed copy matches.
 Run `census` and show the table as it is. Then say, in one or two lines, what stands out: sessions that are hidden
 and have been quiet for days, and sessions that are down.
 
+If the census says it **cannot tell** (the process list or tmux could not be read), show that line and nothing more:
+do not call any session down, do not run `revive` and do not start any session by hand on the strength of it. Run
+`census` again in a minute; if it still cannot tell, say so to the user and let them look with `tmux ls`.
+
 Do not end, restart or change any session because of what the census shows. List them and ask. A hidden session may
 be doing exactly what its owner wants.
 
