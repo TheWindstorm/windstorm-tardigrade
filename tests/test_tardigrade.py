@@ -2735,6 +2735,23 @@ class Strand(unittest.TestCase):
         self.assertEqual(bad, ["test_b: did not pass in this run"])
         self.assertEqual(here, ["test_c (needs Linux and tmux)"])
 
+    def test_G7_4_every_place_that_states_the_version_says_the_same_one(self):
+        """the plugin manifest said 0.1.7 for three releases while the script moved on (T50): the script, the plugin
+        manifest, the marketplace entry and the skill file (if they carry a version) and the changelog's top entry"""
+        import re
+        v = re.search(r'^VERSION = "([^"]+)"', fread(os.path.join(ROOT, "scripts", "tardigrade.py")), re.M).group(1)
+        said = {"plugin.json": json.loads(fread(os.path.join(ROOT, ".claude-plugin", "plugin.json"))).get("version")}
+        for e in json.loads(fread(os.path.join(ROOT, ".claude-plugin", "marketplace.json"))).get("plugins", []):
+            if "version" in e:
+                said["marketplace.json " + e.get("name", "?")] = e["version"]
+        import glob
+        for f in glob.glob(os.path.join(ROOT, "skills", "*", "SKILL.md")):
+            m = re.search(r"^version:\s*['\"]?([^'\"\s]+)", fread(f).split("---", 2)[1], re.M)
+            if m:
+                said[os.path.relpath(f, ROOT)] = m.group(1)
+        said["CHANGELOG.md top entry"] = re.search(r"^## (\S+)", fread(os.path.join(ROOT, "CHANGELOG.md")), re.M).group(1)
+        self.assertEqual({k: x for k, x in said.items() if x != v}, {}, f"the script says {v}")
+
     def test_no_codon_is_used_twice_in_the_plan(self):
         import re, collections
         plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.9 (not yet tagged)
 
 - The plugin's manifest (`.claude-plugin/plugin.json`) still said 0.1.7 in 0.1.8, 0.1.8.1 and 0.1.8.2; it now says
   0.1.9, as the script does.

@@ -695,6 +695,34 @@
    "issue": 53,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T50",
+   "seen": "2026-11-22: .claude-plugin/plugin.json said \"version\": \"0.1.7\" in the v0.1.8, v0.1.8.1 and v0.1.8.2 tags, while the script said 0.1.8, 0.1.8.1 and 0.1.8.2; nothing compared them. The README's first install path is the plugin.",
+   "promise": "every place that states the version (the script's VERSION, the plugin manifest, the marketplace entry and the skill file if they carry one, the changelog's top entry) says the same one, and the suite fails when one differs.",
+   "codon": "G7.4",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.9",
+   "ship_in": "0.1.9",
+   "test": "test_G7_4_every_place_that_states_the_version_says_the_same_one",
+   "proven": "",
+   "issue": 54,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T51",
+   "seen": "2026-11-22, read in the code: setup copies whatever script it is run from, older or newer, with no version compare and no word about it; an agent running setup from an old clone would move a machine backwards in silence.",
+   "promise": "setup says which version was installed and which is now (\"installed 0.1.9, now 0.1.8.2\"), and says it plainly when the new one is older; it still installs it (a rollback is a real need), never without saying so.",
+   "codon": "G5.10",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 55,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
