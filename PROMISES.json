@@ -895,7 +895,7 @@
   {
    "id": "T64",
    "seen": "2026-11-23: the README's install lines read the repository's own .claude-plugin/marketplace.json, whose \"./\" source hands out whatever the default branch holds; test machines were found with a plugin installed that way at 0.1.6 and 0.1.7, beside a newer installed copy.",
-   "promise": "the repository's own catalog file is removed, or its entry is pinned to a release like any other (a source with a ref and a commit); no text of ours names the unpinned road; the install line the README prints was run as printed once on a fresh VM.",
+   "promise": "the repository's own catalog entry is pinned, never removed: an https `url` source with the `ref` and `sha` of the newest release, so nobody gets unreleased code under a released label; each release moves it, by one text-only commit on main after the tag; the README's install and update lines stay as they are and were run as printed once on a fresh VM against the pinned entry; a test reads the entry and fails on a `./` source or one without `ref` and `sha`. First done for 0.1.9, on its release list.",
    "codon": "G5.13",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
