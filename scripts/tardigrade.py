@@ -3355,7 +3355,8 @@ def setup():
         print("NOT set up: Tardigrade did not write these, so they are yours, and setup does not write over them:")
         for p in theirs:
             print(f"  {p}")
-        print("Nothing was written. Move them out of the way, then run setup again.")
+        print("Move them out of the way, then run setup again. Nothing was installed and no file was written (only "
+              "Tardigrade's own settings and state folders, which every command makes, empty if they were not there).")
         return 1
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")

@@ -21,7 +21,7 @@
 - **Only what Tardigrade wrote.** Setup, revive and uninstall overwrite or remove only files Tardigrade wrote, known by
   their own marks (seen on 0.1.9 in a scratch home: setup wrote over a person's own `tardigrade.py`, uninstall removed
   it and a person's `__pycache__` folder whole, a revive removed a person's folder named `lock` and a person's file in
-  the start-file folder). Setup now stops, names the file and writes nothing; a folder named `lock` holding something
+  the start-file folder). Setup now stops, names the file and installs nothing; a folder named `lock` holding something
   else stops a revive, which says so; nothing deletes a folder whole any more (T79).
 - **Uninstall goes to its end.** A file of yours in one of Tardigrade's folders no longer makes it a failure: everything
   of Tardigrade's goes, what stayed is named as yours with why each folder stayed, the exit code is success, and the

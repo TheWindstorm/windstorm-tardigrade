@@ -2433,6 +2433,7 @@ class Setup(Base):
         self.assertIn("NOT set up", out)
         self.assertIn(os.path.join(self.home, share, "tardigrade.py"), out)
         self.assertEqual(self.whole_home(), before, out)              # setup stopped before any write
+        self.assertIn("Nothing was installed and no file was written", out)
         os.rename(os.path.join(self.home, share, "tardigrade.py"), os.path.join(self.home, "my-script.py"))
         rc, out = self.tg("setup")
         self.assertEqual(rc, 0, out)
