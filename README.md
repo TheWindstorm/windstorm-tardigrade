@@ -189,7 +189,7 @@ silently. A first message is never written down.
 `--remote-control` is carried. A session started with it comes back with Remote Control on, which 0.1.7 did not
 do, and the log says so the first time a record sees it.
 
-Known edge until 0.1.11 (T70): the permission mode that census and the dry run show is the start flag. A session
+Known edge until 0.1.12 (T70): the permission mode that census and the dry run show is the start flag. A session
 that Claude Code runs in another mode was shown as "default" (seen once, with auto mode), and it came back in the
 mode Claude Code kept for it.
 
@@ -232,7 +232,7 @@ Setup tells you this for your machine. It never changes it for you.
   `report` and `on_done` say so. Known edge until 0.1.11 (T54): if the session file Claude Code
   keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
   `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
-  Known edge until 0.1.11 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
+  Known edge until 0.1.12 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
   -v claude)` ends in `cli.js`), a session started by hand cannot be seen as running until it has loaded: Claude Code
   runs under node's name at first, then renames itself and drops its start arguments. A restore can start a second
   copy of such a session. Update Claude Code (2.1.113 and later ship the native program, through npm too), and start
