@@ -1465,6 +1465,20 @@
    "issue": 112,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T105",
+   "seen": "2026-11-24, on a stock machine with the released 0.1.10.1: under DOWN the census said \"last seen 2 s ago\" for a session that had not run for five minutes. For a row of the down list the number is counted from the moment the record noted the session gone, not from the moment it was last seen running; the row holds both times.",
+   "promise": "under DOWN, \"last seen\" is counted from the last time a record saw the session running, for a row of either list; where the census also says when the session was noted gone, it says so in those words. A test plants a row whose two times differ and reads the line.",
+   "codon": "G3.37",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 113,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
