@@ -2475,6 +2475,85 @@ class Revive(Base):
         time.sleep(2)
         self.assertEqual([x["sid"] for x in self.launches()[n:]], [c])
 
+    def test_G2_55_only_finds_a_session_on_the_down_list_and_never_says_it_is_not_on_the_record(self):
+        """T104. Seen on a stock machine with 0.1.10.1: the census listed a session under "DOWN: on the record", and
+        `revive --only` for it answered "no session on the record is named ...". Now it is found there. The step
+        the census prints under the table is taken as printed."""
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        self.start_lane("gamma", "Gamma Lane")
+        self.tg("record", "--force")
+        names = lambda key: sorted(r["name"] for r in self.table()[key])
+        by_sid = {x["sid"]: x["pid"] for x in self.launches()}
+        self.kill(by_sid[a])                                # it ends by itself
+        self.until(lambda: self.tmux(self.sock, "has-session", "-t", "=alpha")[0] != 0, "its window to go")
+        rc, out = self.tg("record")
+        self.assertEqual((names("lanes"), names("down")), (["Beta Lane", "Gamma Lane"], ["Alpha Lane"]), out)
+        census = self.tg("census")[1]
+        self.assertIn("1 of the sessions under DOWN are on the down list: a plain `tardigrade revive` does not start "
+                      "them. To bring one back: `tardigrade revive --only NAME` (its id where two carry one name).", census)
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.assertIn("revive: 0 started, 2 already running, 0 failed, 0 need you\n", out)
+        rc, dry = self.tg("revive", "--only", "Alpha Lane", "--dry-run")
+        self.assertIn("revive --only: Alpha Lane was on the down list; a dry run leaves it there", dry)
+        self.assertRegex(dry, rf"tmux default:alpha   claude .*--resume {a}\n")
+        self.assertEqual((names("down"), len(self.launches())), (["Alpha Lane"], n))
+        rc, out = self.tg("revive", "--only", "Alpha Lane")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("no session on the record", out)
+        self.assertIn("revive --only: Alpha Lane was on the down list; it is on the list a revive reads again", out)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], a, out)
+        rc, out = self.tg("record")
+        self.assertEqual((names("lanes"), names("down")), (["Alpha Lane", "Beta Lane", "Gamma Lane"], []), out)
+        self.assertEqual([k for r in self.table()["lanes"] for k in r if k.startswith("not_started")], [])
+        census = self.tg("census")[1]
+        self.assertIn("Running: 3 ", census)
+        self.assertNotIn("on the down list", census)
+        # a session its owner ended: by name, one line says so with the step; the step (its id) brings it back
+        self.kill(by_sid[b])
+        self.until(lambda: self.tmux(self.sock, "has-session", "-t", "=beta")[0] != 0, "its window to go")
+        self.conversation(b, time.time() + 2)           # after the last record saw it (the stamp has whole seconds)
+        rc, out = self.tg("record")
+        self.assertEqual([(r["name"], r.get("ended")) for r in self.table()["down"]], [("Beta Lane", "exit")], out)
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--only", "Beta Lane")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("revive --only: Beta Lane is on the down list: its owner ended it with /exit at ", out)
+        self.assertIn(f". To bring it back anyway: revive --only {b}", out)
+        self.assertEqual(len(self.launches()), n)
+        rc, out = self.tg("revive", "--only", b)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("revive --only: Beta Lane was on the down list (ended by its owner); it is on the list a revive "
+                      "reads again", out)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], b, out)
+        # a name that is on neither list is still said as that
+        rc, out = self.tg("revive", "--only", "Nobody Lane")
+        self.assertEqual((rc, "revive --only: no session on the record is named 'Nobody Lane'" in out), (1, True), out)
+
+    def test_G3_37_under_down_last_seen_is_when_a_record_last_saw_the_session_running(self):
+        """T105. Seen on a stock machine with 0.1.10.1: "last seen 2 s ago" for a session that had not run for five
+        minutes; the number was counted from the moment the record noted it gone. A row whose two times differ by
+        ten minutes says the time it was last seen running."""
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.kill(self.launches()[0]["pid"])
+        self.until(lambda: self.tmux(self.sock, "has-session", "-t", "=alpha")[0] != 0, "its window to go")
+        t = self.table()
+        for r in t["lanes"]:
+            if r["session_id"] == a:
+                r["last_seen"] -= 600                       # the last record that saw it running: ten minutes ago
+        jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        rc, out = self.tg("record")
+        row = self.table()["down"][0]
+        self.assertEqual((row["name"], 600 <= row["down_since"] - row["last_seen"] < 660), ("Alpha Lane", True), out)
+        line = [x for x in self.tg("census")[1].splitlines() if x.startswith("  Alpha Lane")]
+        self.assertEqual(len(line), 1, line)
+        self.assertIn("last seen 10 min ago", line[0])
+
     def test_G2_36_an_exit_that_only_the_prompt_history_has_still_counts(self):
         # seen on real machines with Claude Code 2.1.330: /exit was typed, Claude ended, and its conversation has no
         # /exit line at all. The prompt history has it. Alpha's last prompt is /exit, after the record saw it:

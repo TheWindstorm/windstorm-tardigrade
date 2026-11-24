@@ -230,7 +230,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G2.52 | Due in 0.1.11 (T69). Setup and each boot run make every marker they keep readable by the person only, not only the ones they write; a test plants an old marker with a wider mode and sees it tightened. | `test_G2_52_setup_and_each_boot_run_make_every_marker_they_keep_private` |
 | G2.53 | Due in 0.1.11 (T85). A revive that starts after an earlier one was stopped part way starts each recorded session at most once: no session id gets a second Claude, no tmux session a second pane; the test stops revive at planted points, not after a time. | `test_G2_53_a_revive_after_one_stopped_part_way_starts_each_session_at_most_once` |
 | G2.54 | Due in 0.1.11 (T89). A missing prompt history is said as not there, never as could not be read; an unreadable one is said as could not be read with its cause; nothing is decided differently because of the word. | `test_G2_54_a_prompt_history_that_is_not_there_is_never_said_as_one_that_could_not_be_read` |
-| G2.55 | Due in 0.1.11 (T104). A person who names a session the census shows is never told that it is not on the record. | Not built yet. |
+| G2.55 | Due in 0.1.11 (T104). A person who names a session the census shows is never told that it is not on the record. | `test_G2_55_only_finds_a_session_on_the_down_list_and_never_says_it_is_not_on_the_record` |
 
 ### G3 Census: say what is running and what is not
 
@@ -266,7 +266,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G3.34 | Due in 0.1.12 (T97), with T66. When a running session is left out of the record, the census's "Comes back after a reboot" line says how many of the running sessions it covers and how many it does not, and points to the list below; `census --json` carries the two counts. | Not built yet. |
 | G3.35 | Due in 0.1.12 (T98), with T97 and T66. Census names the number of sessions a revive would start now, on the page and in `census --json`, counted by the same function the revive decides by. `revive --dry-run` writes nothing and removes nothing, also with a lock in its way and in a home that is set up. | Not built yet. |
 | G3.36 | Due in 0.1.11 (T102). Every stop, needs-you and next-step line the tool prints has a test that takes the step as printed, in the state the failure left, with no restart and no reset between and with a record pass run first where the timer would have run one, then reads what the line promised and the tool's own count. | Not built yet. |
-| G3.37 | Due in 0.1.11 (T105). Under DOWN, "last seen" is counted from the last time a record saw the session running, for a row of either list. | Not built yet. |
+| G3.37 | Due in 0.1.11 (T105). Under DOWN, "last seen" is counted from the last time a record saw the session running, for a row of either list. | `test_G3_37_under_down_last_seen_is_when_a_record_last_saw_the_session_running` |
 
 ### G4 Windows and tabs
 

@@ -176,12 +176,9 @@ session back anyway: `revive --only <its id>`. One known edge: a session being m
 moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down; `revive --only
 <its name>` brings it back.
 
-Known edge until 0.1.11 (T104): a session that ended by itself is moved to the down list by the next record. The
-census shows it under DOWN, `tardigrade revive` does not start it, and `revive --only <its name>` answers that no
-session on the record has that name. To bring it back today: start it yourself in its folder with Claude Code's
-own `claude --resume` (its help, at 2.1.331: "Resume a conversation by session ID or name, or pick from a list").
-Once it runs, the next record puts it back on the list (that last part was seen on a stock machine with 0.1.10.1
-and a stand-in for Claude Code; resuming by name or from the list was not walked by us).
+**A session on the down list** (it ended by itself, or you let it go with `record --force`) is not started by a
+plain `tardigrade revive`; the census says so under its table. `tardigrade revive --only <its name>` finds it there,
+puts it back on the list a revive reads and starts it. For one you ended with `/exit` it asks for its id.
 
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
@@ -469,7 +466,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 180 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 182 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

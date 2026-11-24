@@ -2895,6 +2895,39 @@ def _revive(boot):
         want = ARGS[ARGS.index("--only") + 1]
         rows = [r for r in rows if want in (r["name"], r["session_id"], r["tmux_session"])]
         if not rows:
+            # G2.55 (T104): the census shows a row of the down list as on the record, so a person who names one is
+            # never told that it is not there. It is found; it is started, or one line says why not.
+            was = [r for r in read_table()["down"] if want in (r.get("name"), r["session_id"], r.get("tmux_session"))]
+            if len(was) > 1:
+                log(f"revive --only: {len(was)} sessions on the down list match {want!r}; started nothing. "
+                    "Give the session id of the one you mean:")
+                for r in was:
+                    log(f"  {r['session_id']}  {display(r)}  tmux {r.get('tmux_session', '')}  {r.get('cwd', '')}")
+                return 1
+            for r in was:
+                nm = display(r)
+                if r.get("ended") == "print-run" or print_run(r):
+                    log(f"revive --only: {nm} is on the down list as a print-mode run (claude -p), not a session a "
+                        "person sits in; such a run is never brought back.")
+                    return 1
+                if r.get("ended") == "exit" and want != r["session_id"]:
+                    log(f"revive --only: {nm} is on the down list: its owner ended it with /exit"
+                        + (f" at {time.strftime('%Y-%m-%d %H:%M', time.localtime(r['ended_at']))}" if r.get("ended_at") else "")
+                        + f". To bring it back anyway: revive --only {r['session_id']}")
+                    return 1
+                # the person named it: it is wanted again. It goes back on the list a revive reads, marked as one a
+                # revive is to start, so that a start that fails keeps it there (G1.20).
+                row = {k: v for k, v in r.items() if k not in ("down_since", "ended", "ended_at")}
+                row["not_started_since"] = int(time.time())
+                rows = [row]
+                if not DRY:
+                    t = read_table()
+                    t["down"] = [x for x in t["down"] if x["session_id"] != r["session_id"]]
+                    t["lanes"] = [x for x in t["lanes"] if x["session_id"] != r["session_id"]] + [row]
+                    write_json(TABLE, t)
+                log(f"revive --only: {nm} was on the down list" + (" (ended by its owner)" if r.get("ended") == "exit" else "")
+                    + ("; a dry run leaves it there" if DRY else "; it is on the list a revive reads again"))
+        if not rows:
             log(f"revive --only: no session on the record is named {want!r}")
             return 1
         if len(rows) > 1:
@@ -3668,6 +3701,7 @@ def census_data():
         "not_started": len([r for r in down if r.get("not_started_since") and not r.get("ended")]),
         "record_not_written": record_not_written(),
         "ended": len([r for r in down if r.get("ended")]),
+        "down_list": len([r for r in down if r.get("down_since") and r.get("ended") not in ("exit", "print-run")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "not_kept": not_kept, "replaced": replaced, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
@@ -3865,7 +3899,7 @@ def census():
                     kind, why = down_why(r, bool(not_back.get(display(r)) or r.get("not_started_why")))
                     if why:
                         how_not = f"\n      A revive did not {kind}: {why}"
-                t = r.get("down_since") or r.get("last_seen") or 0
+                t = r.get("last_seen") or r.get("down_since") or 0
                 how = {"exit": "   ended by its owner (/exit)",
                        "shell": "   ended (its pane holds the shell it left)",
                        "print-run": "   a print-mode run (claude -p), never brought back"}.get(r.get("ended"), "")
@@ -3903,6 +3937,9 @@ def census():
     if d["lost"]:
         print(f"\n{d['lost']} of the sessions under DOWN vanished together, which looks like a crash. They are still "
               f"on the record: `tardigrade revive` brings them back. If you ended them yourself: record --force")
+    if d.get("down_list"):      # G2.55 (T104)
+        print(f"\n{d['down_list']} of the sessions under DOWN are on the down list: a plain `tardigrade revive` does not "
+              "start them. To bring one back: `tardigrade revive --only NAME` (its id where two carry one name).")
     if d.get("not_started"):
         print(f"\n{d['not_started']} of the sessions under DOWN: a revive was to start them and they were not seen "
               "running since. They stay on the list a revive reads: `tardigrade revive` tries them again. To let "
