@@ -3376,7 +3376,24 @@ class Tests(unittest.TestCase):
                         except OSError:
                             pass
             return found
-        self.assertEqual(gone_soon(left), [], "processes of the stopped run are still alive")
+        def named(pids):
+            # a failure names what it found, so a second one explains itself, in CI too: pid, parent, state, age,
+            # command line (seen twice on a loaded machine: 2 and 3 processes still there after the wait)
+            tick, rows = os.sysconf("SC_CLK_TCK"), []
+            with open("/proc/uptime") as f:
+                up = float(f.read().split()[0])
+            for pid in pids:
+                try:
+                    with open(f"/proc/{pid}/stat") as f:
+                        st = f.read().rsplit(")", 1)[1].split()
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        cmd = f.read().replace(b"\0", b" ").decode(errors="replace").strip()
+                    rows.append(f"pid {pid} parent {st[1]} state {st[0]} age {up - int(st[19]) / tick:.1f}s: {cmd[:200]}")
+                except (OSError, IndexError, ValueError):
+                    rows.append(f"pid {pid}: gone while being read")
+            return "processes of the stopped run are still alive:\n" + "\n".join(rows)
+        still = gone_soon(left)
+        self.assertEqual(still, [], named(still))
         self.assertEqual(os.listdir(parent), [], "the stopped run left its folder behind")
         time.sleep(3)                                       # and nothing comes back to write in it later
         self.assertEqual(left(), [], "a process of the stopped run came back")
