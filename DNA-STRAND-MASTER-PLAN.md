@@ -231,7 +231,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G2.53 | Due in 0.1.11 (T85). A revive that starts after an earlier one was stopped part way starts each recorded session at most once: no session id gets a second Claude, no tmux session a second pane; the test stops revive at planted points, not after a time. | `test_G2_53_a_revive_after_one_stopped_part_way_starts_each_session_at_most_once` |
 | G2.54 | Due in 0.1.11 (T89). A missing prompt history is said as not there, never as could not be read; an unreadable one is said as could not be read with its cause; nothing is decided differently because of the word. | `test_G2_54_a_prompt_history_that_is_not_there_is_never_said_as_one_that_could_not_be_read` |
 | G2.55 | Due in 0.1.11 (T104). A person who names a session the census shows is never told that it is not on the record. | `test_G2_55_only_finds_a_session_on_the_down_list_and_never_says_it_is_not_on_the_record` |
-| G2.56 | Due in 0.1.11 (T106). Every start line the tool prints or logs shows a `VAR=value` word that stands before the program as `VAR=(set)`; the session's start file and the person's own settings file keep the real value. The dry run says once that values are not shown. | Not built yet. |
+| G2.56 | Due in 0.1.11 (T106). Every start line the tool prints or logs shows a `VAR=value` word that stands before the program as `VAR=(set)`; the session's start file and the person's own settings file keep the real value. The dry run says once that values are not shown. | `test_G2_56_a_start_line_that_is_printed_shows_a_value_before_the_program_as_set_and_the_start_keeps_it` |
 
 ### G3 Census: say what is running and what is not
 

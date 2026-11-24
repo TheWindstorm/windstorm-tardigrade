@@ -1855,6 +1855,24 @@ def write_launch_file(r):
     return path
 
 
+NOT_SHOWN = ("(set) stands for a value that is not shown here. It is in your config.json and in the session's "
+             "start file; put it back in before you run such a line by hand.")
+_VALUE_WORD = re.compile(r"""([A-Za-z_][A-Za-z0-9_]*)=(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s'"\\])*(\s+|$)""", re.S)
+
+
+def shown_line(line):
+    """G2.56 (T106): a start line as it is printed or logged. A VAR=value word that stands before the program (also
+    after a leading `env`) shows as VAR=(set): a value there can be a key or a token, and a printed line lands in
+    whatever reads it. The rest of the line is unchanged. -> (the line to show, how many values it hides)"""
+    pos = re.match(r"\s*(?:env\s+)?", line).end()
+    out, n = line[:pos], 0
+    while True:
+        m = _VALUE_WORD.match(line, pos)
+        if not m:
+            return out + line[pos:], n
+        out, pos, n = out + m.group(1) + "=(set)" + m.group(2), m.end(), n + 1
+
+
 def launch_cmd(r):
     sh = CFG["shell"]
     return f"exec {sh} -{'l' if sh == 'zsh' else ''}ic {shlex.quote('. ' + shlex.quote(write_launch_file(r)))}"
@@ -2986,6 +3004,7 @@ def _revive(boot):
     note = wake_note(boot)
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": [], "left_out": []}
     mine_again = set()         # G5.19: tmux sessions an earlier run made for a row, where the session is not running
+    hidden = 0                 # G2.56: values a dry run's start lines did not show
     held_back = []             # rows not started because a tmux session of their name is in the way, or unread
     lr = read_json(os.path.join(STATE, "last-revive.json"), {})
     last_failed = lr.get("failed_why") if isinstance(lr, dict) and isinstance(lr.get("failed_why"), dict) else {}
@@ -3052,11 +3071,15 @@ def _revive(boot):
             + (f"  [account {r['account']}]" if r.get("account") else "")
             + ("  [pinned login: checked before anything is typed]" if login_print(r) else ""))
         if DRY:
-            log(f"      tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}   {claude_line(r)}")
+            shown, n_hidden = shown_line(claude_line(r))
+            hidden += n_hidden
+            log(f"      tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}   {shown}")
             if "--start-file" in ARGS:      # to the screen only, never to the log: it holds the env_file's values
                 print(launch_text(r), end="")
         todo.append(r)
     if DRY:
+        if hidden:
+            log(NOT_SHOWN)
         return 0
     try:        # start files of sessions that are no longer on the record
         on_record = {r["session_id"] + end for r in read_table()["lanes"] for end in (".sh", ".mark")}

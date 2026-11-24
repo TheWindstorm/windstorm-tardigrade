@@ -106,7 +106,7 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
 | `tardigrade record --accept "Name"` | For one running session: its row takes the login it runs on now. For when census says `Login differs` and the login it shows is the right one. |
-| `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
+| `tardigrade revive --dry-run --all` | Before a planned reboot: shows the line that would start each recorded session, and starts nothing. A `VAR=value` word before the program is shown as `VAR=(set)`. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
 | `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. It reads back what went: something of its own that could not be removed, or a timer that still runs, is named with the one command to use, and then it does not say off (exit 1; exit 3 when systemd or launchd gave no answer). While a restore is starting sessions it waits for it. When all is off, the last line says Tardigrade is off this computer; run again, it says it is already off. |
 
@@ -412,7 +412,7 @@ line says that it cannot tell. Not seen by us: a read of a session's environment
 | `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
 | `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. `{herdr_tabs_not_attached}` (and `TARDIGRADE_HERDR_TABS_NOT_ATTACHED`) is how many tabs were left because Herdr was not running. For a machine where someone or something should be told. |
 
-Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is exactly what will run.
+Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is what will run, with one thing left out: where your `claude_command` or `account_command` begins with a `VAR=value` word, the line shows `VAR=(set)`, because a printed line lands in whatever reads it. The value itself is in your config.json and in the session's start file, nowhere else; `revive --dry-run --start-file` prints the start file whole, values included.
 
 ## Tested
 
@@ -470,7 +470,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 189 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 190 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

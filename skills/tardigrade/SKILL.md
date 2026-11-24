@@ -91,8 +91,10 @@ gets no message; the log and the census name it.
 After the starts, `revive` keeps looking for a few minutes and prints a count: LOADED, UP-NOT-LOADED and DOWN.
 Show that line. UP-NOT-LOADED means a question is open on that session's screen: the person opens its window.
 
-Before a planned reboot, run `revive --dry-run --all` and show it: it lists the exact line that will start each
-recorded session, and starts nothing.
+Before a planned reboot, run `revive --dry-run --all` and show it: it lists the line that will start each
+recorded session, and starts nothing. A value the person put before the program (`VAR=value`) is shown as
+`VAR=(set)`. Do not add `--start-file` unless the person asks for it: that prints the start file whole, values
+included, into this conversation.
 
 A line "Starting it new" means that session never had a conversation, so there was nothing to resume; it came
 back as a new session with the same name. Nothing was lost.

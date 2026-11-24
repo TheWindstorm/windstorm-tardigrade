@@ -2205,7 +2205,9 @@ class Revive(Base):
                                  cfg={"claude_command": f"TOKEN={secret} claude-nowhere"}, conf=plain)
         self.assertTrue(why.startswith("`claude-nowhere` ended with exit code 127, not found: "), why)
         # two files hold it and must: the person's own setting, and the session's start file made from it
-        nowhere(out + said(), "a start command that begins with VAR=value",
+        dry = self.tg("revive", "--dry-run", "--all")[1]
+        self.assertIn("   TOKEN=(set) claude-nowhere ", dry)
+        nowhere(out + said() + dry, "a start command that begins with VAR=value",
                 but=(os.path.join(".config", "windstorm-tardigrade", "config.json"),
                      os.path.relpath(self.state(os.path.join("launch", sid + ".sh")), self.home)))
 
@@ -2664,6 +2666,58 @@ class Revive(Base):
         self.wait_launches(n + 1)
         time.sleep(2)
         self.assertEqual([x["sid"] for x in self.launches()[n:]], [c])
+
+    def test_G2_56_a_start_line_that_is_printed_shows_a_value_before_the_program_as_set_and_the_start_keeps_it(self):
+        """T106. `revive --dry-run` prints each session's start line, and the skill tells an agent to run it and
+        show it. A `claude_command` that begins with `VAR=value` (a key, a token) put the value on the screen and
+        into whatever read it. Now such a word shows as `VAR=(set)`, the dry run says once that values are not
+        shown, and the start itself runs with the real value: only the person's settings file and the sessions'
+        start files hold it."""
+        secret = "tok-MADE-UP-" + uuid.uuid4().hex
+        note = ("(set) stands for a value that is not shown here. It is in your config.json and in the session's "
+                "start file; put it back in before you run such a line by hand.")
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        rc, dry = self.tg("revive", "--dry-run")
+        self.assertRegex(dry, rf"tmux default:alpha   claude .*--resume {a}\n")
+        self.assertNotIn("(set)", dry, "nothing is hidden, so nothing is said")
+        for cmd, shown in ((f"TOKEN={secret} claude", "TOKEN=(set) claude"),
+                           (f"TOKEN='{secret} two' OTHER=\"{secret}\" claude", "TOKEN=(set) OTHER=(set) claude"),
+                           (f"env TOKEN={secret} claude", "env TOKEN=(set) claude")):
+            self.cfg({"claude_command": cmd})
+            for args in (("--dry-run",), ("--dry-run", "--all"), ("--dry-run", "--only", "Alpha Lane")):
+                rc, dry = self.tg("revive", *args)
+                self.assertNotIn(secret, dry, (cmd, args))
+                self.assertRegex(dry, rf"tmux default:alpha   {re.escape(shown)} .*--resume {a}\n", (cmd, args))
+                self.assertEqual(dry.count(note), 1, (cmd, args, dry))
+        self.cfg({"claude_command": f"TOKEN={secret} claude"})
+        n = len(self.launches())
+        rc, out = self.tg("revive")                         # the start itself keeps the value
+        new = self.wait_launches(n + 2)[n:]
+        self.assertEqual(sorted(x["argv"][x["argv"].index("--resume") + 1] for x in new), sorted([a, b]), out)
+        self.assertIn("revive: 2 started, 0 already running, 0 failed, 0 need you\n", out)
+        for x in new:                                       # each runs with the real value in its environment
+            with open(f"/proc/{x['pid']}/environ", "rb") as f:
+                self.assertIn(f"TOKEN={secret}".encode(), f.read().split(b"\x00"))
+        self.tg("record")
+        said = out + "".join(self.tg(*x)[1] for x in (("census",), ("census", "--json"), ("report",),
+                                                       ("revive", "--dry-run", "--all")))
+        self.assertNotIn(secret, said)
+        holds = []
+        for d, dirs, files in os.walk(self.home):
+            for name in files:
+                f = os.path.join(d, name)
+                if os.path.islink(f) or not os.path.isfile(f):
+                    continue
+                with open(f, "rb") as fh:
+                    if secret.encode() in fh.read():
+                        holds.append(os.path.relpath(f, self.home))
+        self.assertEqual(sorted(holds), sorted(
+            [os.path.join(".config", "windstorm-tardigrade", "config.json")]
+            + [os.path.relpath(self.state(os.path.join("launch", x + ".sh")), self.home) for x in (a, b)]),
+            "only the person's settings file and the sessions' start files hold the value")
 
     def test_G2_55_only_finds_a_session_on_the_down_list_and_never_says_it_is_not_on_the_record(self):
         """T104. Seen on a stock machine with 0.1.10.1: the census listed a session under "DOWN: on the record", and

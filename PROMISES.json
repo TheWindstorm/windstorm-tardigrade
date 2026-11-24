@@ -1489,7 +1489,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G2_56_a_start_line_that_is_printed_shows_a_value_before_the_program_as_set_and_the_start_keeps_it",
    "proven": "",
    "issue": 114,
    "moved_why": "",
