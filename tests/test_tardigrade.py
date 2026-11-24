@@ -4,6 +4,7 @@ They run a stand-in `claude` (tests/fake_claude.py) inside a private tmux folder
 real session, no real tmux server and no service is touched. Linux only. Run: python3 -m unittest -v
 """
 import ast
+import hashlib
 import json
 import os
 import shutil
@@ -1388,7 +1389,7 @@ class Revive(Base):
         # systemctl --user of whoever runs the tests
         src = fread(SCRIPT)
         u = src[src.index("def uninstall():"):src.index("def trust_cmd():")]
-        self.assertIn('shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)', u)
+        self.assertIn('remove_ours(os.path.join(cache, f), "cache", kept, failed)', u)     # G3.28: our cache only
 
     def test_G2_42_only_the_newest_few_boot_markers_are_kept_and_they_are_private(self):
         # T38: seen on a Linux machine, 14 markers in two days, at mode 664, the old ones never read again
@@ -2344,6 +2345,133 @@ class Setup(Base):
         self.assertEqual(sorted(r["name"] for r in t["lanes"]), ["Alpha Lane", "Beta Lane", "Delta Lane", "Gamma Lane"], out)
         self.assertEqual(t["down"], [], out)
         self.assertIn("vanished together", out)
+
+    # ----- G3.28 (T79): only what we wrote; a person's file never stops the leave (family rules 8 and 23) -----
+    def stand_in_services(self):
+        self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
+                    'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
+        self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+
+    def whole_home(self):
+        """{path under HOME: (kind, sha256 or '')} for every file, folder and link, hidden ones too"""
+        out = {}
+        for d, dirs, files in os.walk(self.home):
+            for n in dirs + files:
+                p = os.path.join(d, n)
+                rel = os.path.relpath(p, self.home)
+                if os.path.islink(p):
+                    out[rel] = ("link", os.readlink(p))
+                elif os.path.isdir(p):
+                    out[rel] = ("dir", "")
+                else:
+                    with open(p, "rb") as f:
+                        out[rel] = ("file", hashlib.sha256(f.read()).hexdigest())
+        return out
+
+    def persons(self, files):
+        """write a person's own files (path under HOME: text); returns their listing"""
+        for rel, text in files.items():
+            p = os.path.join(self.home, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write(text)
+        return {rel: v for rel, v in self.whole_home().items() if rel in files}
+
+    def test_G3_28_setup_revive_and_uninstall_touch_only_what_tardigrade_wrote(self):
+        # seen 2026-11-23 on 0.1.9 in a scratch home: setup wrote over a person's tardigrade.py, uninstall removed
+        # it and a person's __pycache__ whole, a revive removed a person's folder named lock and a person's file in
+        # the launch folder
+        self.stand_in_services()
+        share, units = ".local/share/windstorm-tardigrade", ".config/systemd/user"
+        os.makedirs(self.state(""), exist_ok=True)
+        mine = self.persons({f"{share}/tardigrade.py": "# my own script, not Tardigrade\nprint('hi')\n"})
+        before = self.whole_home()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT set up", out)
+        self.assertIn(os.path.join(self.home, share, "tardigrade.py"), out)
+        self.assertEqual(self.whole_home(), before, out)              # setup stopped before any write
+        os.rename(os.path.join(self.home, share, "tardigrade.py"), os.path.join(self.home, "my-script.py"))
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        old = time.time() - 200000                                     # older than this "boot" (uptime 100000 s)
+        theirs = self.persons({
+            f"{share}/notes.txt": "my notes\n",
+            f"{share}/__pycache__/mine.txt": "mine\n",
+            f"{units}/my-own.service": "[Unit]\nDescription=my own\n",
+            ".local/state/windstorm-tardigrade/lock/diary.txt": "dear diary\n",
+            ".local/state/windstorm-tardigrade/launch/my-start.sh": "echo mine\n",
+            ".local/state/windstorm-tardigrade/revived-notes.txt": "mine\n",
+            ".config/windstorm-tardigrade/my-settings.txt": "mine\n"})
+        os.utime(self.state("lock"), (old, old))
+        ours_start = self.state("launch/gone-session.sh")
+        with open(ours_start, "w") as f:
+            f.write("# Windstorm Tardigrade start file. Written again at each revive; safe to delete.\necho\n")
+        cache = os.path.join(self.home, share, "__pycache__", "tardigrade.cpython-312.pyc")
+        with open(cache, "wb") as f:
+            f.write(b"\x00cache")
+        # a folder named lock with a person's file in it is not a lock of ours: not taken, not removed
+        rc, out = self.tg("revive")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("not taken or removed", out)
+        self.assertIn("diary.txt", out)
+        self.assertEqual(self.whole_home().get(".local/state/windstorm-tardigrade/lock/diary.txt"),
+                         theirs[".local/state/windstorm-tardigrade/lock/diary.txt"])
+        # the person moves it; a revive's clean-up then removes only start files it wrote
+        os.rename(self.state("lock"), os.path.join(self.home, "my-lock"))
+        theirs = {(k if "/lock/" not in k else "my-lock/diary.txt"): v for k, v in theirs.items()}
+        rc, out = self.tg("revive")
+        self.assertFalse(os.path.exists(ours_start), out)
+        self.assertFalse(os.path.exists(self.state("lock")), out)    # our own lock: taken and given back
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        after = self.whole_home()
+        theirs["my-script.py"] = mine[f"{share}/tardigrade.py"]       # the person's script, moved by them
+        for rel, v in theirs.items():
+            self.assertEqual(after.get(rel), v, f"{rel}\n{out}")
+        for rel in (f"{share}/tardigrade.py", f"{share}/__pycache__/tardigrade.cpython-312.pyc",
+                    f"{units}/windstorm-tardigrade-revive.service", f"{units}/windstorm-tardigrade-record.service",
+                    f"{units}/windstorm-tardigrade-record.timer"):
+            self.assertNotIn(rel, after, out)
+        self.assertNotIn("shutil.rmtree", fread(SCRIPT))               # no recursive delete anywhere
+
+    def test_G3_28_uninstall_goes_to_its_end_with_a_persons_file_in_each_folder(self):
+        # family rule 8, A FOREIGN FILE DOES NOT STOP A LEAVE: everything of ours goes, the person's files stay and
+        # are named with why each folder stayed and no command, the exit code is success, and the last line says so
+        self.stand_in_services()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        share = os.path.join(self.home, ".local", "share", "windstorm-tardigrade")
+        os.makedirs(os.path.join(share, "__pycache__"), exist_ok=True)
+        with open(os.path.join(share, "__pycache__", "tardigrade.cpython-312.pyc"), "wb") as f:
+            f.write(b"\x00cache")
+        theirs = self.persons({
+            ".local/share/windstorm-tardigrade/mine.txt": "mine\n",
+            ".local/share/windstorm-tardigrade/__pycache__/mine.txt": "mine\n",
+            ".config/systemd/user/mine.txt": "mine\n",
+            ".local/state/windstorm-tardigrade/mine.txt": "mine\n",
+            ".config/windstorm-tardigrade/mine.txt": "mine\n"})
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        after = self.whole_home()
+        for rel, v in theirs.items():
+            self.assertEqual(after.get(rel), v, f"{rel}\n{out}")
+        for gone in ("tardigrade.py", "__pycache__/tardigrade.cpython-312.pyc"):
+            self.assertFalse(os.path.exists(os.path.join(share, gone)), out)
+        for name in ("windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service",
+                     "windstorm-tardigrade-record.timer"):
+            self.assertFalse(os.path.exists(os.path.join(self.home, ".config", "systemd", "user", name)), out)
+        log = fread(os.path.join(self.home, "systemctl.log"))
+        self.assertIn("disable --now windstorm-tardigrade-record.timer", log)
+        self.assertIn("disable windstorm-tardigrade-revive.service", log)
+        self.assertIn(f"Kept the folder {share}: it holds __pycache__, mine.txt.", out)
+        self.assertIn(f"Kept the folder {os.path.join(share, '__pycache__')}: it holds mine.txt.", out)
+        self.assertIn(os.path.join(share, "__pycache__", "mine.txt"), out)      # named, as the person's
+        for cmd in ("rm ", "rmdir", "sudo", "delete", "remove them"):           # no command for what stayed
+            self.assertNotIn(cmd, out.lower())
+        self.assertEqual(out.strip().splitlines()[-1],
+                         "Tardigrade is off this computer: nothing comes back by itself any more. What stayed is "
+                         "named above.")
 
     def test_G5_2_setup_dry_run_installs_nothing(self):
         rc, out = self.tg("setup", "--dry-run")

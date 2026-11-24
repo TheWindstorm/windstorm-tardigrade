@@ -415,6 +415,38 @@ def marker():
     return os.path.join(STATE, f"revived-{boot_id()}")
 
 
+# G3.28 (T79): the tool overwrites or removes only what it wrote. A file is known as ours by a mark it carries,
+# or, for Python's cache, by the name Python gives the cache of our script. Anything else in our folders is the
+# person's: it is never written over or removed.
+MARKS = {
+    "copy": '"""Windstorm Tardigrade: bring Claude Code sessions back',     # every version's second line
+    "unit": "Description=Windstorm Tardigrade:",
+    "plist": "<string>ai.thewindstorm.tardigrade-",
+    "start": "# Windstorm Tardigrade start file.",
+    "marker": "",          # a boot marker: known by its name alone (revived-<boot id>), see is_ours
+}
+OUR_CACHE = re.compile(r"tardigrade\.[A-Za-z0-9_.-]+\.pyc")
+
+
+def is_ours(path, kind):
+    """True only when the file at path is one Tardigrade wrote: a plain file (never a link or a folder) that
+    carries our mark. Unreadable is not ours."""
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return False
+        if kind == "cache":
+            return bool(OUR_CACHE.fullmatch(os.path.basename(path)))
+        if kind == "marker":
+            return bool(re.fullmatch(r"revived-[A-Za-z0-9-]{1,64}", os.path.basename(path)))
+        with open(path, "rb") as f:
+            head = f.read(4096).decode("utf-8", "replace")
+    except OSError:
+        return False
+    if kind == "start":
+        return head.startswith(MARKS["start"])
+    return MARKS[kind] in head
+
+
 MARKERS_KEPT = 5            # G2.42, T38: only the newest few boot markers; an old boot's is never read again
 
 
@@ -422,7 +454,7 @@ def write_marker(text):
     """this boot's marker, this user's only (0600); the markers of all but the newest few boots are removed"""
     write_private(marker(), text)
     try:
-        old = sorted((p for p in glob.glob(os.path.join(STATE, "revived-*")) if p != marker()),
+        old = sorted((p for p in glob.glob(os.path.join(STATE, "revived-*")) if p != marker() and is_ours(p, "marker")),
                      key=lambda p: os.path.getmtime(p), reverse=True)
     except OSError:
         return
@@ -2134,6 +2166,11 @@ def revive():
     try:
         os.mkdir(lock)
     except FileExistsError:
+        theirs = lock_not_ours(lock)
+        if theirs:     # G3.28: a folder by this name that holds anything but our owner file is not a lock of ours
+            log(f"revive: {lock} is there and holds what Tardigrade did not write ({theirs}); it is yours, so it "
+                "is not taken or removed, and no session is started. Move it out of this folder, then revive again.")
+            return 1
         # A revive that was cut off by a reboot or a power cut leaves its lock behind. The lock says which
         # boot and which process took it: a lock from another boot, or from a process that is gone, is stale.
         try:
@@ -2148,14 +2185,53 @@ def revive():
             log("revive: another revive is running (lock); nothing done")
             return 0
         log("revive: a lock was left by a revive that did not finish (a reboot or a power cut during it); taking over")
-        shutil.rmtree(lock, ignore_errors=True)
+        free_lock(lock)
         os.mkdir(lock)
     with open(owner, "w") as f:
         f.write(f"{boot_id()} {os.getpid()}\n")
     try:
         return _revive(boot)
     finally:
-        shutil.rmtree(lock, ignore_errors=True)
+        free_lock(lock)
+
+
+def lock_not_ours(lock):
+    """'' when the lock folder is ours (a real folder holding nothing, or only our owner file); else what in it
+    is not ours, named"""
+    if os.path.islink(lock) or not os.path.isdir(lock):
+        return "it is not a folder"
+    try:
+        other = sorted(set(os.listdir(lock)) - {"owner"})
+    except OSError:
+        return "it cannot be read"
+    if other:
+        return ", ".join(other[:5]) + (f" and {len(other) - 5} more" if len(other) > 5 else "")
+    o = os.path.join(lock, "owner")
+    if not os.path.lexists(o):
+        return ""
+    try:
+        if os.path.islink(o) or not os.path.isfile(o) or os.path.getsize(o) > 200:
+            return "owner is not our owner file"
+        with open(o) as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return "owner cannot be read"
+    # ours says "<boot id> <pid>"; an empty one is ours too (a revive cut off between making it and writing it)
+    return "" if re.fullmatch(r"(\S+ \d+\n?)?", text) else "owner is not our owner file"
+
+
+def free_lock(lock):
+    """remove our owner file, then the folder only when it is empty; never anything else in it"""
+    if lock_not_ours(lock):
+        return
+    try:
+        os.remove(os.path.join(lock, "owner"))
+    except OSError:
+        pass
+    try:
+        os.rmdir(lock)
+    except OSError:
+        pass
 
 
 def _revive(boot):
@@ -2274,8 +2350,9 @@ def _revive(boot):
     try:        # start files of sessions that are no longer on the record
         on_record = {r["session_id"] + ".sh" for r in read_table()["lanes"]}
         for f in os.listdir(launch_dir()):
-            if f not in on_record:
-                os.remove(os.path.join(launch_dir(), f))
+            p = os.path.join(launch_dir(), f)
+            if f not in on_record and is_ours(p, "start"):      # G3.28: only start files we wrote
+                os.remove(p)
     except OSError:
         pass
     created, came, note_for = set(), [], {}
@@ -3240,6 +3317,14 @@ def setup():
     if bad:
         print(f"wake_text is refused: its words \"{bad}\" read as Claude Code's usage or limit notice, and Tardigrade "
               "would take its own note for one. The default note is used until you change wake_text in config.json.")
+    theirs = [p for p, kind in our_places(script) if os.path.lexists(p) and not is_ours(p, kind)
+              and os.path.realpath(p) != os.path.realpath(os.path.abspath(__file__))]
+    if theirs:      # G3.28: setup is where a person's file stops, before any write
+        print("NOT set up: Tardigrade did not write these, so they are yours, and setup does not write over them:")
+        for p in theirs:
+            print(f"  {p}")
+        print("Nothing was written. Move them out of the way, then run setup again.")
+        return 1
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")
         return 0
@@ -3350,38 +3435,89 @@ def who_logs_in():
     return out
 
 
+def our_places(script):
+    """(path, kind) of every file setup writes outside the state and settings folders"""
+    if MAC:
+        la = os.path.join(HOME, "Library", "LaunchAgents")
+        units_at = [(os.path.join(la, label + ".plist"), "plist") for label in
+                    ("ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record")]
+    else:
+        ud = os.path.join(HOME, ".config", "systemd", "user")
+        units_at = [(os.path.join(ud, name), "unit") for name in units("", "")]
+    return [(script, "copy")] + units_at
+
+
+def remove_ours(path, kind, kept, failed):
+    """remove path when it is ours; a person's file there is kept and named (G3.28)"""
+    if not os.path.lexists(path):
+        return
+    if not is_ours(path, kind):
+        kept.append(path)
+        return
+    try:
+        os.remove(path)
+    except OSError as e:
+        failed.append(f"{path}: {e.strerror}")
+
+
 def uninstall():
     if DRY:
         print("would remove the boot service, the record timer and the installed copy; the record and the log stay")
         return 0
+    # A person's file in one of our folders never stops the leave (family rule 8): everything of ours goes, what
+    # is theirs stays and is named, with why each folder stayed, and the exit code is success.
+    kept, failed = [], []
+    script = os.path.join(INSTALL_DIR, "tardigrade.py")
+    places = our_places(script)
     if MAC:
         for label in ("ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record"):
             run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"])
-            try:
-                os.remove(os.path.join(HOME, "Library", "LaunchAgents", label + ".plist"))
-            except OSError:
-                pass
+        for p, kind in places[1:]:
+            remove_ours(p, kind, kept, failed)
     else:
         env = user_env()
         run(["systemctl", "--user", "disable", "--now", "windstorm-tardigrade-record.timer"], env=env)
         run(["systemctl", "--user", "disable", "windstorm-tardigrade-revive.service"], env=env)
-        for name in units("", ""):
-            try:
-                os.remove(os.path.join(HOME, ".config", "systemd", "user", name))
-            except OSError:
-                pass
+        for p, kind in places[1:]:
+            remove_ours(p, kind, kept, failed)
         run(["systemctl", "--user", "daemon-reload"], env=env)
+    remove_ours(script, "copy", kept, failed)
+    cache = os.path.join(INSTALL_DIR, "__pycache__")
     try:
-        os.remove(os.path.join(INSTALL_DIR, "tardigrade.py"))
+        names = [] if os.path.islink(cache) or not os.path.isdir(cache) else sorted(os.listdir(cache))
     except OSError:
-        pass
-    shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)
-    try:
-        os.rmdir(INSTALL_DIR)                  # only if nothing else is in it
-    except OSError:
-        pass
+        names = []
+    for f in names:            # Python's cache of our script only; anything else in there is the person's
+        remove_ours(os.path.join(cache, f), "cache", kept, failed)
+    stayed = []                # (folder, why) for each of our folders that is still there
+    for d in (cache, INSTALL_DIR):
+        if os.path.islink(d) or not os.path.isdir(d):
+            continue
+        try:
+            os.rmdir(d)        # only when nothing is left in it
+        except OSError:
+            try:
+                inside = sorted(os.listdir(d))
+            except OSError:
+                inside = []
+            stayed.append((d, "it holds " + (", ".join(inside[:5]) + (f" and {len(inside) - 5} more" if len(inside) > 5 else "")
+                                             if inside else "something that could not be read")))
     save_cfg_key("auto_revive", False)
-    print("Removed. Nothing comes back by itself any more. Your record and log are kept; running sessions were not touched.")
+    print("Tardigrade's timer and boot service are off, and its units and installed copy are removed.")
+    if kept:
+        print("Kept, because Tardigrade did not write them (they are yours, and they stay as they are):")
+        for p in kept:
+            print(f"  {p}")
+    for d, why in stayed:
+        print(f"Kept the folder {d}: {why}.")
+    print(f"Kept: your record and log in {STATE}, and your settings in {CFG_DIR}; running sessions were not touched.")
+    if failed:
+        print("These are Tardigrade's, but they could not be removed:")
+        for x in failed:
+            print(f"  {x}")
+        print("Tardigrade's timer and boot service are off, but not all of its files are gone: they are named above.")
+        return 1
+    print("Tardigrade is off this computer: nothing comes back by itself any more. What stayed is named above.")
     return 0
 
 

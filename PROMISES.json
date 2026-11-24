@@ -1082,7 +1082,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.10",
-   "test": "",
+   "test": "test_G3_28_setup_revive_and_uninstall_touch_only_what_tardigrade_wrote",
    "proven": "",
    "issue": 83,
    "moved_why": "",

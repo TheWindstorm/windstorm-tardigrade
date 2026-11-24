@@ -93,6 +93,16 @@ in. Run `trust on` only when the person asks for it in their own words. Before y
 one sentence, as above. Never switch it on because it would be convenient. `trust off` undoes it, and `trust` alone
 says which it is.
 
+## Switch it off
+
+Run `uninstall` and show what it prints, word for word. It turns off the timer and the boot service and removes
+the units and the installed copy. A file Tardigrade did not write that sits in one of its folders is the person's: it
+is kept and named, with why its folder stayed. That is not a failure; the exit code is success and the last line
+says Tardigrade is off this computer.
+
+Never delete, and never offer to delete, anything the uninstall kept (the person's files, the record, the log, the
+settings, a folder that stayed) unless the person asks for it in their own words in this conversation.
+
 ## What it never does
 
 - It never starts a second copy of a running session.
