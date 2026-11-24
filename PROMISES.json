@@ -1339,6 +1339,20 @@
    "issue": 102,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T96",
+   "seen": "2026-11-24 12:26Z, on a stock Ubuntu 24.04.5 VM and on a clean test account on a Mac (macOS 27.2.1), on an upgrade from 0.1.8.1 to 0.1.10.1's candidate (script sha256 46adbae596a43709) with one session up and a settings file laid out by hand (indent 1, keys unsorted, no final newline): setup changed no value, yet config.json came out with other bytes (keys sorted, a final newline); 0.1.8.1's own setup does the same to the same file, because every setup calls save_cfg_key(\"auto_revive\", True), which writes the whole file back with json.dumps(indent=1, sort_keys=True). A file our setup wrote before keeps its bytes.",
+   "promise": "setup writes the person's config.json only when a value changes; a test holds a hand-laid file byte for byte through a setup that changes nothing.",
+   "codon": "G5.23",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 103,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
