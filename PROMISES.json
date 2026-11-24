@@ -1101,6 +1101,20 @@
    "issue": 84,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T77",
+   "seen": "2026-11-23, on a stock VM with Claude Code 2.1.331 (another skill's round): `claude plugin marketplace remove <catalog>` also uninstalled the other plugin from that catalog and, in Claude Code's own words, deletes their saved options, secrets and data where it can. Tardigrade's code and texts never gave it, but a way back written the same evening for one machine's keeper did, as the second step after the plugin uninstall; it was struck the same night.",
+   "promise": "the code and every text shown to a person (README, SKILL.md, CHANGELOG, every line the tool prints) never run `claude plugin marketplace remove` or give it as a step; the way back from the plugin is `claude plugin uninstall windstorm-tardigrade@windstorm-tardigrade` alone. A test reads them all and fails on it.",
+   "codon": "G5.16",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "test_G5_16_no_shown_text_removes_the_plugin_catalog",
+   "proven": "",
+   "issue": 85,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

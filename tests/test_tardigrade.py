@@ -3045,6 +3045,16 @@ class Strand(unittest.TestCase):
                                     "git clone --depth 1 --branch v0.1.8 https://example/x\n"),
                          ["(no --branch: the default branch)", "main", "v0.1.8"])
 
+    def test_G5_16_no_shown_text_removes_the_plugin_catalog(self):
+        """T77: Claude Code's `plugin marketplace remove` also uninstalls every plugin from that catalog and deletes
+        their saved options and data; the code and every text shown to a person never run it or give it as a step"""
+        import glob, re
+        places = [os.path.join(ROOT, "scripts", "tardigrade.py"), os.path.join(ROOT, "README.md"),
+                  os.path.join(ROOT, "CHANGELOG.md")] + glob.glob(os.path.join(ROOT, "skills", "*", "SKILL.md"))
+        said = {os.path.relpath(f, ROOT): n for f in places
+                for n, line in enumerate(fread(f).splitlines(), 1) if re.search(r"marketplace\s+(remove|rm)\b", line)}
+        self.assertEqual(said, {}, "a shown text or the code removes the catalog")
+
     def test_no_codon_is_used_twice_in_the_plan(self):
         import re, collections
         plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
