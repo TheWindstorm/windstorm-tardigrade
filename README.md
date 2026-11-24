@@ -145,6 +145,14 @@ session back anyway: `revive --only <its id>`. One known edge: a session being m
 moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down; `revive --only
 <its name>` brings it back.
 
+Known edge until 0.1.11 (T103, T104): a session whose start fails after a restart is tried again for 25 minutes
+(`retry_min`) and then given up. If other sessions are running, the next record, at most 5 minutes later, takes it
+off the list that `revive` reads: the census shows it under DOWN as "ended (its pane holds the shell it left)",
+`tardigrade revive` no longer starts it, and `revive --only <its name>` answers that no session on the record has
+that name. To bring it back today: cure what stopped its start, then start it yourself in its folder with Claude
+Code's own `claude --resume` and choose it. Once it runs, the next record puts it back on the list (seen on a stock
+machine with 0.1.10.1).
+
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
 "needs you" and nothing is typed into it.
