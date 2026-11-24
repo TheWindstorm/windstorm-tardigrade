@@ -2613,6 +2613,9 @@ class Setup(Base):
         me, gid = __import__("pwd").getpwuid(os.getuid()).pw_name, os.stat(d).st_gid
         tg.group_accounts = lambda g: {me}                                   # a group of one
         self.assertEqual(tg.who_can_write(d), "")
+        tg.group_accounts = lambda g: {me, "second-name"}                     # family rule 28: an account is its
+        tg.account_ids = lambda n: (os.getuid(), {gid})                        # number; a second name for the person's
+        self.assertEqual(tg.who_can_write(d), "")                             # own number is the person
         tg.group_accounts = lambda g: {me, "friend"}                          # a second member
         tg.account_ids = lambda n: (os.getuid() + 54321, {gid})
         self.assertEqual(tg.who_can_write(d), "the account friend (in the folder's group)")
