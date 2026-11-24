@@ -1191,11 +1191,16 @@ class Revive(Base):
         os.makedirs(rt)
         with open(os.path.join(rt, "bus"), "w") as f:
             f.write("")
-        os.environ.update(TARDIGRADE_TESTING="1", TARDIGRADE_FAKE_X11_DIR=x11)
-        self.addCleanup(lambda: [os.environ.pop(k, None) for k in ("TARDIGRADE_TESTING", "TARDIGRADE_FAKE_X11_DIR")])
+        # the test setting counts only with the suite's marker in HOME (G5.15), so the tool is loaded with this
+        # test's home, where setUp wrote it; with the runner's own home it read the machine's real X11 folder
+        from unittest import mock
+        patch = mock.patch.dict(os.environ, HOME=self.home, TARDIGRADE_TESTING="1", TARDIGRADE_FAKE_X11_DIR=x11)
+        patch.start()
+        self.addCleanup(patch.stop)               # live_desktop reads the X11 folder's setting at each call
         spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
         tg = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(tg)
+        self.assertTrue(tg.TESTING)
         gone = [("DISPLAY", ":11.0"), ("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-gone,guid=1")]
         self.assertEqual(tg.live_desktop(gone), [("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", f"unix:path={rt}/bus")])
         there = [("DISPLAY", ":10.0"), ("DBUS_SESSION_BUS_ADDRESS", f"unix:path={rt}/bus"), ("LANG", "C")]
