@@ -2773,6 +2773,37 @@ class Revive(Base):
             [os.path.join(".config", "windstorm-tardigrade", "config.json")]
             + [os.path.relpath(self.state(os.path.join("launch", x + ".sh")), self.home) for x in (a, b)]),
             "only the person's settings file and the sessions' start files hold the value")
+        # (c) what the README and the skill text say is kept of a key, read here and each part held to the code
+        kept = ("It never records a token or a key it finds in a session's environment: for a login token it keeps "
+                "the variable's name and an 8-digit one-way fingerprint. What %s into `claude_command`, "
+                "`account_command` or `start_command` %s is copied as written into each session's start file (in "
+                "Tardigrade's state folder, readable by %s only); a key written there is in those files until the "
+                "first revive after the session has left the record, and uninstall keeps that folder.")
+        texts = [" ".join(fread(os.path.join(ROOT, *x)).split()) for x in (("README.md",),
+                                                                           ("skills", "tardigrade", "SKILL.md"))]
+        self.assertIn(kept % ("you write", "yourself", "you"), texts[0])
+        self.assertIn(kept % ("the person writes", "themselves", "them"), texts[1])
+        self.assertNotIn("never stores a token", " ".join(texts))
+        files = {x: self.state(os.path.join("launch", x + ".sh")) for x in (a, b)}
+        mode = lambda f: os.stat(f).st_mode & 0o7777
+        self.assertEqual([mode(f) for f in files.values()] + [mode(os.path.dirname(files[a])), mode(self.state(""))],
+                         [0o600, 0o600, 0o700, 0o700], "readable by the person only")
+        pid_a = next(x["pid"] for x in new if a in x["argv"])
+        self.kill(pid_a)                                    # alpha ends by itself (its pane keeps the shell it left)
+        self.until(lambda: not running(pid_a), "alpha's Claude to end")
+        self.tg("record")
+        self.assertEqual([r["session_id"] for r in self.table()["lanes"]], [b])
+        self.assertIn(secret, fread(files[a]), "off the record, and its start file is there until a revive")
+        rc, out = self.tg("revive")
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you\n", out)
+        self.assertEqual((os.path.lexists(files[a]), secret in fread(files[b])), (False, True),
+                         "the first revive after it left the record takes its start file away, and no other")
+        self.script("systemctl", '#!/bin/sh\ncase "$*" in *is-active*) echo inactive; exit 3;; '
+                    '*is-enabled*) echo not-found; exit 4;; esac\nexit 0\n')
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Tardigrade is off this computer", out)
+        self.assertIn(secret, fread(files[b]), "uninstall keeps the state folder, start files and all")
 
     def test_G2_55_only_finds_a_session_on_the_down_list_and_never_says_it_is_not_on_the_record(self):
         """T104. Seen on a stock machine with 0.1.10.1: the census listed a session under "DOWN: on the record", and
