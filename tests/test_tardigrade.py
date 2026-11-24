@@ -59,6 +59,108 @@ def running(pid):
         return False
 
 
+def start_time(pid):
+    """when the process started, as the kernel counts it (clock ticks since boot): with its pid, a process's identity.
+    None when it is gone."""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return int(f.read().rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def names_folder(pid, folder):
+    """the process's command line or its environment names this folder (so it is that test's, or that run's)"""
+    key = os.fsencode(folder)
+    for what in ("cmdline", "environ"):
+        try:
+            with open(f"/proc/{pid}/{what}", "rb") as f:
+                if key in f.read():
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+# G7.11 (T86): every signal the suite sends by a remembered pid. A scratch run with an audit hook saw 88 signals from
+# the cleanups of 12 tests, 38 of them to pids that could not be shown to be the run's own (gone, or alive and
+# another program's). A pid is only a number: between the moment it is written down and the moment it is signalled
+# the process can end and the number can be given to another program.
+NOT_SHOWN = []          # (test, pid, why): signals that were not sent; the test that asked fails
+_SIGNAL = {"on": True, "shown": None}
+
+
+def parent_of(pid):
+    """the id of the process's parent, None when it is gone"""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return int(f.read().rsplit(")", 1)[1].split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def shown_mine(pid, folder, started=None):
+    """How this process is shown to be the test's still, or "" when it is not: its command line or environment names
+    the test's folder; it started at the very time that was remembered with its pid; or it is this process's own
+    child, not yet read (the kernel keeps a child's number for its parent until the parent has read its exit)."""
+    if started is not None and started == start_time(pid):
+        return "its start time"
+    if parent_of(pid) == os.getpid():
+        return "this process's own child"
+    if folder and names_folder(pid, folder):
+        return "the test's folder"
+    return ""
+
+
+def signal_mine(pid, sig, folder, started=None, test=""):
+    """Send sig to pid only when it is shown to be this test's still (shown_mine). True: sent. False: the process is
+    gone or has ended and waits to be read (nothing to signal), or it was not shown to be ours: then nothing is sent,
+    it is written down, and the test that asked fails when it ends."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 1 or pid == os.getpid():
+        return False
+    was = start_time(pid)
+    if was is None or not running(pid):
+        return False                                    # gone: no signal to a number
+    if not shown_mine(pid, folder, started):
+        if start_time(pid) != was or not running(pid):
+            return False                                # it ended while it was being read
+        NOT_SHOWN.append((test, pid, f"{cmdline_of(pid)!r}: neither this test's folder in its command line or "
+                                     "environment, nor the start time remembered with it, nor a child of the suite"))
+        return False
+    _SIGNAL["shown"] = pid
+    try:
+        os.kill(pid, sig)
+    except OSError:
+        return False
+    finally:
+        _SIGNAL["shown"] = None
+    return True
+
+
+def _signal_hook(event, args):
+    """The net under signal_mine (the first part of the guard's hook, T87): every os.kill and os.killpg of this
+    process passes here. A signal to a pid that is not shown to be the running test's own is refused before it is
+    sent, and fails that test. Signal 0 sends nothing (it asks whether a process is there) and passes."""
+    if event[:7] != "os.kill" or not _SIGNAL["on"]:
+        return
+    pid, sig = args[0], args[1]
+    if event == "os.kill" and (sig == 0 or pid == os.getpid() or pid == _SIGNAL["shown"]
+                               or (pid > 1 and shown_mine(pid, GUARD["tmp"]))):
+        return
+    test = GUARD["test"] or "no test"
+    why = ("a whole process group" if event == "os.killpg" or pid <= 1 else
+           f"{cmdline_of(pid)!r}: not shown to be the test's own")
+    NOT_SHOWN.append((test, pid, why))
+    raise GuardRefused(f"signal: {test} asked to signal pid {pid} ({why}); not sent")
+
+
+sys.addaudithook(_signal_hook)
+
+
 def cmdline_of(pid):
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
@@ -252,6 +354,11 @@ class Base(unittest.TestCase):
     def guard_end(self):
         caught, GUARD["caught"] = GUARD["caught"], []
         GUARD.update(tmp=None, test=None)
+        # G7.11 (T86): a signal this test asked for by a pid it could not show as its own was not sent, and fails it
+        mine = [x for x in NOT_SHOWN if x[0] == self._testMethodName]
+        NOT_SHOWN[:] = [x for x in NOT_SHOWN if x[0] != self._testMethodName]
+        caught += [f"signal: {test} asked to signal pid {pid}, not shown to be its own ({why}); not sent"
+                   for test, pid, why in mine]
         if caught:
             raise GuardRefused("; ".join(caught))
 
@@ -261,7 +368,7 @@ class Base(unittest.TestCase):
             return
         LIVE.remove(self)
         steps = [lambda: [self.kill(r.get("pid")) for r in self.launch_rows_as_far_as_written()],
-                 lambda: [self.kill(p) for p in self.pids],
+                 lambda: [self.kill(*p) if isinstance(p, tuple) else self.kill(p) for p in self.pids],
                  self.end_loose]
         for step in steps:
             try:
@@ -295,11 +402,8 @@ class Base(unittest.TestCase):
             mine = self.processes_of_this_test()
             if not mine or time.time() >= end:
                 return mine
-            for pid in mine:
-                try:
-                    os.kill(pid, signal.SIGKILL if pid in told else signal.SIGTERM)
-                except OSError:
-                    pass
+            for pid in mine:        # each was just shown to name this test's folder; shown again at the signal
+                signal_mine(pid, signal.SIGKILL if pid in told else signal.SIGTERM, self.tmp, test=self._testMethodName)
             told.update(mine)
             wait = min(end, time.time() + 3)
             while time.time() < wait and any(running(p) for p in mine):
@@ -336,12 +440,16 @@ class Base(unittest.TestCase):
         self.loose = []
 
     # ----- helpers -----
+    def kill(self, pid, sig=signal.SIGTERM, started=None):
+        """end a process this test started, by its exact id, after showing it is still this test's (G7.11)"""
+        if not isinstance(sig, signal.Signals):                                 # (pid, started) from self.pids
+            sig, started = signal.SIGTERM, sig
+        return signal_mine(pid, sig, self.tmp, started=started, test=self._testMethodName)
+
     @staticmethod
-    def kill(pid):
-        try:
-            os.kill(int(pid), signal.SIGTERM)
-        except (OSError, TypeError, ValueError):
-            pass
+    def remembered(pid):
+        """a pid with its start time, for self.pids: a process that names the test's folder nowhere"""
+        return (pid, start_time(pid))
 
     def cfg(self, d):
         p = os.path.join(self.home, ".config", "windstorm-tardigrade")
@@ -929,7 +1037,7 @@ class Record(Base):
         other = os.path.join(os.path.dirname(self.sock), "gone")
         self.tmux(other, "new-session", "-d", "-s", "x", "sleep 600")
         pid = int(self.tmux(other, "display", "-p", "#{pid}")[1].strip())
-        os.kill(pid, signal.SIGKILL)
+        self.assertTrue(self.kill(pid, signal.SIGKILL), "the tmux server this test started names its folder")
         self.until(lambda: not os.path.exists(f"/proc/{pid}"), "the killed tmux server to go")
         self.assertTrue(os.path.exists(other), "the socket of a killed server stays behind")
         rc, out = self.tg("record")
@@ -3840,7 +3948,7 @@ sys.exit(rc)
         self.assertEqual(rc, 0, out)
         # (a) a revive holds the lock: uninstall waits, says what holds it, and has removed nothing meanwhile
         holder = subprocess.Popen(["sleep", "60"])
-        self.pids.append(holder.pid)
+        self.pids.append(self.remembered(holder.pid))
         os.makedirs(self.state("lock"))
         with open(self.state("lock/owner"), "w") as f:
             f.write(f"boot-a {holder.pid}\n")
@@ -4868,12 +4976,105 @@ class Tests(unittest.TestCase):
                 left = find()
                 if not left:
                     break
-                for pid in left:
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except OSError:
-                        pass
+                for pid in left:                                     # find() lists what names tmp, shown again here
+                    signal_mine(pid, signal.SIGKILL, tmp, test=self._testMethodName)
                 time.sleep(0.1)
+
+
+class Signals(Base):
+    def orphan(self, argv, env):
+        """a process that is not this one's child (its starter has exited); ended at the end by its start time"""
+        code = ("import subprocess, sys\n"
+                "print(subprocess.Popen(sys.argv[1:], start_new_session=True, stdin=subprocess.DEVNULL,\n"
+                "                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)\n")
+        out = subprocess.run([sys.executable, "-c", code] + argv, env=env, cwd="/", capture_output=True, text=True,
+                             check=True)
+        pid = int(out.stdout)
+        started = start_time(pid)
+        self.assertIsNotNone(started)
+        self.assertNotEqual(parent_of(pid), os.getpid())
+        self.addCleanup(signal_mine, pid, signal.SIGKILL, "", started)
+        return pid, started
+
+    def test_G7_11_the_suite_signals_a_remembered_pid_only_after_showing_it_is_still_the_tests(self):
+        """T86: a pid is only a number. A signal goes out when the process is shown to be the test's still, by its
+        folder, its remembered start time, or as the suite's own child; any other is not sent and fails the test"""
+        me = self._testMethodName
+        clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        nap = [shutil.which("sleep"), "300"]
+        gone = lambda pid: self.until(lambda: not running(pid), f"pid {pid} to go")
+        asked = lambda: [x for x in NOT_SHOWN if x[0] == me]
+
+        def forget():
+            n = len(asked())
+            NOT_SHOWN[:] = [x for x in NOT_SHOWN if x[0] != me]         # made on purpose: they do not fail this test
+            return n
+        # (1) a stranger: another program's process, as a reused number would be. Not signalled, written down
+        stranger, born = self.orphan(nap, clean)
+        self.assertEqual(shown_mine(stranger, self.tmp), "")
+        self.assertFalse(self.kill(stranger))
+        self.assertFalse(signal_mine(stranger, signal.SIGKILL, self.tmp, started=born + 1, test=me), "another start time")
+        with self.assertRaisesRegex(GuardRefused, f"asked to signal pid {stranger} .*not shown to be the test's own"):
+            os.kill(stranger, signal.SIGTERM)                          # past signal_mine: the hook refuses it
+        with self.assertRaisesRegex(GuardRefused, "a whole process group"):
+            os.killpg(os.getpgid(stranger), signal.SIGTERM)
+        with self.assertRaisesRegex(GuardRefused, "a whole process group"):
+            os.kill(-os.getpgid(stranger), signal.SIGTERM)
+        os.kill(stranger, 0)                                           # asks only whether it is there: passes
+        time.sleep(0.3)
+        self.assertTrue(running(stranger), "a refused signal was sent")
+        self.assertEqual((len(asked()), {x[1] for x in asked()} - {stranger, os.getpgid(stranger), -os.getpgid(stranger)}),
+                         (5, set()))
+        # the test that asked fails when it ends, whatever it asserts
+        keep = dict(GUARD)
+        with self.assertRaisesRegex(GuardRefused, f"asked to signal pid {stranger}, not shown to be its own"):
+            self.guard_end()
+        GUARD.update(keep, caught=[])
+        self.assertEqual(forget(), 0, "guard_end takes what it reports")
+        # (2) shown by the start time remembered with it: sent
+        self.assertTrue(signal_mine(stranger, signal.SIGTERM, self.tmp, started=born, test=me))
+        gone(stranger)
+        self.assertFalse(self.kill(stranger), "gone: no signal to a number")
+        self.assertEqual(forget(), 0, "a process that is gone is nobody's: nothing to write down")
+        # (3) shown by the test's folder: in its command line, or in its environment only
+        a, _ = self.orphan([sys.executable, "-c", "import time; time.sleep(300)", os.path.join(self.tmp, "x")], clean)
+        b, _ = self.orphan(nap, dict(clean, HOME=self.home))
+        for pid in (a, b):
+            self.assertEqual(shown_mine(pid, self.tmp), "the test's folder")
+            self.assertTrue(self.kill(pid))
+            gone(pid)
+        # (4) the suite's own child: shown by the kernel's parent link; once it has ended there is nothing to signal
+        child = subprocess.Popen(nap, env=clean, cwd="/")
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        self.assertEqual(shown_mine(child.pid, self.tmp), "this process's own child")
+        os.kill(child.pid, signal.SIGTERM)                             # what Popen.kill and send_signal do
+        self.until(lambda: not running(child.pid), "the child to end")
+        self.assertIsNotNone(start_time(child.pid), "ended and not yet read: its number is still held")
+        self.assertFalse(self.kill(child.pid))
+        child.wait(timeout=5)
+        self.assertEqual(forget(), 0)
+        # (5) with the hook taken out the same signal is delivered: the hook is what refused it
+        loose, born = self.orphan(nap, clean)
+        _SIGNAL["on"] = False
+        try:
+            os.kill(loose, signal.SIGTERM)
+        finally:
+            _SIGNAL["on"] = True
+        gone(loose)
+        self.assertEqual(forget(), 0)
+        # (6) nothing in this file signals a pid any other way
+        import ast
+        tree, out = ast.parse(fread(__file__)), []
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.Lambda)):
+                continue
+            for c in ast.walk(fn):
+                if (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in ("kill", "killpg")
+                        and isinstance(c.func.value, ast.Name) and c.func.value.id == "os"):
+                    probe = len(c.args) == 2 and isinstance(c.args[1], ast.Constant) and c.args[1].value == 0
+                    if not probe and getattr(fn, "name", "") not in ("signal_mine", "_on_signal", me):
+                        out.append(f"line {c.lineno} in {getattr(fn, 'name', 'a lambda')}")
+        self.assertEqual(sorted(set(out)), [], "a signal sent past signal_mine")
 
 
 class Invariants(unittest.TestCase):
