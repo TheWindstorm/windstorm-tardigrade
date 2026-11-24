@@ -71,7 +71,7 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 | `tardigrade revive --only "Name"` | Brings back just that one. |
 | `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
-| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log are yours and stay. A file in one of Tardigrade's folders that Tardigrade did not write is yours: it stays as it is and is named, with why its folder stayed. The last line says Tardigrade is off this computer. |
+| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. The last line says Tardigrade is off this computer. |
 
 In Claude Code you can say these in plain words. In a terminal, each is
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py <command>`.
