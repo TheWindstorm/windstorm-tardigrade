@@ -5391,22 +5391,29 @@ class Strand(unittest.TestCase):
             self.assertNotIn(soft, step, "a way for the step to pass without the validator's pass")
         self.assertNotIn("continue-on-error", wf)
 
-    def test_G7_5_the_workflow_names_its_runner_images_and_runs_once_per_pull_request_or_release_push(self):
+    def test_G7_5_the_workflow_names_its_runner_images_and_runs_every_pushed_head_once(self):
         """T61: `ubuntu-latest` moved under a sister skill and took a Python with it; a push to a branch with a pull
-        request open ran everything twice"""
+        request open ran everything twice; and when pushes to such a branch ran through the pull request only, a
+        pull request that conflicted with main got no run at all, and its head sat with none"""
         wf = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
         self.assertEqual(workflow_problems(wf), [])
         # the check itself: each of these must be refused
         bad = {"latest": wf.replace("runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", 1),
                "an image from an expression": wf.replace("runs-on: ubuntu-24.04", "runs-on: ${{ matrix.os }}", 1),
                "a job with no image": wf.replace("    runs-on: ubuntu-24.04\n", "", 1),
-               "every push": wf.replace('    branches: [main, "release-*"]\n', ""),
-               "another branch": wf.replace('[main, "release-*"]', '[main, "release-*", "build-*"]'),
+               "tags too": wf.replace('    branches: ["**"]\n', ""),
+               "main and release branches only": wf.replace('["**"]', '[main, "release-*"]'),
+               "a job that an own pull request runs again": wf.replace("    if: " + WORKFLOW_IF + "\n", "", 1),
+               "a job for own pull requests only": wf.replace("full_name != github.repository", "full_name == "
+                                                              "github.repository", 1),
                "the old line": re.sub(r"(?ms)^on:\n.*?^permissions:", "on: [push, pull_request]\npermissions:", wf),
                "no pull requests": wf.replace("  pull_request:\n", ""),
                "no group": re.sub(r"(?m)^concurrency:\n(  .*\n)+", "", wf),
                "one group for everything": re.sub(r"(?m)^  group: .*$", "  group: tests", wf),
                "a group by branch": re.sub(r"(?m)^  group: .*$", "  group: tests-${{ github.ref }}", wf),
+               "a group by run": re.sub(r"(?m)^  group: .*$", "  group: tests-${{ github.run_id }}", wf),
+               "ends runs in pull requests only": re.sub(r"(?m)^  cancel-in-progress: .*$", "  cancel-in-progress: "
+                                                         "${{ github.event_name == 'pull_request' }}", wf),
                "ends runs everywhere": re.sub(r"(?m)^  cancel-in-progress: .*$", "  cancel-in-progress: true", wf),
                "ends nothing": re.sub(r"(?m)^  cancel-in-progress: .*$", "  cancel-in-progress: false", wf),
                "a Mac job": wf + "  mac:\n    runs-on: macos-14\n    steps:\n      - run: true\n"}
@@ -5553,6 +5560,13 @@ def catalog_entry_problems(entry, commit_of):
     return out
 
 
+WORKFLOW_IF = "github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository"
+_RELEASE = "(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-'))"
+WORKFLOW_GROUP = ("tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || "
+                  + _RELEASE + " && github.run_id || github.ref }}")
+WORKFLOW_CANCEL = "${{ github.event_name == 'pull_request' || !" + _RELEASE + " }}"
+
+
 def workflow_problems(wf):
     """what in a workflow breaks G7.5 (T61); read as text: the suite has no YAML reader and needs none"""
     import re
@@ -5573,18 +5587,22 @@ def workflow_problems(wf):
         out.append("the word latest is in the workflow")
     m = re.search(r"(?ms)^on:\n(.*?)^(?=\S)", wf)
     on = re.sub(r"(?m)\s*#.*$", "", m.group(1)) if m else ""
-    if [x.strip() for x in on.splitlines() if x.strip()] != ["push:", 'branches: [main, "release-*"]', "pull_request:"]:
-        out.append(f"it does not run on pull requests and on pushes to main and release-* only: {on!r}")
+    if [x.strip() for x in on.splitlines() if x.strip()] != ["push:", 'branches: ["**"]', "pull_request:"]:
+        out.append(f"it does not run on a push to every branch (and to no tag) and on pull requests: {on!r}")
+    for j in jobs:      # a pull request from an own branch starts no jobs: its head was run by its push
+        if re.findall(r"(?m)^    if:\s*(.*?)\s*$", j) != [WORKFLOW_IF]:
+            out.append(f"job {j.split(':', 1)[0].strip()}: it does not run on a push, and on a pull request from "
+                       "another repository only")
     m = re.search(r"(?m)^concurrency:\n  group: (.*)\n  cancel-in-progress: (.*)$", wf)
     if not m:
         out.append("no concurrency group at the top of the workflow")
     else:
         group, cancel = m.group(1).strip(), m.group(2).strip()
-        if group != ("tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)"
-                     " || github.run_id }}"):
-            out.append(f"the group is not one per pull request, and one per run otherwise: {group}")
-        if cancel != "${{ github.event_name == 'pull_request' }}":
-            out.append(f"an older run is ended somewhere other than in a pull request, or nowhere: {cancel}")
+        if group != WORKFLOW_GROUP:
+            out.append("the group is not one per pull request, one per run on main and release-*, and one per branch "
+                       f"otherwise: {group}")
+        if cancel != WORKFLOW_CANCEL:
+            out.append(f"an older run is ended on main or a release branch, or nowhere: {cancel}")
     if len(re.findall(r"(?m)^concurrency:", wf)) + len(re.findall(r"(?m)^    concurrency:", wf)) != 1:
         out.append("more than one concurrency group")
     return out

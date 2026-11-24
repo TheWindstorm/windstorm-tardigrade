@@ -433,8 +433,9 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 156 tests on Linux with stand-ins for `claude` and `herdr`, run on every pull request and on every push to main or a release branch,
-  with Python 3.9 (the floor) and 3.13, on a runner image the workflow names.
+- 156 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+  on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
+  names.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 

@@ -1,19 +1,22 @@
 name: tests
-# G7.5 (T61): a pull request, and a push to main or to a release branch. A push to any other branch is run through
-# its pull request, once, not twice.
+# G7.5 (T61): every push to a branch of this repository gets one run, and so does a pull request from another
+# repository. A pull request from one of this repository's own branches starts no jobs: its head was run by its
+# push. (A head must never wait for its pull request's run: no such run starts while the pull request conflicts
+# with its base.) A tag starts no run: its commit was run on its branch.
 on:
   push:
-    branches: [main, "release-*"]
+    branches: ["**"]
   pull_request:
 permissions:
   contents: read
-# A newer push to a pull request ends that pull request's older run. A push to main or a release branch has a group
-# of its own (the run's id), so it is never ended by another and never waits for one.
+# A newer push to a branch, or to a pull request, ends that one's older run. A push to main or a release branch has
+# a group of its own (the run's id), so it is never ended by another and never waits for one.
 concurrency:
-  group: tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-')) && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release-')) }}
 jobs:
   test:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -31,6 +34,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: python tests/test_tardigrade.py -v
   skill-spec:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
