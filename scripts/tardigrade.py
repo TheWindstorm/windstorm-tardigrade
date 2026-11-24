@@ -3499,11 +3499,17 @@ def group_accounts(gid):
     return set(grp.getgrgid(gid).gr_mem) | {u.pw_name for u in pwd.getpwall() if u.pw_gid == gid}
 
 
+def c_gid(gid):
+    """a group number as the C call takes it: a Mac writes "nobody" (-2) as 4294967294, which os.getgrouplist
+    refuses with OverflowError; given as the negative number it answers (seen on macOS 13 and 27, Python 3.9)"""
+    return gid - 2 ** 32 if gid >= 2 ** 31 else gid
+
+
 def account_ids(name):
     """(uid, the set of its group ids) of the account name (raises when it cannot be read)"""
     import pwd
     u = pwd.getpwnam(name)
-    return u.pw_uid, set(os.getgrouplist(name, u.pw_gid))
+    return u.pw_uid, {g % 2 ** 32 for g in os.getgrouplist(name, c_gid(u.pw_gid))}
 
 
 def may(st, uid, gids, bit):
@@ -3536,22 +3542,27 @@ def who_can_write(d):
         cands.append(("the account that owns it", st.st_uid, set()))
     if st.st_mode & 0o002:
         cands.append(("every account on this computer", -1, set()))
+    unread = []
     if st.st_mode & 0o020:
         try:
             import pwd
             mine = pwd.getpwuid(me).pw_name
             names = sorted(group_accounts(st.st_gid) - {mine})
-            for n in names:
-                uid, gids = account_ids(n)
-                cands.append((f"the account {n} (in the folder's group)", uid, gids))
-        except (KeyError, OSError):
+        except (KeyError, OSError, OverflowError, ValueError):
             return None
+        for n in names:
+            try:
+                uid, gids = account_ids(n)
+            except (KeyError, OSError, OverflowError, ValueError):
+                unread.append(n)        # one account that cannot be read is said, and the walk goes on
+                continue
+            cands.append((f"the account {n} (in the folder's group)", uid, gids))
     for who, uid, gids in cands:
         if uid == me:
             continue
         if all(may(s, uid, gids, 1) for s in sts) and may(st, uid, gids, 2):
             return who
-    return ""
+    return None if unread else ""
 
 
 def open_folders():

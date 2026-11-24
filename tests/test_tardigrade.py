@@ -2605,6 +2605,7 @@ class Setup(Base):
         spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
         tg = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(tg)
+        real_account_ids = tg.account_ids
         os.chmod(self.tmp, 0o755)
         d = os.path.join(self.home, ".local")
         os.makedirs(d, exist_ok=True)
@@ -2626,6 +2627,31 @@ class Setup(Base):
             raise KeyError(g)
         tg.group_accounts = unreadable                                        # membership that cannot be read is said
         self.assertIsNone(tg.who_can_write(d))
+        # a Mac's "nobody" group is 4294967294, which os.getgrouplist refuses with OverflowError (seen on macOS 13 and
+        # 27, Python 3.9): passed as its negative form it answers; one account that still cannot be read is said
+        calls = []
+        def getgrouplist(name, gid):
+            calls.append(gid)
+            if gid > 2 ** 31 - 1:
+                raise OverflowError("Python int too large to convert to C int")
+            return [gid, gid % 2 ** 32 if gid < 0 else gid]
+        real_ggl, real_ids = os.getgrouplist, real_account_ids
+        try:
+            os.getgrouplist = getgrouplist
+            pwd_mod = __import__("pwd")
+            real_getpwnam = pwd_mod.getpwnam
+            pwd_mod.getpwnam = lambda n: type("P", (), {"pw_uid": os.getuid() + 777, "pw_gid": 4294967294})()
+            uid, gids = real_ids("nobody-group-user")
+            self.assertEqual(calls, [-2])
+            self.assertEqual(gids, {4294967294})
+            tg.group_accounts = lambda g: {me, "x"}
+            tg.account_ids = lambda n: (_ for _ in ()).throw(OverflowError("too large"))
+            self.assertIsNone(tg.who_can_write(d))                           # said, no traceback
+            tg.open_folders = lambda: [(d, tg.who_can_write(d))]
+            self.assertIn("could not be read", tg.open_folder_lines()[1])
+        finally:
+            os.getgrouplist = real_ggl
+            pwd_mod.getpwnam = real_getpwnam
         # a folder another account owns: named with its owner, and no command, since the person cannot change it
         tg.open_folders = lambda: [(d, "the account that owns it")]
         lines = tg.open_folder_lines()
