@@ -549,6 +549,9 @@ class Base(unittest.TestCase):
         with open(os.path.join(self.bin, "systemctl"), "w") as f:
             f.write('#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\nexit 1\n')
         os.chmod(os.path.join(self.bin, "systemctl"), 0o755)
+        # G5.27 (T107): uninstall asks the process list for a systemd user manager when systemctl gives no answer. A
+        # test gets this stand-in's "none" (pgrep's exit 1), never the manager of whoever runs the suite
+        self.manager(1)
         self.path = f"{self.bin}:{STUBS}:/usr/local/bin:/usr/bin:/bin"       # the loud stand-ins before the system's
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",
                     "USER": os.environ.get("USER", "u"), "LANG": "C.UTF-8", "TERM": "xterm-256color",
@@ -775,9 +778,29 @@ class Base(unittest.TestCase):
         os.chmod(p, 0o755)
         return p
 
+    def manager(self, rc, out=""):
+        """plant pgrep's answer to "does a systemd user manager of this account run?": exit 0 with a process number,
+        1 for none, as the real pgrep was seen to answer; every other question goes to the real pgrep"""
+        self.script("pgrep", "#!/bin/sh\n" + f'case "$*" in "-u {os.getuid()} -x systemd") '
+                    + (f'echo "{out}"; ' if out else "") + f'exit {rc};; esac\nexec /usr/bin/pgrep "$@"\n')
+
+    def systemd_off(self):
+        """plant a systemctl for which no unit of ours is there or runs: uninstall then ends as off"""
+        self.script("systemctl", '#!/bin/sh\ncase "$*" in *is-active*) echo inactive; exit 3;; '
+                    '*is-enabled*) echo not-found; exit 4;; '
+                    '*show*) echo LoadState=not-found; echo ActiveState=inactive; echo SubState=dead; '
+                    'echo KillMode=control-group; exit 0;; esac\nexit 0\n')
+
     def boot_answers(self, enabled, active, copy):
         """plant systemctl's answers (None: it answers nothing and exits 1) and the installed copy, or no copy"""
         sc = ['#!/bin/sh', 'echo "$@" >> "$HOME/systemctl.log"', 'case "$*" in']
+        if enabled is None and active is None:
+            sc.append('  *show*) exit 1;;')
+        else:       # the timer as planted; the two services not running
+            sc.append('  *show*record.timer*) echo LoadState=loaded; echo ActiveState=%s; echo SubState=%s; exit 0;;'
+                      % (("active", "waiting") if active == "active" else ("inactive", "dead")))
+            sc.append('  *show*) echo LoadState=loaded; echo ActiveState=inactive; echo SubState=dead; '
+                      'echo KillMode=process; exit 0;;')
         for verb, word in (("is-enabled", enabled), ("is-active", active)):
             if word is None:
                 sc.append(f'  *{verb}*) exit 1;;')
@@ -2148,8 +2171,7 @@ class Revive(Base):
         running tmux sessions carry it, and that it ends with each. Three answers: a count; no word of it where no
         session carries it; and where tmux could not be read, that is said, never taken for none."""
         # systemd answers for the units (not there, not running), so each uninstall here ends as "off"
-        self.script("systemctl", '#!/bin/sh\ncase "$*" in *is-active*) echo inactive; exit 3;; '
-                    '*is-enabled*) echo not-found; exit 4;; esac\nexit 0\n')
+        self.systemd_off()
         rc, out = self.tg("uninstall")                      # no tmux server at all: none carries it
         self.assertEqual(rc, 0, out)
         self.assertIn("Running sessions were not touched.\n", out)
@@ -2798,8 +2820,7 @@ class Revive(Base):
         self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you\n", out)
         self.assertEqual((os.path.lexists(files[a]), secret in fread(files[b])), (False, True),
                          "the first revive after it left the record takes its start file away, and no other")
-        self.script("systemctl", '#!/bin/sh\ncase "$*" in *is-active*) echo inactive; exit 3;; '
-                    '*is-enabled*) echo not-found; exit 4;; esac\nexit 0\n')
+        self.systemd_off()
         rc, out = self.tg("uninstall")
         self.assertEqual(rc, 0, out)
         self.assertIn("Tardigrade is off this computer", out)
@@ -4472,7 +4493,43 @@ try:
 except (OSError, ValueError):
     active = []
 ud = os.path.join(home, ".config", "systemd", "user")
+P = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "systemd-plant.json")
+try:
+    plant = json.load(open(P))      # what a test planted with plant(): see there
+except (OSError, ValueError):
+    plant = {}
+if plant.get("no_bus"):             # this shell cannot reach the user manager: every call fails with systemd's words
+    print(plant["no_bus"], file=sys.stderr)
+    sys.exit(1)
+states = plant.setdefault("states", {})
 verb, now, units, rc = (a or [""])[0], "--now" in a, [x for x in a[1:] if not x.startswith("-")], 0
+if verb == "show":      # one unit, then the fields asked for: answered as systemd answers, a line for each
+    u, units = a[1], []
+    there = os.path.isfile(os.path.join(ud, u))
+    on = u in active
+    n = plant.setdefault("reads", {}).get(u, 0) + 1
+    plant["reads"][u] = n
+    flip = plant.get("flip", {}).get(u)
+    if flip and n > flip[0]:
+        states[u] = flip[1:]
+    st = states.get(u) or (["active", "waiting" if u.endswith(".timer") else "exited"] if on else ["inactive", "dead"])
+    answer = {"LoadState": "loaded" if there else "not-found", "ActiveState": st[0], "SubState": st[1],
+              "KillMode": "process" if there and "revive" in u else "control-group"}
+    for k, v in answer.items():
+        if k in plant.get("fields", answer):
+            print(f"{k}={v}")
+elif verb == "reset-failed":
+    for u in units:
+        if states.get(u, [""])[0] == "failed":
+            del states[u]
+    units = []
+elif verb == "daemon-reload":
+    for u in plant.pop("wakes_on_reload", []):
+        if u not in active:
+            active.append(u)
+    if plant.get("no_bus_after_reload"):
+        plant["no_bus"] = plant.pop("no_bus_after_reload")
+    plant.setdefault("deaf", []).extend(plant.pop("deaf_after_reload", []))
 for u in units:
     link = os.path.join(ud, "timers.target.wants" if u.endswith(".timer") else "default.target.wants", u)
     there = os.path.isfile(os.path.join(ud, u))
@@ -4487,14 +4544,20 @@ for u in units:
         if now and u not in active:
             active.append(u)
     elif verb in ("disable", "stop"):
+        if verb == "disable" and not there:     # seen on systemd 255: exit 1, and with --now nothing is stopped
+            print(f"Failed to disable unit: Unit file {u} does not exist.", file=sys.stderr)
+            rc = 1
+            continue
         if verb == "disable" and os.path.islink(link):
             os.remove(link)
             try:
                 os.rmdir(os.path.dirname(link))
             except OSError:
                 pass
-        if (now or verb == "stop") and u in active:
-            active.remove(u)
+        if (now or verb == "stop") and u not in plant.get("deaf", []):
+            states.pop(u, None)
+            if u in active:
+                active.remove(u)
     elif verb == "is-enabled":
         word = "enabled" if there and os.path.islink(link) else "disabled" if there else "not-found"
         print(word)
@@ -4504,9 +4567,123 @@ for u in units:
         rc = 0 if u in active else 3
 with open(S, "w") as f:
     json.dump(active, f)
+if os.path.exists(P):
+    with open(P, "w") as f:
+        json.dump(plant, f)
 sys.exit(rc)
 '''.lstrip())
         self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+
+    def plant(self, **answers):
+        """what the stand-in systemd of stand_in_services() answers from now on (nothing given: as it is by itself):
+        states={unit: [ActiveState, SubState]} for a unit until it is stopped; flip={unit: [n, ActiveState, SubState]}:
+        that state after n reads of the unit; deaf=[units a stop does nothing to]; fields=[the only fields `show`
+        prints]; no_bus="systemd's words": every call fails with them, exit 1; no_bus_after_reload: the same from the
+        first daemon-reload on; wakes_on_reload=[units that are running again after the next daemon-reload];
+        deaf_after_reload=[units a stop does nothing to from the next daemon-reload on]"""
+        f = os.path.join(self.bin, "systemd-plant.json")
+        if answers:
+            jdump(answers, f)
+        elif os.path.exists(f):
+            os.remove(f)
+
+    JOBS = ("ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record")
+
+    def launchd(self, domain=0, linger=0.0, refuse=(), never=(), unread=None, loaded=None):
+        """a stand-in launchctl that keeps state and answers as the real one was seen to (2026-11-24, macOS 27 and 13):
+        - `print gui/<uid>`: `domain`. 0 for an account logged in at the screen; 125 with "Could not print domain:
+          125: Domain does not support specified action" for one that is not, and then a job's print and a bootout
+          answer 125 too; any other number is a domain that is there.
+        - `print gui/<uid>/<job>`: 0 for a job launchd holds, 113 "Bad request." for one it does not.
+        - `bootout`: returns at once; a job whose process is still ending stays readable for `linger` seconds (seen:
+          gone at the first read with a process that ends at once, 0.2 s later with one that takes time).
+        - `bootstrap` over a job launchd still holds: 5 "Bootstrap failed: 5: Input/output error", nothing loaded.
+        Not from a sighting, for the tool's words only: refuse=(parts of job names launchd never takes),
+        never=(jobs a bootout does nothing to), unread={job: the exit code its print answers}, and the answer to a
+        bootout of a job that is not loaded (3; the tool reads no answer of bootout).
+        The jobs launchd holds stay as they are from plant to plant unless `loaded` names them. Every call is written
+        to launchctl.log in the test's folder; the log starts empty at each plant."""
+        f, log = os.path.join(self.bin, "launchd.json"), os.path.join(self.tmp, "launchctl.log")
+        jobs = jload(f)["jobs"] if os.path.exists(f) else {}
+        if loaded is not None:
+            jobs = {x: {"loaded": True, "going": 0} for x in loaded}
+        jdump({"domain": domain, "linger": linger, "refuse": list(refuse), "never": list(never),
+               "unread": unread or {}, "jobs": jobs}, f)
+        if os.path.exists(log):
+            os.remove(log)
+        self.script("launchctl", f"#!{sys.executable}\n" + r'''
+import json, os, sys, time
+here = os.path.dirname(os.path.abspath(sys.argv[0]))
+a = sys.argv[1:]
+with open(os.path.join(os.path.dirname(here), "launchctl.log"), "a") as f:
+    f.write(" ".join(a) + "\n")
+S = os.path.join(here, "launchd.json")
+with open(S) as f:
+    s = json.load(f)
+verb, target, now = (a + ["", ""])[0], (a + ["", ""])[1], time.time()
+
+
+def end(rc, said=""):
+    with open(S, "w") as f:
+        json.dump(s, f)
+    if said:
+        print(said, file=sys.stderr)
+    sys.exit(rc)
+
+
+def held(label):        # a job that is loaded, or one told off whose process has not ended yet
+    j = s["jobs"].get(label, {})
+    return bool(j.get("loaded") or j.get("going", 0) > now)
+
+
+if s["domain"] == 125:
+    end(125, ("Boot-out failed" if verb == "bootout" else "Bootstrap failed" if verb == "bootstrap" else
+              "Could not print domain") + ": 125: Domain does not support specified action")
+if verb == "print":
+    if target.count("/") == 1:
+        end(s["domain"], "" if s["domain"] == 0 else "Operation not permitted")
+    label = target.split("/")[-1]
+    if label in s["unread"]:
+        end(s["unread"][label])
+    end(0) if held(label) else end(113, "Bad request.")
+if verb == "bootout":
+    label = target.split("/")[-1]
+    if not held(label):
+        end(3, "Boot-out failed: 3: No such process")
+    if label not in s["never"]:
+        s["jobs"][label] = {"loaded": False, "going": now + s["linger"]}
+    end(0)
+if verb == "bootstrap":
+    label = os.path.basename(a[2])[:-len(".plist")]
+    if any(x in label for x in s["refuse"]) or held(label):
+        end(5, "Bootstrap failed: 5: Input/output error")
+    s["jobs"][label] = {"loaded": True, "going": 0}
+end(0)
+'''.lstrip())
+
+    def launchd_holds(self):
+        """the jobs the stand-in launchd holds as loaded now"""
+        return [k for k, v in jload(os.path.join(self.bin, "launchd.json"))["jobs"].items() if v.get("loaded")]
+
+    def mac_tool(self, script=SCRIPT):
+        """the tool loaded in this process as on a Mac, its children finding this test's stand-ins -> (the tool,
+        call(function) -> (exit code, what it printed))"""
+        import contextlib
+        import io
+        from unittest import mock
+        tg = self.load_tool(script)
+        patch = mock.patch.dict(os.environ, PATH=self.path)
+        patch.start()
+        self.addCleanup(patch.stop)
+        tg.MAC, tg.ARGS, tg.DRY = True, [], False
+        tg.CFG["tmux"] = TMUX                   # the settings are read in main(), which a loaded tool does not run
+
+        def call(fn):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = fn()
+            return rc, out.getvalue()
+        return tg, call
 
     def whole_home(self):
         """{path under HOME: (kind, sha256 or '')} for every file, folder and link, hidden ones too"""
@@ -4619,8 +4796,11 @@ sys.exit(rc)
                      "windstorm-tardigrade-record.timer"):
             self.assertFalse(os.path.exists(os.path.join(self.home, ".config", "systemd", "user", name)), out)
         log = fread(os.path.join(self.home, "systemctl.log"))
-        self.assertIn("disable --now windstorm-tardigrade-record.timer", log)
+        self.assertIn("stop windstorm-tardigrade-record.timer\n", log)      # G5.27: stopped and read stopped first
+        self.assertIn("disable windstorm-tardigrade-record.timer", log)
+        self.assertNotIn("disable --now", log)
         self.assertIn("disable windstorm-tardigrade-revive.service", log)
+        self.assertNotRegex(log, r"(?m)^(stop|restart|kill) .*revive")       # the boot service is never told to stop
         self.assertIn(f"Kept the folder {share}: it holds __pycache__, mine.txt.", out)
         self.assertIn(f"Kept the folder {os.path.join(share, '__pycache__')}: it holds mine.txt.", out)
         self.assertIn(os.path.join(share, "__pycache__", "mine.txt"), out)      # named, as the person's
@@ -4923,21 +5103,13 @@ sys.exit(rc)
         copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
         revive, record = (os.path.join(la, f"ai.thewindstorm.tardigrade-{x}.plist") for x in ("revive", "record"))
 
-        def launchctl(domain, refuse="nothing", jobs=""):
-            self.script("launchctl", "\n".join([
-                "#!/bin/sh", f'echo "$@" >> "{log}"', 'case "$1 $2" in', f'  "print gui/{uid}") {domain};;', jobs,
-                f'  "bootstrap gui/{uid}") case "$3" in *{refuse}*) echo "Bootstrap failed: 5: Input/output error" >&2; '
-                'exit 5;; esac;;', "esac", "exit 0", ""]))
-            if os.path.exists(log):
-                os.remove(log)
-
         def setup():
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 rc = tg.setup()
             return rc, out.getvalue()
         # (a) no login at the screen: the stop comes before the first write
-        launchctl('echo "Could not print domain: 125: Domain does not support specified action" >&2; exit 125')
+        self.launchd(domain=125)
         before = self.whole_home()
         for dry in (False, True):
             tg.DRY = dry
@@ -4954,11 +5126,12 @@ sys.exit(rc)
             os.remove(log)
         tg.DRY = False
         # (b) any other answer is not a "no": setup goes on; a job launchd then refuses is named with what is on disk
-        launchctl("exit 1", refuse="tardigrade-revive")
+        self.launchd(domain=1, refuse=("tardigrade-revive",))
         rc, out = setup()
         self.assertEqual(rc, 1, out)
         self.assertIn('NOT set up: launchd did not take ai.thewindstorm.tardigrade-revive (exit 5: "Bootstrap failed: '
-                      '5: Input/output error"). Nothing comes back by itself yet.', out)
+                      '5: Input/output error"). Nothing comes back by itself yet.\nRead after that: launchd does not '
+                      'have it.\n', out)
         self.assertIn("they are on disk:\n  " + copy + "\n  " + revive + "\n", out)
         self.assertNotIn(record, out)
         self.assertNotIn("launchd took", out)
@@ -4966,9 +5139,7 @@ sys.exit(rc)
         self.assertIn("at your next login at this Mac's screen", out)
         self.assertIn("Run setup again: it ends by reading what is loaded. To take them off, run uninstall.", out)
         # the second job refused after the first loaded: the line says which one launchd holds
-        launchctl("exit 0", refuse="tardigrade-record",
-                  jobs=f'  "print gui/{uid}/ai.thewindstorm.tardigrade-revive") exit 0;;\n'
-                       f'  "print gui/{uid}/ai.thewindstorm.tardigrade-record") echo "Bad request." >&2; exit 113;;')
+        self.launchd(refuse=("tardigrade-record",))
         rc, out = setup()
         self.assertEqual(rc, 1, out)
         self.assertIn("NOT set up: launchd did not take ai.thewindstorm.tardigrade-record (exit 5", out)
@@ -4991,18 +5162,22 @@ sys.exit(rc)
         systemctl("Failed to connect to bus: No medium found")
         self.tg("census")       # every command makes the settings and state folders: made here, before the listing
         before = self.whole_home()
-        for args in (("setup",), ("setup", "--dry-run")):
-            os.remove(log) if os.path.exists(log) else None
-            rc, out = self.tg(*args)
-            self.assertEqual(rc, 1, out)
-            self.assertIn("NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl "
-                          '--user` answered "Failed to connect to bus: No medium found" (exit 1).', out)
-            self.assertIn("Nothing was installed, and no file or folder was made.", out)
-            self.assertTrue(out.rstrip().endswith("Log out and in (this login has no systemd user manager to ask), "
-                                                  "then run setup again."), out)
-            self.assertNotIn("would copy", out)
-            self.assertEqual(self.whole_home(), before)
-            self.assertEqual(fread(log).splitlines(), ["--user is-enabled windstorm-tardigrade-revive.service"])
+        # systemd's own words for it differ by version, and both were seen (systemd 255, then 262: G5.27)
+        for said in ("Failed to connect to bus: No medium found",
+                     "Failed to connect to user scope bus via local transport: No such file or directory"):
+            systemctl(said)
+            for args in (("setup",), ("setup", "--dry-run")):
+                os.remove(log) if os.path.exists(log) else None
+                rc, out = self.tg(*args)
+                self.assertEqual(rc, 1, out)
+                self.assertIn("NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl "
+                              f'--user` answered "{said}" (exit 1).', out)
+                self.assertIn("Nothing was installed, and no file or folder was made.", out)
+                self.assertTrue(out.rstrip().endswith("Log out and in (this login has no systemd user manager to ask), "
+                                                      "then run setup again."), out)
+                self.assertNotIn("would copy", out)
+                self.assertEqual(self.whole_home(), before)
+                self.assertEqual(fread(log).splitlines(), ["--user is-enabled windstorm-tardigrade-revive.service"])
         # any other answer is not a "no": setup goes on as before (here to its own "could not read", exit 3)
         systemctl("Failed to get unit file state for windstorm-tardigrade-revive.service: Access denied")
         rc, out = self.tg("setup")
@@ -5363,30 +5538,53 @@ sys.exit(rc)
                              out[out.index("Removed:"):out.index("Kept")] if "Removed:" in out else "")
             rc, out = self.tg("setup")
             self.assertEqual(rc, 0, out)
-        # (c) systemd says the timer still runs after the steps: said with the command that stops it, exit 1
-        self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
-                    'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
-        rc, out = self.tg("uninstall")
-        self.assertEqual(rc, 1, out)
-        self.assertIn("Still on: the record timer still runs (systemd says: active). To stop it: "
-                      "systemctl --user stop windstorm-tardigrade-record.timer", out)
-        self.assertNotIn("Tardigrade is off this computer", out)
-        self.assertNotIn("timer and boot service are off", out)
-        # (d) systemd gives no answer: not said to be off, exit 3, with the next step
+        # (c) systemd says the timer runs again after the steps (it was read stopped before them). The tool stops it
+        # once more itself, by name, and reads it; the command for the person is printed only where that did not
+        # stop it, exit 1. What uninstall does when a unit is not read off BEFORE its steps is G5.27's.
+        timer = "windstorm-tardigrade-record.timer"
         self.stand_in_services()
+        self.manager(0, "4242")
         rc, out = self.tg("setup")
         self.assertEqual(rc, 0, out)
-        self.script("systemctl", '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n')
+        os.remove(os.path.join(self.home, "systemctl.log"))
+        self.plant(wakes_on_reload=[timer])
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Still on", out)
+        self.assertNotIn("systemctl --user stop", out)
+        self.assertIn("Tardigrade is off this computer", out)
+        told = [x for x in fread(os.path.join(self.home, "systemctl.log")).splitlines() if not x.startswith("show ")]
+        self.assertEqual(told[told.index("daemon-reload") + 1:], [f"stop {timer}"], told)
+        self.plant()
+        os.remove(os.path.join(self.bin, "systemd-active.json"))
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.plant(wakes_on_reload=[timer], deaf_after_reload=[timer])
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Still on: the record timer still runs (systemd says: active, waiting, 3 s after it was told to "
+                      "stop). To stop it: systemctl --user stop windstorm-tardigrade-record.timer", out)
+        self.assertNotIn("Tardigrade is off this computer", out)
+        self.assertNotIn("timer and boot service are off", out)
+        self.plant()
+        # (d) systemd gives no answer after the steps: not said to be off, exit 3, with the next step
+        os.remove(os.path.join(self.bin, "systemd-active.json"))
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.plant(no_bus_after_reload="Failed to connect to bus: No medium found")
         rc, out = self.tg("uninstall")
         self.assertEqual(rc, 3, out)
         self.assertIn("Could not be read, so it is not said to be off: systemctl gave no answer about the record timer "
-                      "(exit 1).", out)
+                      '(exit 1: "Failed to connect to bus: No medium found"); a systemd user manager runs for this '
+                      "account, and this shell cannot reach it", out)
         self.assertIn("systemctl --user stop windstorm-tardigrade-record.timer", out)
         self.assertNotIn("Tardigrade is off this computer", out)
         self.assertFalse(os.path.exists(copy), out)
         for name in ("default.target.wants/windstorm-tardigrade-revive.service",
                      "timers.target.wants/windstorm-tardigrade-record.timer"):
-            self.assertFalse(os.path.lexists(os.path.join(ud, name)), out)     # systemd's links to our units: by our hand
+            self.assertFalse(os.path.lexists(os.path.join(ud, name)), out)
+        self.plant()
+        self.manager(1)
         # (e) the installed copy alone, with the plugin and every clone gone: to its end; then the same line again
         self.stand_in_services()
         os.remove(os.path.join(self.bin, "systemd-active.json"))
@@ -5875,7 +6073,7 @@ sys.exit(rc)
         self.addCleanup(patch.stop)
         tg.MAC, tg.ARGS, tg.DRY = True, [], False
         tg.CFG["tmux"] = TMUX                   # the settings are read in main(), which a loaded tool does not run
-        self.script("launchctl", "#!/bin/sh\nexit 0\n")         # launchd takes both jobs and answers for both
+        self.launchd()                                          # launchd takes both jobs and answers for both
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             rc = tg.setup()
@@ -6051,7 +6249,7 @@ sys.exit(rc)
             self.addCleanup(p.stop)
         tg.MAC, tg.ARGS, tg.DRY = True, [], False
         tg.CFG["tmux"] = TMUX
-        self.script("launchctl", "#!/bin/sh\nexit 0\n")
+        self.launchd()
         moved = os.path.join(self.tmp, "Developer-moved")
         self.script("xcode-select", f"#!/bin/sh\n[ \"$1\" = -p ] && echo {shlex.quote(moved)}\n")
         brew = os.path.join(self.tmp, "brew")
@@ -6078,6 +6276,329 @@ sys.exit(rc)
             self.assertEqual(self.updater_paths(), [], ran)
             self.assertEqual([(x["program"], x["state"]) for x in tg.stored_programs()],
                              [(want, "there" if os.path.exists(want) else "gone")] * 2, ran)
+
+    def test_G5_27_on_a_mac_a_job_is_told_off_and_read_gone_before_it_is_loaded_again(self):
+        """T107, family rule 30. Seen on a real Mac with another tool: `launchctl bootout` returns before a job whose
+        process is still ending is gone, and a `bootstrap` sent at once answers code 5 and leaves the job not loaded.
+        So setup run again while its own job runs reads the job gone before it loads it again; a job that does not
+        go, and a read that gives no answer, each stop setup with what was read, and nothing is loaded over them."""
+        tg, call = self.mac_tool()
+        uid, log, la = os.getuid(), os.path.join(self.tmp, "launchctl.log"), os.path.join(self.home, "Library",
+                                                                                          "LaunchAgents")
+        self.launchd(linger=0.5)        # a job told off stays readable for half a second, as one whose process ends slowly
+        for n in (1, 2, 3):
+            rc, out = call(tg.setup)
+            self.assertEqual(rc, 0, f"setup number {n}:\n{out}")
+            self.assertEqual(sorted(self.launchd_holds()), sorted(self.JOBS), f"setup number {n}")
+        calls = fread(log).splitlines()
+        for label in self.JOBS:         # after each bootout of a loaded job: read as still there, then as gone, then loaded
+            outs = [i for i, x in enumerate(calls) if x == f"bootout gui/{uid}/{label}"]
+            self.assertEqual(len(outs), 3, calls)
+            for i in outs[1:]:
+                j = calls.index(f"bootstrap gui/{uid} {os.path.join(la, label + '.plist')}", i)
+                self.assertGreaterEqual(calls[i:j].count(f"print gui/{uid}/{label}"), 2, calls[i:j + 1])
+        # a job that never goes: said as that after the wait, and nothing is loaded over it
+        self.launchd(never=(self.JOBS[0],))
+        rc, out = call(tg.setup)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"NOT set up: {self.JOBS[0]} was not loaded again, because the one from before did not go: "
+                      "launchd still holds it, 3 s after it was told to let it go. That job from before is still "
+                      "loaded.\n", out)
+        self.assertTrue(out.rstrip().endswith("Run setup again: it ends by reading what is loaded. To take them off, "
+                                              "run uninstall."), out)
+        self.assertNotIn("bootstrap", fread(log))
+        self.assertNotIn("launchd took", out)
+        # a read that gives no answer is neither gone nor there: exit 3, and that job is not loaded again
+        self.launchd(unread={self.JOBS[1]: 37})
+        rc, out = call(tg.setup)
+        self.assertEqual(rc, 3, out)
+        self.assertIn(f"Setup could not read whether launchd let go of {self.JOBS[1]}: launchctl gave no answer about "
+                      f"{self.JOBS[1]} (exit 37). So it did not load that job again, and it does not say it is set "
+                      "up.\n", out)
+        self.assertIn(f"launchd took {self.JOBS[0]} before that, and it stays loaded.\n", out)
+        self.assertEqual([x.split()[-1] for x in fread(log).splitlines() if x.startswith("bootstrap")],
+                         [os.path.join(la, self.JOBS[0] + ".plist")])
+        # and from there the way back in is the one the lines name
+        self.launchd()
+        rc, out = call(tg.setup)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(sorted(self.launchd_holds()), sorted(self.JOBS))
+
+    def test_G5_27_on_a_mac_uninstall_removes_nothing_until_both_jobs_are_read_gone(self):
+        """T107, family rule 30: uninstall tells both jobs off and reads both gone before it removes anything. One
+        that is not read gone: nothing is removed, each job is named with what was read, and the step is this
+        file's own whole line. An account with no login at the screen has no job to tell off, and that is said."""
+        tg, call = self.mac_tool()
+        uid, log, la = os.getuid(), os.path.join(self.tmp, "launchctl.log"), os.path.join(self.home, "Library",
+                                                                                          "LaunchAgents")
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        own = f"python3 -I {shlex.quote(os.path.abspath(SCRIPT))} uninstall"
+        head = ("Tardigrade is NOT off this computer, and nothing was removed: uninstall takes nothing away before it "
+                "has read every job of Tardigrade's off. What it read of each:\n")
+        tail = ("What is off stays installed, and macOS loads it again at your next login at this Mac's screen, until "
+                "uninstall has run to its end.\nRunning sessions were not touched.\n")
+
+        def home():
+            return {k: v for k, v in self.whole_home().items() if not k.endswith("tardigrade.log")}
+        self.launchd(linger=0.5)
+        rc, out = call(tg.setup)
+        self.assertEqual(rc, 0, out)
+        before = home()
+        # a job that never goes
+        self.launchd(never=(self.JOBS[1],))
+        rc, out = call(tg.uninstall)
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(out, head + f"  {self.JOBS[0]}: off\n  {self.JOBS[1]}: STILL ON (launchd still holds it, 3 s "
+                         f"after it was told to let it go)\n" + tail + f"Next step: run: {own}\n")
+        self.assertEqual(home(), before)
+        # a read that gives no answer: exit 3, and the same: nothing removed
+        self.launchd(unread={self.JOBS[0]: 37}, loaded=self.JOBS)
+        rc, out = call(tg.uninstall)
+        self.assertEqual(rc, 3, out)
+        self.assertEqual(out, head + f"  {self.JOBS[0]}: could not be read (launchctl gave no answer about "
+                         f"{self.JOBS[0]} (exit 37))\n  {self.JOBS[1]}: off\n" + tail
+                         + f"Next step: run uninstall again: {own}\n")
+        self.assertEqual(home(), before)
+        # a domain that answers anything but 125 is there: both jobs are told off, read until gone, and then it is off
+        self.launchd(domain=1, linger=0.5, loaded=self.JOBS)
+        rc, out = call(tg.uninstall)
+        self.assertEqual(rc, 0, out)
+        calls = fread(log).splitlines()
+        for label in self.JOBS:
+            self.assertIn(f"bootout gui/{uid}/{label}", calls)
+            i = calls.index(f"bootout gui/{uid}/{label}")
+            self.assertGreaterEqual(calls[i:].count(f"print gui/{uid}/{label}"), 2, calls)
+        self.assertEqual(self.launchd_holds(), [])
+        self.assertNotIn("Not asked of launchd", out)
+        self.assertEqual(out.strip().splitlines()[-1], "Tardigrade is off this computer: nothing comes back by itself "
+                         "any more. What stayed is named above.")
+        for f in (copy, *(os.path.join(la, x + ".plist") for x in self.JOBS)):
+            self.assertFalse(os.path.exists(f), f)
+        # an account with no login at this Mac's screen: launchd holds no job for it; it can leave, and that is said
+        self.launchd(loaded=())
+        rc, out = call(tg.setup)
+        self.assertEqual(rc, 0, out)
+        self.launchd(domain=125, loaded=())
+        rc, out = call(tg.uninstall)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Running sessions were not touched.\nNot asked of launchd: this account is not logged in at this "
+                      "Mac's screen, so launchd holds no job for it.\n", out)
+        self.assertNotIn("bootout", fread(log))
+        self.assertEqual(out.strip().splitlines()[-1], "Tardigrade is off this computer: nothing comes back by itself "
+                         "any more. What stayed is named above.")
+        for f in (copy, *(os.path.join(la, x + ".plist") for x in self.JOBS)):
+            self.assertFalse(os.path.exists(f), f)
+
+    def test_G5_27_on_linux_uninstall_reads_every_unit_off_first_and_never_stops_the_boot_service(self):
+        """T107, family rule 30. Seen with the released 0.1.10.1: uninstall run inside the boot service's wait said
+        "off" while systemd still held that service. And seen on a throwaway service of the same shape: a stop of it
+        can end the tmux server it started. So uninstall waits for a boot service that is on its way and never tells
+        it to stop; it stops the timer and the record service and reads them stopped; and where a unit is not read
+        off it removes nothing and says what it read of each, with its own whole line as the step."""
+        T, S, R = ("windstorm-tardigrade-record.timer", "windstorm-tardigrade-record.service",
+                   "windstorm-tardigrade-revive.service")
+        ud = os.path.join(self.home, ".config", "systemd", "user")
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        log = os.path.join(self.home, "systemctl.log")
+        own = f"python3 -I {shlex.quote(os.path.abspath(SCRIPT))} uninstall"
+        head = ("Tardigrade is NOT off this computer, and nothing was removed: uninstall takes nothing away before it "
+                "has read every unit of Tardigrade's off. What it read of each:\n")
+        tail = ("What is off stays installed and enabled, and starts again at the next boot or login, until uninstall "
+                "has run to its end.\nRunning sessions were not touched.\n")
+        off = "Tardigrade is off this computer: nothing comes back by itself any more. What stayed is named above."
+        everything = []
+
+        def home():
+            return {k: v for k, v in self.whole_home().items()
+                    if k != "systemctl.log" and not k.endswith("tardigrade.log")}
+
+        def fresh(**plant):
+            """a setup with a user manager running and its bus reachable; then the plant -> the home as it is then"""
+            self.plant()
+            self.manager(0, "4242")
+            if os.path.exists(os.path.join(self.bin, "systemd-active.json")):
+                os.remove(os.path.join(self.bin, "systemd-active.json"))
+            rc, out = self.tg("setup")
+            self.assertEqual(rc, 0, out)
+            self.plant(**plant)
+            os.remove(log)
+            return home()
+
+        def sent():
+            """what systemd was told since the plant, its reads left out"""
+            lines = fread(log).splitlines() if os.path.exists(log) else []
+            everything.extend(lines)
+            return [x for x in lines if not x.startswith("show ")]
+
+        def gone():
+            return not any(os.path.lexists(x) for x in (copy, *(os.path.join(ud, u) for u in (T, S, R))))
+        self.stand_in_services()
+        # (a) the boot service is on its way: uninstall waits, says so, tells it nothing, and goes on when it has ended
+        fresh(states={R: ["activating", "start-pre"]}, flip={R: [4, "active", "exited"]})
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out.count("Waiting:"), 1, out)
+        self.assertRegex(out, r"^Waiting: the boot service is on its way \(systemd says: activating, start-pre\): its "
+                         r"wait of \d+ s, then this boot's revive\. Uninstall never stops it, because the tmux server it "
+                         r"starts lives in its group\. Nothing has been removed yet\. Uninstall goes on by itself when "
+                         r"the service has ended; to stop waiting, press Ctrl-C and run uninstall again later\.\n")
+        self.assertIn("Running sessions were not touched.\nsystemd still lists the boot service as ended (active, "
+                      "exited), for as long as your account's systemd runs. It does nothing more. Uninstall did not "
+                      "stop it, and you should not: the tmux server it started lives in its group, and a `systemctl "
+                      "--user stop` of it can end that server and the sessions in it.\n", out)
+        self.assertEqual(out.strip().splitlines()[-1], off)
+        self.assertEqual(sent(), [f"stop {T}", f"disable {T}", f"disable {R}", "daemon-reload"])
+        self.assertTrue(gone(), out)
+        # (b) the person leaves that wait with Ctrl-C: said, nothing removed, nothing told to stop
+        before = fresh(states={R: ["activating", "start-pre"]})
+        run = subprocess.Popen([sys.executable, "-I", SCRIPT, "uninstall"], stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, text=True, env=self.env)
+        self.pids.append(run.pid)
+        first = run.stdout.readline()
+        self.assertTrue(first.startswith("Waiting: the boot service is on its way"), first)
+        run.send_signal(signal.SIGINT)
+        rest = run.communicate(timeout=60)[0]
+        self.assertEqual(run.returncode, 130, rest)
+        self.assertEqual(rest, f"\nStopped waiting. Nothing was removed and nothing was told to stop. Next step: run "
+                         f"uninstall again later: {own}\n")
+        self.assertEqual((home(), sent()), (before, []))
+        # (c) this shell cannot reach the account's own systemd, and one runs: could not be read, nothing removed,
+        #     and the step says where it can be done. systemd's words for it differ by version; both were seen
+        for said in ("Failed to connect to bus: No medium found",
+                     "Failed to connect to user scope bus via local transport: No such file or directory"):
+            before = fresh(no_bus=said)
+            rc, out = self.tg("uninstall")
+            self.assertEqual(rc, 3, out)
+            self.assertEqual(out, head + "".join(
+                f'  {u}: could not be read (systemctl gave no answer about {what} (exit 1: "{said}"); a systemd user '
+                "manager runs for this account, and this shell cannot reach it)\n"
+                for u, what in ((T, "the record timer"), (S, "the record service"), (R, "the boot service")))
+                + tail + "Next step: this shell cannot reach your account's own systemd (it has no user bus), so run "
+                "uninstall again from a login of your own to this computer, such as ssh or a terminal at the screen: "
+                f"{own}\n")
+            self.assertEqual((home(), sent()), (before, []))
+        # (d) and whether a user manager runs could not be read either: the same stop, with the plain step
+        self.manager(2)
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 3, out)
+        self.assertIn(f'  {T}: could not be read (systemctl gave no answer about the record timer (exit 1: "{said}"); '
+                      "whether a systemd user manager runs for this account could not be read either)\n", out)
+        self.assertTrue(out.endswith(tail + f"Next step: run uninstall again: {own}\n"), out)
+        self.assertEqual((home(), sent()), (before, []))
+        # (e) no user manager runs for this account at all: no unit of ours can run; it is off, and how that is
+        #     known is said. What systemd could not be told (disable) uninstall does by its own hand, as before
+        self.manager(1)
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Running sessions were not touched.\nNot asked of systemd: no systemd user manager runs for this "
+                      "account (the process list has no `systemd` of yours), so no unit of Tardigrade's runs.\n", out)
+        self.assertEqual(out.strip().splitlines()[-1], off)
+        self.assertTrue(gone(), out)
+        for name in ("default.target.wants/" + R, "timers.target.wants/" + T):
+            self.assertFalse(os.path.lexists(os.path.join(ud, name)), out)
+        self.assertEqual(sent(), [f"disable {T}", f"disable {R}", "daemon-reload"])     # told; nothing answered
+        # (f) an answer with a field missing is not an answer, with exit 0 too; an empty one neither
+        for fields in (["LoadState", "ActiveState"], ["LoadState", "SubState"], ["KillMode"]):
+            before = fresh(fields=fields)
+            rc, out = self.tg("uninstall")
+            self.assertEqual(rc, 3, (fields, out))
+            self.assertEqual(out, head + "".join(
+                f"  {u}: could not be read (systemctl's answer about {what} had no ActiveState or no SubState)\n"
+                for u, what in ((T, "the record timer"), (S, "the record service"), (R, "the boot service")))
+                + tail + f"Next step: run uninstall again: {own}\n", fields)
+            self.assertEqual((home(), sent()), (before, []), fields)
+        # (g) the timer does not stop: STILL ON after the wait, nothing removed; one stop was sent, to the timer
+        before = fresh(deaf=[T])
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 1, out)
+        self.assertEqual(out, head + f"  {T}: STILL ON (systemd says: active, waiting, 3 s after it was told to stop)\n"
+                         f"  {S}: off (systemd says: inactive)\n  {R}: off (systemd says: inactive)\n" + tail
+                         + f"Next step: run: {own}\n")
+        self.assertEqual((home(), sent()), (before, [f"stop {T}"]))
+        # (h) each unit's file removed in turn under a running unit. The timer: stopped by name all the same (seen
+        #     on systemd 255 with another tool's unit: a stop by name stops a unit whose file is gone), then read; its
+        #     disable is its own call, which systemd refuses for a unit with no file, and its link goes by our hand
+        fresh()
+        os.remove(os.path.join(ud, T))
+        rc, out = self.tg("uninstall")
+        self.assertEqual((rc, out.strip().splitlines()[-1], gone()), (0, off, True), out)
+        self.assertEqual(sent(), [f"stop {T}", f"disable {T}", f"disable {R}", "daemon-reload"])
+        self.assertFalse(os.path.lexists(os.path.join(ud, "timers.target.wants", T)), out)
+        # (h2) the record service in a run with its file gone: the same (its group holds the record run alone)
+        fresh(states={S: ["activating", "start"]})
+        os.remove(os.path.join(ud, S))
+        rc, out = self.tg("uninstall")
+        self.assertEqual((rc, out.strip().splitlines()[-1], gone()), (0, off, True), out)
+        self.assertEqual(sent(), [f"stop {T}", f"stop {S}", f"disable {T}", f"disable {R}", "daemon-reload"])
+        self.assertNotIn("systemctl --user stop", out)      # no systemctl line is handed to the person for them
+        # (h3) the boot service has ended and its unit file is gone: read, counted as off and named; it is told
+        #      nothing but its own disable, which systemd refuses for a unit with no file (its link goes by our hand)
+        fresh(states={R: ["active", "exited"]})
+        os.remove(os.path.join(ud, R))
+        rc, out = self.tg("uninstall")
+        self.assertEqual((rc, out.strip().splitlines()[-1], gone()), (0, off, True), out)
+        self.assertIn("systemd still lists the boot service as ended (active, exited)", out)
+        self.assertEqual(sent(), [f"stop {T}", f"disable {T}", f"disable {R}", "daemon-reload"])
+        self.assertFalse(os.path.lexists(os.path.join(ud, "default.target.wants", R)), out)
+        # (i) the record service is in a run: stopped and read stopped, after the timer; then everything goes
+        fresh(states={S: ["activating", "start"]})
+        rc, out = self.tg("uninstall")
+        self.assertEqual((rc, out.strip().splitlines()[-1], gone()), (0, off, True), out)
+        self.assertEqual(sent()[:2], [f"stop {T}", f"stop {S}"])
+        # (j) a boot service systemd holds as failed (what 0.1.10.1 left behind): off; the mark is cleared after
+        #     the units are gone, and that is the only thing it is ever told
+        fresh(states={R: ["failed", "failed"]})
+        rc, out = self.tg("uninstall")
+        self.assertEqual((rc, out.strip().splitlines()[-1], gone()), (0, off, True), out)
+        self.assertEqual(sent(), [f"stop {T}", f"disable {T}", f"disable {R}", "daemon-reload", f"reset-failed {R}"])
+        self.assertIn("Running sessions were not touched.\nsystemd listed the boot service as failed from before; that "
+                      "entry is cleared now.\n", out)
+        # through all of it: no stop, restart or kill ever named the boot service, and disable never carried --now
+        told = [x for x in everything if not x.startswith("show ")]
+        self.assertEqual([x for x in told if re.match(r"(stop|restart|try-restart|kill)\b", x) and R in x], [], told)
+        self.assertEqual([x for x in told if x.startswith("disable") and "--now" in x], [], told)
+        self.assertNotIn(f"systemctl --user stop {R}", "\n".join(everything))
+
+    def test_G5_27_the_tool_has_no_stop_restart_or_kill_for_the_boot_service_in_its_code(self):
+        """T107, family rule 30 (iv): the tool's own code is read for every stop, restart, kill and `--now` it can
+        send. One `stop` in the whole file, in units_off, in the branch the boot service never takes; `--now` only
+        where the timer is enabled; no restart and no kill at all. And no text of ours hands a person a stop of it."""
+        src = fread(SCRIPT)
+        tree = ast.parse(src)
+        fn_of = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for n in ast.walk(fn):
+                    fn_of.setdefault(id(n), fn.name)       # the outermost function: ast.walk goes outside in
+        lists = [(fn_of.get(id(n), ""), [e.value for e in n.elts if isinstance(e, ast.Constant)], n)
+                 for n in ast.walk(tree) if isinstance(n, ast.List) and n.elts
+                 and isinstance(n.elts[0], ast.Constant) and n.elts[0].value in ("systemctl", "launchctl")]
+        self.assertGreater(len(lists), 8, "the tool's calls are no longer written as lists: this test reads nothing")
+        never = {"restart", "try-restart", "reload-or-restart", "kill", "kickstart", "isolate", "mask"}
+        self.assertEqual([(f, w) for f, w, _ in lists if never & set(w)], [])
+        stops = [(f, w, n) for f, w, n in lists if w[0] == "systemctl" and "stop" in w]
+        self.assertEqual([(f, w) for f, w, _ in stops], [("units_off", ["systemctl", "--user", "stop"])])
+        # that one stop names the loop's unit, and stands in the else of "if unit == BOOT_UNITS[0]"
+        stop = stops[0][2]
+        self.assertEqual(ast.unparse(stop.elts[-1]), "unit")
+        units_off = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "units_off")
+        guard = [n for n in ast.walk(units_off) if isinstance(n, ast.If) and ast.unparse(n.test) == "unit == BOOT_UNITS[0]"]
+        self.assertEqual(len(guard), 1)
+        in_body = any(x is stop for b in guard[0].body for x in ast.walk(b))
+        in_else = any(x is stop for b in guard[0].orelse for x in ast.walk(b))
+        self.assertEqual((in_body, in_else), (False, True))
+        self.assertEqual(ast.literal_eval(re.search(r"^BOOT_UNITS = (\(.*\))$", src, re.M).group(1))[0],
+                         "windstorm-tardigrade-revive.service")
+        now = [(f, w) for f, w, _ in lists if "--now" in w]
+        self.assertEqual(now, [("setup", ["systemctl", "--user", "enable", "--now", "windstorm-tardigrade-record.timer"])])
+        # no line the tool prints, and no text of ours, hands a person a stop, restart or kill of the boot service
+        hands = re.compile(r"systemctl --user (stop|restart|try-restart|kill)\b[^\n]*revive")
+        self.assertEqual(hands.findall(src), [])
+        for text in ("README.md", os.path.join("skills", "tardigrade", "SKILL.md")):
+            for para in re.split(r"\n\s*\n", fread(os.path.join(ROOT, text))):
+                flat = " ".join(para.split())
+                if re.search(r"systemctl --user[^.]*\b(stop|restart|kill)\b", flat) and "revive" in flat:
+                    self.assertRegex(flat, r"\b[Nn]ever\b", f"{text}: {flat[:200]}")
 
     def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))

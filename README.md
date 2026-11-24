@@ -106,17 +106,27 @@ stop ended the tmux server twice of two, and so did the service ending by itself
 With the file in place a stop left the server running in the first two tries and ended it in the next six. Left
 alone, with the file removed, the server ran on. Not tried with Tardigrade's own service.
 
-Known edge until 0.1.11 (T107), on Linux: an uninstall run while the boot service is in its wait (`boot_wait_s`, 45
-seconds, between the start of the boot service and its revive) says "Tardigrade is off this computer" while systemd
-still holds that service as activating. When the wait ends, systemd finds the unit gone, starts nothing and lists
-`windstorm-tardigrade-revive.service` as failed. Nothing is started and no session is touched.
-`systemctl --user reset-failed windstorm-tardigrade-revive.service` takes it off that list. Use only that command
-on it: see the warning under the uninstall line. A setup run before
-that says "is set up" while the service is still listed as failed from before; the same command clears it then
-too. How it was seen: with 0.1.10.1 on a stock Ubuntu 24.04 virtual machine (systemd 255) and on an Arch Linux
-machine (systemd 262), with the boot service's wait started by hand (`systemctl --user restart --no-block`; do not
-repeat this on a machine with sessions: see the warning under the uninstall line). That stands for the wait after a
-boot or a first login, which was not itself the sighting. The clearing was seen on the Arch machine only.
+Uninstall reads everything of its own off before it removes anything. On Linux it stops the record timer and the
+record service and reads them stopped. It never stops the boot service: while that service is on its way (its wait
+of `boot_wait_s`, 45 seconds, then that boot's revive) uninstall waits and says so once a minute; Ctrl-C leaves the
+wait with nothing removed, and when the service has ended uninstall goes on by itself. On a Mac it tells both
+launchd jobs off and reads both gone. Where one is not read off (it still runs, or systemd or launchd gave no
+answer), uninstall removes nothing, says what it read of each and which is already off, and prints its own whole
+command line as the next step. From a shell that cannot reach your account's own systemd (no user bus, as after
+`su` from another account) the step says to run it from a login of your own, such as ssh or a terminal at the
+screen. An account for which no systemd user manager runs, and a Mac account that is not logged in at the screen,
+have nothing running to turn off: uninstall says that and goes to its end. A boot service that an uninstall of
+0.1.10.1 or older left on systemd's list as failed is taken off that list by the next uninstall; by hand,
+`systemctl --user reset-failed windstorm-tardigrade-revive.service` does the same, and that is the only hand
+command for it. On a Mac, a setup run again while its own job is running reads the job from before gone before it
+loads it again; a job that does not go stops setup with what was read.
+How it was seen: with 0.1.10.1, an uninstall run inside the boot service's wait said "off" while systemd still held
+the service (a stock Ubuntu 24.04 virtual machine, systemd 255, and an Arch Linux machine, systemd 262; the wait
+was started by hand). On a Mac (macOS 27), setup three times in a row with its job running held with 0.1.10.1,
+whose job ends at once; with another tool, whose job takes time to end, the second setup failed. What this version
+does about each is held by tests with stand-ins that answer as launchd and systemd were seen to. Not seen on a real
+machine: a launchd job that never goes, and an account with no systemd user manager (that read is taken from the
+process list).
 
 What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
@@ -506,7 +516,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 194 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 198 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 
