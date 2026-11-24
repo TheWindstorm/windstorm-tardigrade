@@ -134,7 +134,8 @@ settings, a folder that stayed) unless the person asks for it in their own words
   `trust on`.
 - It types nothing into a session except its own wake-up message, into a session it started, once that session
   is idle.
-- It never stores a token or a key, and counts another user's processes by program name only; its own code reads nothing else of them (on Linux the system's `ps` it runs opens more of every process, until 0.1.11).
+- It never records a token or a key it finds in a session's environment: for a login token it keeps the variable's name and an 8-digit one-way fingerprint. What the person writes into `claude_command`, `account_command` or `start_command` themselves is copied as written into each session's start file (in Tardigrade's state folder, readable by them only); a key written there is in those files until the first revive after the session has left the record, and uninstall keeps that folder.
+- It counts another user's processes by program name only; its own code reads nothing else of them (on Linux the system's `ps` it runs opens more of every process, until 0.1.11).
 - It does not bring back timers, watchers or background commands. It tells the revived session they are gone.
 
 ## If you are a session that was just brought back

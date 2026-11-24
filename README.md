@@ -96,6 +96,17 @@ unit the python it names: when that is gone, "Comes back after a reboot" says NO
 setup). Not seen by us on a real machine with pyenv, mise, asdf or conda, nor on a Mac with a Homebrew python:
 those are read by the shape of the path, with stand-ins.
 
+Known edge until 0.1.11 (T107), on Linux: an uninstall run while the boot service is in its wait (`boot_wait_s`, 45
+seconds, between the start of the boot service and its revive) says "Tardigrade is off this computer" while systemd
+still holds that service as activating. When the wait ends, systemd finds the unit gone, starts nothing and lists
+`windstorm-tardigrade-revive.service` as failed. Nothing is started and no session is touched.
+`systemctl --user reset-failed windstorm-tardigrade-revive.service` takes it off that list. A setup run before
+that says "is set up" while the service is still listed as failed from before; the same command clears it then
+too. How it was seen: with 0.1.10.1 on a stock Ubuntu 24.04 virtual machine (systemd 255) and on an Arch Linux
+machine (systemd 262), with the boot service's wait started by hand (`systemctl --user restart --no-block`). That
+stands for the wait after a boot or a first login, which was not itself the sighting. The clearing was seen on the
+Arch machine only.
+
 What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
 first, then the other folders of the `PATH` of whoever runs the restore: at boot, the boot service's (which on
@@ -332,9 +343,12 @@ Setup tells you this for your machine. It never changes it for you.
   machine, so the message is typed, and a session's settings are in a start file only you can read. Claude Code's
   own command line is what you would have typed: its flags and `--resume`.
 - **A permission mode comes back word for word.** It is never made looser.
-- It never stores a token or a key. For a login token it keeps the variable's name and an 8-digit one-way
-  fingerprint, and uses it to check that a session came back on the same login. The check comes before anything
-  is typed: a session whose login changed is listed as "needs you", with no message typed and nothing run on the
+- It never records a token or a key it finds in a session's environment: for a login token it keeps the
+  variable's name and an 8-digit one-way fingerprint. What you write into `claude_command`, `account_command` or
+  `start_command` yourself is copied as written into each session's start file (in Tardigrade's state folder,
+  readable by you only); a key written there is in those files until the first revive after the session has left
+  the record, and uninstall keeps that folder. The fingerprint is used to check that a session came back on the
+  same login. The check comes before anything is typed: a session whose login changed is listed as "needs you", with no message typed and nothing run on the
   wrong account. A variable whose name looks like a secret's is never recorded or copied, whatever the settings say.
 - On a shared machine it counts other users' Claude processes by program name; its own code reads nothing else of
   theirs. (On Linux the system's `ps`, which it runs for the process list, opens more of every process: see
