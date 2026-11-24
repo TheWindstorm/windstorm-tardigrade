@@ -1507,6 +1507,20 @@
    "issue": 115,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T108",
+   "seen": "2026-11-24. Two more ways a run can read green without its tests having passed were planted in a throwaway copy of main (Python 3.12.3, unittest). A printed pass: a test wrote to standard error a line shaped like the runner's own report for a test name that no file defines. The gate did not count it, because it takes outcomes from the runner's result class and never from report text, and it refused the row that named that test (\"did not pass in this run\", exit 1). A run that ends early: a test called `os._exit(0)` in the test process, as the tool under test could where a parent leaves after a fork. The run ended with exit 0, with no summary line and no line of the gate's, and no later test ran: the gate lives in the same process, after the runner, so it never ran. The CI step is that one command alone, so by the workflow file the job would be green. Not seen in a real CI run.",
+   "promise": "what decides that a run is green sits outside the test process. The CI job and the gate before a release fail unless the run's exit is 0, the runner's summary and the gate's own last line are both there, and the number of tests the runner says it ran is the number the test file defines. The gate's self-test plants both cases (a printed pass; a run ended early with exit 0) and each must be refused, and a test reads the workflow file for the step that decides.",
+   "codon": "G7.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 116,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
