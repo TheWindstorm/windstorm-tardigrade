@@ -662,10 +662,19 @@ def sockets():
     return res
 
 
+def tmux_own(sock):
+    """The start of every tmux call the tool makes for itself (G5.28, T109): with -u. To a client whose language
+    setting is not UTF-8 (LC_ALL=C or POSIX in the shell the tool was typed in) tmux prints "_" for every non-ASCII
+    letter of a name AND for the tab between two fields of a format, so the pane list came back with no line that
+    could be split and every session read as having no terminal. -u asks for the answer as it is; it changes
+    nothing in the server or in any session. A line printed or typed for the person (attach) is theirs: no -u."""
+    return [CFG["tmux"], "-u", "-S", sock]
+
+
 def tmux(sock, *a, timeout=10, env=None):
     if not CFG["tmux"]:
         return 99, ""
-    return run([CFG["tmux"], "-S", sock, *a], timeout=timeout, env=env)
+    return run(tmux_own(sock) + list(a), timeout=timeout, env=env)
 
 
 class Panes(dict):
@@ -695,8 +704,8 @@ def panes():
         rc, out, err = 99, "", ""
         if CFG["tmux"]:
             try:
-                r = subprocess.run([CFG["tmux"], "-S", s, "list-panes", "-a", "-F",
-                                    "#{pane_pid}\t#{session_attached}\t#{session_name}"],
+                r = subprocess.run(tmux_own(s) + ["list-panes", "-a", "-F",
+                                                  "#{pane_pid}\t#{session_attached}\t#{session_name}"],
                                    capture_output=True, text=True, timeout=6)
                 rc, out, err = r.returncode, r.stdout, r.stderr
             except (subprocess.TimeoutExpired, OSError):
@@ -711,10 +720,19 @@ def panes():
                 res.why = f"the tmux server at {s} did not list its panes (" + (
                     "no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})")
             continue
-        for line in out.splitlines():
+        lines, took = [x for x in out.splitlines() if x.strip()], 0
+        for line in lines:
             p = line.split("\t", 2)
             if len(p) == 3 and p[0].isdigit():
                 res[int(p[0])] = (s, p[2], int(p[1] or 0))
+                took += 1
+        if lines and not took:
+            # G5.28 (T109), family rule 6: tmux answered and not one line could be split at its tabs. That is "could
+            # not be read", on any socket: it is not "no pane holds this session", and no row's place is replaced on it.
+            # Lines that do split, none of them holding a session, still mean that session has no pane there.
+            res.ok = False
+            res.why = (f"the tmux server at {s} listed {len(lines)} pane(s) in lines that could not be read "
+                       "(no tab between the fields)")
     return res
 
 
@@ -1529,6 +1547,13 @@ def record():
     was = {r["session_id"]: r for r in old["lanes"]}
     for r in rows:              # a flag that cannot be carried is named once, when it is first seen (G2.39)
         o = was.get(r["session_id"], {})
+        if o and (o.get("tmux_socket"), o.get("tmux_session")) != (r["tmux_socket"], r["tmux_session"]):
+            # G5.28 (T109): a row whose place changed says so once, at the record that changed it. Seen: a record
+            # typed where 0.1.10.1 could not read tmux's pane list moved rows to the tool's own socket; the next
+            # record that reads the list puts each back, by its session id, with no second row.
+            log(f"record: {display(r)}: its place on the record is now tmux {os.path.basename(r['tmux_socket'])}:"
+                f"{r['tmux_session']} (the record had {os.path.basename(str(o.get('tmux_socket') or '?'))}:"
+                f"{o.get('tmux_session') or '?'})")
         if r["dropped"] and r["dropped"] != o.get("dropped"):
             log(f"record: {display(r)}: start flag(s) not carried: {'; '.join(r['dropped'])}")
         for f, what in FLAG_SAID.items():
@@ -2088,7 +2113,7 @@ def new_session(sock, name, cwd, cmd, then=(), sid=""):
     right after it made the session, so a stop of ours between the two cannot leave the session without it (G2.53)."""
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     ensure_server(sock)
-    argv = [CFG["tmux"], "-S", sock]
+    argv = tmux_own(sock)
     conf = os.path.expanduser(str(CFG.get("tmux_conf") or ""))
     if conf and os.path.isfile(conf):
         argv += ["-f", conf]         # read only when this call is the one that starts the server
@@ -5293,7 +5318,7 @@ def marked_sessions():
         if not CFG["tmux"]:
             unread.append(f"tmux was not found, and a tmux socket is there ({s})")
             continue
-        rc, out, err = run_err([CFG["tmux"], "-S", s, "list-sessions", "-F", "#{" + OURS_MARK + "}"], timeout=6)
+        rc, out, err = run_err(tmux_own(s) + ["list-sessions", "-F", "#{" + OURS_MARK + "}"], timeout=6)
         if rc == 0:
             n += sum(1 for line in out.splitlines() if line.strip())
         elif rc == 99 or not ("no server running" in err or "error connecting to" in err):

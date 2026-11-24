@@ -228,20 +228,23 @@ moment of a restart (ended with `/exit` and resumed on the other login seconds l
 plain `tardigrade revive`; the census says so under its table. `tardigrade revive --only <its name>` finds it there,
 puts it back on the list a revive reads and starts it. For one you ended with `/exit` it asks for its id.
 
-Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
-tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
-"no terminal at all" for every session that runs in tmux, `open` says there is nothing to open, and a `record` or a
-`setup` typed there writes every session down on Tardigrade's own tmux socket under a made name, until the record
-timer's next run, about 5 minutes later, puts the true places back. No running session is called down, none is
-touched, and no second copy is started: whether a session runs is read from the process list by its conversation,
-not from tmux. If the computer restarts before the timer has put them back, each conversation still comes back, in a
-tmux session on Tardigrade's own socket, and the census names where. The way round: run it with `LC_ALL` unset. The
-record timer and the boot service are touched only if your account's systemd itself carries `LC_ALL=C`; on a stock
-Ubuntu 24.04 it does not. How it was seen: with 0.1.10.1 and stand-in sessions on a stock Ubuntu 24.04 virtual
-machine (tmux 3.4, Python 3.12.3) and on an Arch Linux machine (tmux 3.8, Python 3.14.8), under `LC_ALL=C`; no
-second copy on one real revive with two running sessions on the virtual machine and on dry runs on both machines;
-the return on Tardigrade's own socket with the tmux server ended and a revive typed by hand, not through a restart;
-not seen on a Mac.
+**Typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`**, Tardigrade reads tmux as it does anywhere else
+(since 0.1.11, T109): every tmux call of its own carries `-u`. The attach line it prints for you carries no `-u`, and
+nothing in your tmux server changes. Why it matters: to a client with no UTF-8 language setting tmux prints "_" for a
+non-ASCII letter and for the tab between two fields, so 0.1.10.1 and older, started from such a shell, could read no
+pane at all: the census said "no terminal at all" for every session, and a `record` or a `setup` typed there wrote
+every session down on Tardigrade's own tmux socket under a made name. If that happened to you: a session that is
+still running takes its true place at the next record (setup takes one at once), and the log says so in one line for
+each; a session that was already down by then keeps the place it was given, so it comes back in a tmux session on
+Tardigrade's own socket under that made name, and the census names where. And if tmux ever answers with a list of
+panes of which not one line can be read, the census says it cannot tell and the record is kept as it was. How it was
+seen: with this version and stand-in sessions on a stock Ubuntu 24.04 virtual machine (tmux 3.4, Python 3.12.3), with
+`LC_ALL=C` on Tardigrade's call: census, `open`, a dry run and a real revive read both sessions in their places, one
+of them in a tmux session named "tést"; a `record` and a `setup` typed that way kept the true places; after a real
+restart the boot service brought both back under their names; two rows that 0.1.10.1 had moved took their true
+places at this version's setup, one log line each; and with the tmux server ended first, the two came back on
+Tardigrade's own socket under their made names, each with its conversation. Not seen: on a Mac; with `LC_ALL=POSIX`
+on the tool itself; a list of panes that cannot be read, from a real tmux (the tests make that answer themselves).
 
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
@@ -537,7 +540,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 201 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 205 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

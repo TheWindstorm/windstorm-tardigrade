@@ -554,7 +554,7 @@ class Base(unittest.TestCase):
         self.manager(1)
         self.path = f"{self.bin}:{STUBS}:/usr/local/bin:/usr/bin:/bin"       # the loud stand-ins before the system's
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",
-                    "USER": os.environ.get("USER", "u"), "LANG": "C.UTF-8", "TERM": "xterm-256color",
+                    "USER": os.environ.get("USER", "u"), "LANG": "C.UTF-8", "LC_ALL": "C", "TERM": "xterm-256color",
                     "TARDIGRADE_TESTING": "1", "TARDIGRADE_FAKE_UPTIME_S": "100000", "TARDIGRADE_FAKE_BOOT_ID": "boot-a",
                     "TARDIGRADE_FAKE_X11_DIR": os.path.join(self.tmp, "x11")}
         os.makedirs(os.path.join(self.tmp, "x11"))
@@ -692,7 +692,9 @@ class Base(unittest.TestCase):
         return [os.path.join(d, n) for n in os.listdir(d)] if os.path.isdir(d) else []
 
     def tmux(self, sock, *a, env=None):
-        r = subprocess.run([TMUX, "-S", sock, *a], capture_output=True, text=True, env=env or self.env, timeout=30)
+        # G5.28 (T109): the test's own reads carry -u; the world below (LC_ALL=C, no TMUX) is the one in which
+        # tmux prints "_" for a tab and for a non-ASCII letter to a client whose call does not
+        r = subprocess.run([TMUX, "-u", "-S", sock, *a], capture_output=True, text=True, env=env or self.env, timeout=30)
         return r.returncode, r.stdout
 
     def tg(self, *a, **over):
@@ -866,7 +868,8 @@ class Base(unittest.TestCase):
         act = "exit 1" if how == "fails" else "exec sleep 9"
         with open(p, "w") as f:
             f.write('#!/bin/sh\nif [ -e "$HOME/tmuxfail" ]; then\n'
-                    '  if [ ! -s "$HOME/tmuxfail" ] || grep -qxF -- "$2" "$HOME/tmuxfail"; then\n'
+                    '  s=""; p=""; for a; do [ "$p" = -S ] && s="$a"; p="$a"; done\n'
+                    '  if [ ! -s "$HOME/tmuxfail" ] || grep -qxF -- "$s" "$HOME/tmuxfail"; then\n'
                     f'    for a; do [ "$a" = list-panes ] && {{ {act}; }}; done\n  fi\nfi\nexec {TMUX} "$@"\n')
         os.chmod(p, 0o755)
         self.cfg({"tmux": p})
@@ -7197,6 +7200,179 @@ class Windows(Base):
 
 
 @unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
+class Names(Base):
+    """G5.28 (T109). The world of every test in this file is LC_ALL=C with no TMUX: the one in which the real tmux
+    prints "_" for a non-ASCII letter of a name AND for the tab between two fields to a client whose call carries
+    no -u. Seen with the released 0.1.10.1 on real machines: the pane list came back with no line that could be
+    split, every session read as "no terminal at all", and a record typed there moved every row to the tool's own
+    socket under a made name."""
+
+    FORMAT = "#{pane_pid}\t#{session_attached}\t#{session_name}"
+
+    def plain_client(self, *a):
+        """the real tmux asked with NO -u in this test's world: what the tool's own calls got before the cure"""
+        r = subprocess.run([TMUX, "-S", self.sock, *a], capture_output=True, text=True, env=self.env, timeout=30)
+        return r.returncode, r.stdout
+
+    def pane_sid(self, session):
+        """the conversation of the stand-in that runs in this tmux session's pane, read from the process tree"""
+        rc, out = self.tmux(self.sock, "list-panes", "-t", f"={session}:", "-F", "#{pane_pid}")
+        if rc != 0 or not out.split():
+            return None
+        top = int(out.split()[0])
+        for row in reversed(self.launches()):
+            p, steps = row["pid"], 0
+            while p > 1 and steps < 6:
+                if p == top:
+                    return row["sid"]
+                try:
+                    p = int(fread(f"/proc/{p}/stat").rsplit(")", 1)[1].split()[1])
+                except (OSError, ValueError, IndexError):
+                    break
+                steps += 1
+        return None
+
+    def places(self):
+        return {r["session_id"]: (r["host"], r["tmux_socket"], r["tmux_session"]) for r in self.table()["lanes"]}
+
+    def test_G5_28_a_session_is_found_and_its_name_read_whole_where_the_tool_is_started_with_LC_ALL_C(self):
+        self.assertEqual(self.env.get("LC_ALL"), "C", "the world of this file")
+        self.assertNotIn("TMUX", self.env)
+        names = {"tést": "Accent Lane", "t_st": "Under Lane", "plain": "Plain Lane"}
+        sid = {s: self.start_lane(s, n) for s, n in names.items()}
+        # this world is the one with the fault: asked without -u, the real tmux gives the tool's own format back with
+        # no tab in it and the two names alike. Were this ever not so, the test would hold nothing and says so here.
+        rc, out = self.plain_client("list-panes", "-a", "-F", self.FORMAT)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("\t", out, "tmux printed the tab whole to a client with LC_ALL=C and no -u: not the world meant")
+        self.assertNotIn("tést", out)
+        self.assertEqual(sum(1 for x in out.splitlines() if x.endswith("_t_st")), 2, out)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        want = {sid[s]: ("tmux", self.sock, s) for s in names}
+        self.assertEqual(self.places(), want, out)
+        rc, out = self.tg("census")
+        self.assertNotIn("no terminal at all", out)
+        for s in names:
+            self.assertIn(f"tmux default:{s} ", out)
+        # the line printed for the person is theirs: the name whole, and no -u
+        rc, out = self.tg("open", "--dry-run")
+        for s, n in names.items():
+            self.assertIn(f"{n}: {TMUX} -S {self.sock} attach -t '={s}'", out)
+        self.assertNotIn(" -u ", out)
+        # a restart: each comes back under its own name on its own socket, and each note goes into its own pane
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 3)
+        typed = self.wait_typed(3)
+        self.assertEqual(sorted(t["sid"] for t in typed), sorted(sid.values()), f"one note each: {typed}\n{out}")
+        for s in names:
+            self.assertEqual(self.pane_sid(s), sid[s], f"the session in tmux session {s!r}:\n{out}")
+        own = os.path.join(os.path.dirname(self.sock), "tardigrade")
+        self.assertFalse(os.path.exists(own) and self.tmux(own, "list-sessions")[0] == 0,
+                         "a session came back on the tool's own socket")
+        self.assertEqual(len(self.launches()), n + 3, "no second copy")
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(self.places(), want, out)
+
+    def test_G5_28_every_tmux_call_of_the_tools_own_carries_u(self):
+        """every call, whatever the path: a wrapper in front of the real tmux writes down the first argument of
+        each call the tool makes through a record, a census, an open, a restart with its revive, a record and an
+        uninstall (which reads every server for the sessions that carry the tool's mark)"""
+        log = os.path.join(self.home, "tmux-first-arg.log")
+        wrap = self.script("tmux-first-arg", '#!/bin/sh\nprintf "%s\\n" "$1" >> "$HOME/tmux-first-arg.log"\n'
+                           f'exec {shlex.quote(TMUX)} "$@"\n')
+        sid = self.start_lane("alpha", "Alpha Lane")
+        self.cfg({"tmux": wrap})
+        for verb in (("record", "--force"), ("census",), ("open", "--dry-run"), ("revive", "--dry-run", "--all")):
+            rc, out = self.tg(*verb)
+            self.assertEqual(rc, 0, f"{verb}: {out}")
+        seen_reading = len(fread(log).split())
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 1)
+        self.assertEqual([t["sid"] for t in self.wait_typed(1)], [sid], out)
+        self.tg("record", "--force")
+        before_uninstall = len(fread(log).split())
+        self.systemd_off()
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 tmux session that Tardigrade made still carries its mark", out)
+        first = fread(log).split()
+        self.assertGreater(seen_reading, 3, first)
+        self.assertGreater(before_uninstall, seen_reading + 3, "the revive made tmux calls of its own")
+        self.assertGreater(len(first), before_uninstall, "uninstall read the marks through tmux")
+        self.assertEqual(set(first), {"-u"}, f"a tmux call of the tool's own went out without -u: {first}")
+
+    def test_G5_28_a_pane_list_no_line_of_which_can_be_split_could_not_be_read_and_replaces_no_place(self):
+        """family rule 6 on this read: tmux answered with lines and not one could be split at its tabs. That is the
+        third answer, never "this session has no terminal": nothing a record holds is replaced on it, and no
+        reason is logged that says a session has no pane. The answer is MADE here (a tmux in front of the real one
+        answers the pane list of every server with one line as it was seen, "_" where the tabs were), so this test
+        holds with or without the -u on the tool's calls."""
+        sid = self.start_lane("alpha", "Alpha Lane")
+        rc, out = self.tg("record", "--force")
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        before = fread(table)
+        self.assertEqual(self.places(), {sid: ("tmux", self.sock, "alpha")}, out)
+        made = self.script("tmux-made-answer", '#!/bin/sh\nlp=""; all=""\n'
+                           'for a; do [ "$a" = list-panes ] && lp=1; [ "$a" = -a ] && all=1; done\n'
+                           '[ -n "$lp" ] && [ -n "$all" ] && { echo "4242_0_alpha"; exit 0; }\n'
+                           f'exec {shlex.quote(TMUX)} "$@"\n')
+        self.cfg({"tmux": made})
+        why = f"the tmux server at {self.sock} listed 1 pane(s) in lines that could not be read (no tab between the fields)"
+        for verb in (("record",), ("record", "--force")):
+            time.sleep(1.1)                               # a record that wrote would change last_seen
+            rc, out = self.tg(*verb)
+            self.assertEqual(rc, 0, out)
+            self.assertIn(f"record: skipped ({why}); the record is kept as it was", out, verb)
+            self.assertEqual(fread(table), before, f"{verb}: the record changed")
+        rc, out = self.tg("census")
+        self.assertNotIn("no terminal at all", out)
+        self.assertIn(why, out)
+        rc, out = self.tg("revive", "--dry-run")
+        self.assertNotIn(" start ", out)
+        self.assertEqual(len(self.launches()), 1, "nothing was started")
+        said = fread(self.state("tardigrade.log"))
+        self.assertNotIn("no terminal", said)
+        self.assertNotIn("its place on the record is now", said)
+        # the limit: lines that DO split and none of them holds a session still mean it has no pane there
+        self.cfg({"tmux": TMUX})
+        loose = self.start_loose("Loose Lane")
+        rc, out = self.tg("record", "--force")
+        self.assertNotIn("skipped", out)
+        got = self.places()
+        self.assertEqual(got[sid], ("tmux", self.sock, "alpha"))
+        self.assertNotEqual(got[loose][0], "tmux")
+        self.assertEqual(got[loose][1], os.path.join(os.path.dirname(self.sock), "tardigrade"))
+
+    def test_G5_28_a_row_the_version_before_moved_to_the_tools_own_socket_takes_its_true_place_at_the_next_record(self):
+        """what 0.1.10.1 left where a record was typed with LC_ALL=C: the row of a session that runs in a tmux
+        session of the person's, kept on the tool's own socket under a made name. The next record puts it back by its
+        session id: one row, and one line in the log that says so."""
+        sid = self.start_lane("tést", "Accent Lane")
+        self.tg("record", "--force")
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        t = self.table()
+        self.assertEqual(len(t["lanes"]), 1)
+        own = os.path.join(os.path.dirname(self.sock), "tardigrade")
+        t["lanes"][0].update(host="none", tmux_socket=own, tmux_session="accent-lane")
+        jdump(t, table)
+        said = ("record: Accent Lane: its place on the record is now tmux default:tést "
+                "(the record had tardigrade:accent-lane)")
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(said, out)
+        self.assertEqual(self.places(), {sid: ("tmux", self.sock, "tést")})
+        self.assertEqual(self.table()["down"], [])
+        self.tg("record", "--force")
+        self.assertEqual(self.logged(said), 1, "said once, at the record that changed it")
+
+
 class Tests(unittest.TestCase):
     def test_G7_1_a_run_stopped_part_way_leaves_nothing_behind(self):
         """a real run of one test, stopped by SIGTERM once its tmux server is up, as `timeout` stops it"""

@@ -1531,7 +1531,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G5_28_a_session_is_found_and_its_name_read_whole_where_the_tool_is_started_with_LC_ALL_C",
    "proven": "",
    "issue": 117,
    "moved_why": "",

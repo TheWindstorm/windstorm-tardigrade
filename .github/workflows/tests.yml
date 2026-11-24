@@ -31,7 +31,7 @@ jobs:
           python-version: |
             3.8
             ${{ matrix.python }}
-      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: sudo apt-get update && sudo apt-get install -y tmux && tmux -V
       # G7.12: green is decided outside the test process (a run that ends early with exit 0 is not green)
       - run: python tests/run_whole.py
   skill-spec:
