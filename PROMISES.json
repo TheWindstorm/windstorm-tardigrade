@@ -156,11 +156,11 @@
    "codon": "G4.6",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 12,
-   "moved_why": "Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -170,11 +170,11 @@
    "codon": "G3.9",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 13,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -198,11 +198,11 @@
    "codon": "G3.10",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 15,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -226,11 +226,11 @@
    "codon": "G5.7",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 17,
-   "moved_why": "Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -269,11 +269,11 @@
    "codon": "G3.11",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 20,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -311,11 +311,11 @@
    "codon": "G3.13",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 23,
-   "moved_why": "Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; it stands alone and touches the desktop or other users, so it gets its own review after 0.1.10's reboot rows instead of holding back 0.1.9's built and proven fixes.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -381,11 +381,11 @@
    "codon": "G3.14",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 28,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -423,11 +423,11 @@
    "codon": "G3.15",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 31,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -451,11 +451,11 @@
    "codon": "G2.46",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 33,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -661,11 +661,11 @@
    "codon": "G1.16",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 50,
-   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -787,11 +787,11 @@
    "codon": "G1.19",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 62,
-   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -927,11 +927,11 @@
    "codon": "G3.21",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 72,
-   "moved_why": "",
+   "moved_why": "moved 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims.",
    "moved_by_person": ""
   },
   {
@@ -941,11 +941,11 @@
    "codon": "G7.8",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 74,
-   "moved_why": "",
+   "moved_why": "moved 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims.",
    "moved_by_person": ""
   },
   {
@@ -955,11 +955,11 @@
    "codon": "G3.22",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 73,
-   "moved_why": "",
+   "moved_why": "moved 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims.",
    "moved_by_person": ""
   },
   {
@@ -983,11 +983,11 @@
    "codon": "G3.23",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 76,
-   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -997,11 +997,11 @@
    "codon": "G3.24",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 77,
-   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -1011,11 +1011,11 @@
    "codon": "G3.25",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 78,
-   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims. Before that: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -1039,11 +1039,11 @@
    "codon": "G3.27",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 80,
-   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
+   "moved_why": "moved a second time, 0.1.11 to 0.1.12, the maintainer's ruling 2026-11-24: 0.1.11 is cut for the way back in and for what a line claims; its kept script and test only: the whole-home listing before setup and after the leave is still made at 0.1.11's stock-VM sitting (family rule 8's measure). Before that: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -1160,8 +1160,8 @@
   },
   {
    "id": "T83",
-   "seen": "2026-11-24, on a Mac (macOS 13) in a test account reached over ssh with no screen session: setup exit 1, \"NOT set up: launchd did not take ai.thewindstorm.tardigrade-revive. Nothing comes back by itself yet.\", after it had written the installed copy and the revive launch agent's file into ~/Library/LaunchAgents; census then said \"NO (run setup)\". The line names no next step and does not say those files are on disk. Whether launchd loads that file at the next screen login was not read.",
-   "promise": "first a read: the launch agent's file written and not loaded, the account logged out and in at its screen, census. Then: when launchd does not take a job, setup's stop line says what is on disk, what happens at the next login, and the one next step, and census says what is true in that state; a test holds both lines. If the read shows the file does not load at login, the row says so and keeps the on-disk and next-step part.",
+   "seen": "2026-11-24, on a Mac (macOS 13) in a test account reached over ssh with no screen session: setup exit 1, \"NOT set up: launchd did not take ai.thewindstorm.tardigrade-revive. Nothing comes back by itself yet.\", after it had written the installed copy and the revive launch agent's file into ~/Library/LaunchAgents; census then said \"NO (run setup)\". The line names no next step and does not say those files are on disk. Whether launchd loads that file at the next screen login was not read. Seen again 2026-11-24 11:45Z on 0.1.10.1's candidate (script sha256 46adbae596a43709), a clean test account on a Mac, macOS 13.7.8, over ssh only with no session at the screen: `launchctl print gui/<uid>` exit 125 before setup; setup exit 1 with the same line, both jobs then answering 125; census from the installed copy that setup had left behind: \"NO (run setup)\", and a setup again was refused the same way. In the code at that candidate, setup copies itself in and writes the revive job's file (RunAtLoad in it) before launchd refuses, and returns with both on disk.",
+   "promise": "(a) On a Mac, before its first write, setup reads `launchctl print gui/<uid>`: exit 125 (this account is not logged in at this Mac's screen) is a stop with nothing made: the line says what launchd answered, that nothing was installed, and the one next step (log in at this Mac's screen as this user, then run setup again); exit 0 goes on; any other answer is not a \"no\", and setup goes on as before, so no install that works today is refused by the new read (family rule 11, what will refuse is asked before the first write). (b) A bootstrap refused with the domain there, and the second job refused after the first loaded, keep the earlier promise: setup's stop line says what is on disk, what happens at the next screen login, and the one next step, and census says what is true in that state; the read at a screen login (the file written and not loaded, the account logged out and in at its screen, census) is owed for (b) only. A test holds each stop: nothing written in (a), what was written named in (b). Its proof for (a): the same script on a Mac account with no screen session, with a listing of ~/Library/LaunchAgents and the installed copy's path right after the refused setup, once on 0.1.10.1 (the half state seen) and once on the fix (nothing there).",
    "codon": "G5.17",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
@@ -1310,6 +1310,20 @@
    "proven": "",
    "issue": 100,
    "moved_why": "a false yes on the one question the tool exists to answer, carried by every release a person has (0.1.7, 0.1.9 and 0.1.10 hold the same lines); 0.1.11 has 43 rows without a test and cannot be tagged within a week, so this row goes out alone as 0.1.10.1: comes_back() and setup's own line on the same read, their tests, no other code, a stock VM first. Ruled by the skill family's coordinator, 2026-11-24.",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T94",
+   "seen": "2026-11-24, in the code at 0.1.10.1's candidate (script sha256 46adbae596a43709), while listing every line the tool prints that says something is or is not running and the read behind each (family rule 24): census's \"Herdr is not running: N tab(s) not attached\" asks Herdr itself only when the Herdr settings are on; otherwise it comes from the file this boot's restore wrote when it found Herdr not running, which stays true in the census after Herdr has started.",
+   "promise": "census says Herdr is not running only from Herdr's own answer at that moment; where it does not ask, its words say what was read and when (\"this boot's restore found Herdr not running at <time>\"). A test starts Herdr's stand-in after the restore wrote its file, with the setting off, and reads the line.",
+   "codon": "G4.11",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 101,
+   "moved_why": "",
    "moved_by_person": ""
   }
  ],
