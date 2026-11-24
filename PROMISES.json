@@ -901,7 +901,7 @@
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.11",
    "test": "",
-   "proven": "",
+   "proven": "2026-11-24 09:35Z, against the pinned entry of v0.1.10 (url source, ref v0.1.10, sha 3fdb74e), on a fresh stock Ubuntu 24.04.5 VM (git 2.43.0), each case in its own new account with Claude Code 2.1.331 from its own installer, not logged in, every step started by hand. The real catalog: `claude plugin marketplace add TheWindstorm/windstorm-tardigrade`, then `claude plugin install windstorm-tardigrade@windstorm-tardigrade`, both exit 0; the registry said 0.1.10 at commit 3fdb74e, its folder .../0.1.10, plugin.json 0.1.10, the script's --version 0.1.10 (sha256 c440b10f403efc1e). Steered: a local copy of the catalog, first at 0.1.9's pin (2f1f9a9: install exit 0, all four places 0.1.9, commit f083567, sha256 2efd6fa4cb7b557a), then moved to main (dbce9b6, the v0.1.10 pin): `claude plugin marketplace update windstorm-tardigrade` exit 0 and still 0.1.9 in all four places; then `claude plugin update windstorm-tardigrade@windstorm-tardigrade` exit 0, \"updated from 0.1.9 to 0.1.10\", and all four places 0.1.10 at commit 3fdb74e (sha256 c440b10f403efc1e). No `marketplace remove` anywhere.",
    "issue": 70,
    "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
@@ -1267,6 +1267,34 @@
    "test": "",
    "proven": "",
    "issue": 97,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T91",
+   "seen": "2026-11-24, in another skill of the same family, before its first tag (its log read by the coordinator): after an uninstall that kept the person's things, setup answered 0 and every command then refused, for good; its kept record remembered what the uninstall had taken, and setup trusted the record. Every test and round had started from an empty home. Tardigrade's uninstall also keeps the settings, the record and the log, and no test of it walks setup, uninstall, setup again, then a revive; until 2026-11-24 no stock round had walked it either. On 0.1.10 as tagged it was walked once on a stock Ubuntu 24.04.5 VM on 2026-11-24 09:35Z, in a new account with one stand-in session: setup, uninstall (census after it: \"Comes back after a reboot: NO (run setup)\"), setup again, then a revive by hand of the session after its tmux session was ended (started=1 LOADED=1), and after a restart of the VM the boot revive brought it back (started=1 LOADED=1). From an uninstall cut by SIGKILL at 0.12 s to 0.28 s, in another new account: two half states were seen (the timer and the boot service off with the units and the copy still there; the units gone with the copy still there; settings still saying automatic revive on), the cut printed nothing (exit 137), and setup again answered 0 and put each back whole; a revive by hand then started the session (started=1 LOADED=1). So 0.1.10 has the fault this row guards against in no form seen; the row is the test that keeps it so.",
+   "promise": "setup decides by what is on the disk and in systemd or launchd now, never by what the kept settings or record remember alone; its last act reads back what a boot revive needs (the boot service enabled and the timer active, on a Mac both jobs loaded; the copy they run is this version's own; automatic revive on), and it says \"set up\" and answers 0 only when that read passes. One test walks the whole circle: setup, uninstall, setup again, then a revive that starts a session that is down; and once more from an uninstall cut half way (some of its steps done, the record kept).",
+   "codon": "G5.21",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 98,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T92",
+   "seen": "2026-11-24, in another skill of the same family, before its first tag (its log read by the coordinator): after an uninstall that kept the person's things, setup answered 0 and every command then refused, for good; its kept record remembered what the uninstall had taken, and setup trusted the record. Every test and round had started from an empty home. Tardigrade's uninstall also keeps the settings, the record and the log, and no test of it walks setup, uninstall, setup again, then a revive; until 2026-11-24 no stock round had walked it either.",
+   "promise": "the uninstall's last lines, and the census after an uninstall, say what a setup after it does with each kept thing: the record's sessions are kept and brought back after the next restart, the settings are used as they are with automatic revive switched on again, the log goes on. A test reads those lines after an uninstall and holds them to what setup then does.",
+   "codon": "G3.32",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 99,
    "moved_why": "",
    "moved_by_person": ""
   }

@@ -259,6 +259,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G3.29 | Due in 0.1.10 (T80). Nothing setup makes is writable by another account, whatever umask it was started with: the entry point adds 022 to the umask it was given; setup takes group and other write off its own copy, units and install folder when an earlier run left them open; setup, the boot run and census walk every folder from the home down to what runs or decides what runs (the copy, the units, the settings and state folders), and name each one another account can reach and write (a group of one is not named), with the one command that closes it, without changing it. | `test_G3_29_nothing_setup_makes_is_writable_by_another_account_whatever_the_umask`, `test_G3_29_the_folders_above_what_runs_are_named_with_their_command_and_not_changed`, `test_G3_29_a_group_folder_is_named_only_when_another_member_can_reach_it` |
 | G3.30 | Due in 0.1.11 (T81). A command that only reads (census, a dry run, a refused setup) makes no folder and no file. | Not built yet. |
 | G3.31 | Due in 0.1.11 (T82). Uninstall leaves the home as setup found it: names only what is there, says its switch-off setting stays and why, removes by setup's record (T73) the empty folders it made; every difference from the listing before setup is a line it printed. | Not built yet. |
+| G3.32 | Due in 0.1.11 (T92). After an uninstall that keeps something, its last lines and the census say what a setup after it does with each kept thing; a test holds the lines to what setup then does. | Not built yet. |
 
 ### G4 Windows and tabs
 
@@ -296,6 +297,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G5.18 | Due in 0.1.11 (T87). The guard's remaining parts: loud stand-ins first on PATH, a hook counting opens in the real home, children handed it and real programs found, the count failing the test, and a gate test that plants each kind; the row names what the hook cannot see. | Not built yet. |
 | G5.19 | Due in 0.1.11 (T88). What the tool starts as its own gets an environment it built; the person's settings cannot move what it runs without the tool saying so; one lived-in round before the tag, after the stock one. | Not built yet. |
 | G5.20 | Due in 0.1.11 (T90). The README says, next to its clone line, that some git versions print "is not a commit!" for it and that the clone is still right; a test reads that sentence beside every clone line. | Not built yet. |
+| G5.21 | Due in 0.1.11 (T91). Setup decides by what is there now, never by a kept record alone, and ends by reading back what a boot revive needs; one test walks setup, uninstall, setup again and a revive, and once more from an uninstall cut half way. | Not built yet. |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
 ### G7 Tests
