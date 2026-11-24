@@ -183,6 +183,15 @@ def run(argv, timeout=30, env=None):
         return 99, ""
 
 
+def run_err(argv, timeout=30, env=None):
+    """run(), with what the program wrote to stderr as a third answer"""
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+        return r.returncode, r.stdout, r.stderr
+    except (subprocess.TimeoutExpired, OSError):
+        return 99, "", ""
+
+
 PATH_SET = [False]      # the path setting was given: then it is used exactly as written
 
 
@@ -230,10 +239,13 @@ def save_cfg_key(key, value):
         with open(p, encoding="utf-8") as f:
             d = json.load(f)
     except (OSError, ValueError):
-        d = {}
+        d = None
+    CFG[key] = value
+    if isinstance(d, dict) and key in d and d[key] == value:
+        return      # G5.23 (T96): nothing changes, so the person's file is not written again (it keeps its layout)
+    d = d if isinstance(d, dict) else {}
     d[key] = value
     write_json(p, d)
-    CFG[key] = value
 
 
 def write_private(path, text):
@@ -3332,6 +3344,33 @@ def user_env():
                 DBUS_SESSION_BUS_ADDRESS=os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={rt}/bus")
 
 
+NOTHING_MADE = ("Nothing was installed and no file was written (only Tardigrade's own settings and state folders, "
+                "which every command makes, empty if they were not there).")
+
+
+def will_refuse():
+    """G5.17 (T83 a) and G5.22 (T95), family rule 11: what will refuse is asked before the first write. On a Mac,
+    launchd loads a job for an account only while that account is logged in at the screen: `launchctl print
+    gui/<uid>` answers exit 125 when it is not. On Linux, systemctl --user with no user manager answers nothing on
+    stdout and "Failed to connect to bus" on stderr. Returns the stop line for those two answers and None for every
+    other one: any other answer is not a "no", so setup goes on as it did before this read."""
+    if MAC:
+        uid = os.getuid()
+        rc, _, err = run_err(["launchctl", "print", f"gui/{uid}"], timeout=10)
+        if rc != 125:
+            return None
+        said = (err.strip().splitlines() or [""])[0].strip()[:200]
+        return (f"NOT set up: this account is not logged in at this Mac's screen, and launchd loads a job for an "
+                f"account only while it is. `launchctl print gui/{uid}` answered exit 125"
+                + (f" (\"{said}\")" if said else "") + ".")
+    rc, out, err = run_err(["systemctl", "--user", "is-enabled", BOOT_UNITS[0]], timeout=10, env=user_env())
+    said = [x.strip() for x in err.splitlines() if "Failed to connect to bus" in x]
+    if out.strip() or not said:
+        return None
+    return (f"NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl --user` "
+            f"answered \"{said[0][:200]}\" (exit {rc}).")
+
+
 def setup():
     py = sys.executable or shutil.which("python3") or "/usr/bin/python3"
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
@@ -3356,8 +3395,12 @@ def setup():
         print("NOT set up: Tardigrade did not write these, so they are yours, and setup does not write over them:")
         for p in theirs:
             print(f"  {p}")
-        print("Move them out of the way, then run setup again. Nothing was installed and no file was written (only "
-              "Tardigrade's own settings and state folders, which every command makes, empty if they were not there).")
+        print("Move them out of the way, then run setup again. " + NOTHING_MADE)
+        return 1
+    refused = will_refuse()
+    if refused:         # G5.17 (a), G5.22: the stop comes before the first write, and a dry run says it too
+        step = unread_step()
+        print(refused + " " + NOTHING_MADE + " " + step[0].upper() + step[1:] + ".")
         return 1
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")
@@ -3370,6 +3413,7 @@ def setup():
         la = os.path.join(HOME, "Library", "LaunchAgents")
         os.makedirs(la, exist_ok=True)
         uid = str(os.getuid())
+        wrote = [script]
         for label, verb, extra in (
                 ("ai.thewindstorm.tardigrade-revive", f"sleep {int(float(CFG['boot_wait_s']))}; exec",
                  "<key>RunAtLoad</key><true/>"),
@@ -3378,9 +3422,22 @@ def setup():
             arg = " revive --boot" if "revive" in label else " record"
             with open(p, "w") as f:
                 f.write(plist(label, py, script + arg, verb, extra))
+            wrote.append(p)
             run(["launchctl", "bootout", f"gui/{uid}/{label}"])
-            if run(["launchctl", "bootstrap", f"gui/{uid}", p])[0] != 0:
-                print(f"NOT set up: launchd did not take {label}. Nothing comes back by itself yet.")
+            rc, _, err = run_err(["launchctl", "bootstrap", f"gui/{uid}", p])
+            if rc != 0:         # G5.17 (b): the stop says what launchd answered, what is on disk and the next step
+                said = (err.strip().splitlines() or [""])[0].strip()[:200]
+                took = [x for x in BOOT_JOBS if x != label and os.path.join(la, x + ".plist") in wrote]
+                print(f"NOT set up: launchd did not take {label} (exit {rc}" + (f": \"{said}\"" if said else "")
+                      + "). Nothing comes back by itself yet.")
+                if took:
+                    print(f"launchd took {took[0]} before that, and it stays loaded.")
+                print("Setup had written these before launchd answered, and they are on disk:")
+                for w in wrote:
+                    print(f"  {w}")
+                print("macOS loads the launch agents in that folder at your next login at this Mac's screen, so "
+                      "they may be loaded then. Run setup again: it ends by reading what is loaded. To take them "
+                      "off, run uninstall.")
                 return 1
     else:
         ud = os.path.join(HOME, ".config", "systemd", "user")

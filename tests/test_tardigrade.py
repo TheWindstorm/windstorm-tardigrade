@@ -3024,6 +3024,137 @@ class Setup(Base):
         self.assertEqual(short, "after you log in at its screen")
         self.assertIn("A login over ssh does not start it", lines[-1])
 
+    def test_G5_17_on_a_mac_setup_asks_launchd_before_its_first_write_and_names_what_a_refused_job_left(self):
+        # seen 2026-11-24 on a Mac account with no login at its screen (launchctl print gui/<uid>: exit 125): setup
+        # wrote its copy and the revive job's file, then said only "launchd did not take ..." (T83)
+        import contextlib
+        import io
+        from unittest import mock
+        tg = self.load_tool()
+        patch = mock.patch.dict(os.environ, PATH=self.path)     # the tool's children find this test's launchctl
+        patch.start()
+        self.addCleanup(patch.stop)
+        tg.MAC, tg.ARGS, tg.DRY = True, [], False
+        tg.CFG["tmux"] = TMUX                   # the settings are read in main(), which a loaded tool does not run
+        uid, log = os.getuid(), os.path.join(self.tmp, "launchctl.log")
+        la = os.path.join(self.home, "Library", "LaunchAgents")
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        revive, record = (os.path.join(la, f"ai.thewindstorm.tardigrade-{x}.plist") for x in ("revive", "record"))
+
+        def launchctl(domain, refuse="nothing", jobs=""):
+            self.script("launchctl", "\n".join([
+                "#!/bin/sh", f'echo "$@" >> "{log}"', 'case "$1 $2" in', f'  "print gui/{uid}") {domain};;', jobs,
+                f'  "bootstrap gui/{uid}") case "$3" in *{refuse}*) echo "Bootstrap failed: 5: Input/output error" >&2; '
+                'exit 5;; esac;;', "esac", "exit 0", ""]))
+            if os.path.exists(log):
+                os.remove(log)
+
+        def setup():
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = tg.setup()
+            return rc, out.getvalue()
+        # (a) no login at the screen: the stop comes before the first write
+        launchctl('echo "Could not print domain: 125: Domain does not support specified action" >&2; exit 125')
+        before = self.whole_home()
+        for dry in (False, True):
+            tg.DRY = dry
+            rc, out = setup()
+            self.assertEqual(rc, 1, out)
+            self.assertIn("NOT set up: this account is not logged in at this Mac's screen", out)
+            self.assertIn(f'`launchctl print gui/{uid}` answered exit 125 ("Could not print domain: 125: Domain does '
+                          'not support specified action").', out)
+            self.assertIn("Nothing was installed and no file was written", out)
+            self.assertTrue(out.rstrip().endswith("Log in at this Mac's screen as this user, then run setup again."), out)
+            self.assertNotIn("would copy", out)
+            self.assertEqual(self.whole_home(), before)
+            self.assertEqual(fread(log).splitlines(), [f"print gui/{uid}"])     # asked, and nothing else tried
+            os.remove(log)
+        tg.DRY = False
+        # (b) any other answer is not a "no": setup goes on; a job launchd then refuses is named with what is on disk
+        launchctl("exit 1", refuse="tardigrade-revive")
+        rc, out = setup()
+        self.assertEqual(rc, 1, out)
+        self.assertIn('NOT set up: launchd did not take ai.thewindstorm.tardigrade-revive (exit 5: "Bootstrap failed: '
+                      '5: Input/output error"). Nothing comes back by itself yet.', out)
+        self.assertIn("they are on disk:\n  " + copy + "\n  " + revive + "\n", out)
+        self.assertNotIn(record, out)
+        self.assertNotIn("launchd took", out)
+        self.assertTrue(os.path.exists(copy) and os.path.exists(revive) and not os.path.exists(record))
+        self.assertIn("at your next login at this Mac's screen", out)
+        self.assertIn("Run setup again: it ends by reading what is loaded. To take them off, run uninstall.", out)
+        # the second job refused after the first loaded: the line says which one launchd holds
+        launchctl("exit 0", refuse="tardigrade-record",
+                  jobs=f'  "print gui/{uid}/ai.thewindstorm.tardigrade-revive") exit 0;;\n'
+                       f'  "print gui/{uid}/ai.thewindstorm.tardigrade-record") echo "Bad request." >&2; exit 113;;')
+        rc, out = setup()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT set up: launchd did not take ai.thewindstorm.tardigrade-record (exit 5", out)
+        self.assertIn("launchd took ai.thewindstorm.tardigrade-revive before that, and it stays loaded.", out)
+        self.assertIn("they are on disk:\n  " + copy + "\n  " + revive + "\n  " + record + "\n", out)
+        self.assertTrue(os.path.exists(record))
+        # and the census says what is true in that state, with the setting on from an earlier setup or not
+        self.assertEqual(tg.comes_back(), "NO (run setup)")
+        tg.CFG["auto_revive"] = True
+        self.assertEqual(tg.comes_back(), "NO: launchd has not loaded ai.thewindstorm.tardigrade-record (run setup)")
+
+    def test_G5_22_on_linux_setup_asks_the_user_manager_before_its_first_write(self):
+        # seen 2026-11-24 on a stock VM, in an account with no user manager: setup copied itself in and wrote its
+        # units before it said it could not read whether it was set up (T95)
+        log = os.path.join(self.tmp, "asked.log")
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+
+        def systemctl(stderr):
+            self.script("systemctl", f'#!/bin/sh\necho "$@" >> "{log}"\necho "{stderr}" >&2\nexit 1\n')
+        systemctl("Failed to connect to bus: No medium found")
+        self.tg("census")       # every command makes the settings and state folders: made here, before the listing
+        before = self.whole_home()
+        for args in (("setup",), ("setup", "--dry-run")):
+            os.remove(log) if os.path.exists(log) else None
+            rc, out = self.tg(*args)
+            self.assertEqual(rc, 1, out)
+            self.assertIn("NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl "
+                          '--user` answered "Failed to connect to bus: No medium found" (exit 1).', out)
+            self.assertIn("Nothing was installed and no file was written", out)
+            self.assertTrue(out.rstrip().endswith("Log out and in (this login has no systemd user manager to ask), "
+                                                  "then run setup again."), out)
+            self.assertNotIn("would copy", out)
+            self.assertEqual(self.whole_home(), before)
+            self.assertEqual(fread(log).splitlines(), ["--user is-enabled windstorm-tardigrade-revive.service"])
+        # any other answer is not a "no": setup goes on as before (here to its own "could not read", exit 3)
+        systemctl("Failed to get unit file state for windstorm-tardigrade-revive.service: Access denied")
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 3, out)
+        self.assertNotIn("has no systemd user manager to hand", out)
+        self.assertTrue(os.path.exists(copy))
+
+    def test_G5_23_setup_writes_the_settings_file_only_when_a_value_changes(self):
+        # seen 2026-11-24 on an upgrade from 0.1.8.1: a settings file laid out by hand came out of setup sorted, with
+        # a final newline, though no value had changed (T96)
+        p = os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json")
+        d = json.loads(fread(p))
+        hand = dict(sorted(d.items(), reverse=True), auto_revive=True)
+
+        def lay(d):
+            with open(p, "w") as f:
+                f.write(json.dumps(d, indent=4))        # a person's layout: four spaces, their own order, no last newline
+            return fread(p)
+        laid = lay(hand)
+        self.assertNotEqual(laid, json.dumps(hand, indent=1, sort_keys=True) + "\n")
+        self.boot_answers("enabled", "active", copy=False)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(fread(p), laid)                # byte for byte
+        rc, out = self.tg("setup")                      # and over its own install
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(fread(p), laid)
+        # a value that does change is written, and every other value stays
+        lay(dict(hand, auto_revive=False))
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(fread(p)), hand)
+        self.assertNotEqual(fread(p), laid)
+
     def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))
         for n in ("alpha", "beta", "gamma"):
