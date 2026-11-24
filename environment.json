@@ -112,6 +112,10 @@
   {
    "name": "TARDIGRADE_FAKE_STOP_AT",
    "note": "read only with both keys; ends the run at a planted point, for the test of a revive stopped part way"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_ENV_UNREAD",
+   "note": "read only with both keys; every read of a session's environment in that run answers 'not read', for the test of a failed read"
   }
  ]
 }

@@ -102,6 +102,7 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 | `tardigrade open` | Opens a terminal window for each hidden session, with the terminal named in `TERMINAL` when that is set (it says so), else the first it finds. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
+| `tardigrade record --accept "Name"` | For one running session: its row takes the login it runs on now. For when census says `Login differs` and the login it shows is the right one. |
 | `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
 | `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. It reads back what went: something of its own that could not be removed, or a timer that still runs, is named with the one command to use, and then it does not say off (exit 1; exit 3 when systemd or launchd gave no answer). While a restore is starting sessions it waits for it. When all is off, the last line says Tardigrade is off this computer; run again, it says it is already off. |
@@ -331,10 +332,26 @@ Check this before the first reboot on a machine. A session started with a login 
 label your start can read, comes back on whatever login the plain `claude` finds, which may be another account.
 If every session on the machine should run on one login, put the wrapper that fetches it into `claude_command`.
 `tardigrade revive --dry-run --all` shows each session's start line, so you can see this before you need it.
-Known edge until 0.1.11 (T57): the record follows the session that runs. If you end a session that is pinned to an
-account and start it again another way (a plain `claude --resume`), its row loses the account and no line says so:
-the next restart starts it as you last did, on the machine's own login. After starting a session again by hand,
-check that its line in `tardigrade revive --dry-run --all` ends in `[account NAME]` if it should.
+
+What the record keeps of a session's login (its account label, a fingerprint of its login token, its Claude Code
+folder) is a fact of the session's start, and no later pass changes or empties it without a line in the log:
+
+- **You end a session and start it again yourself on another login** (a plain `claude --resume` where it was pinned
+  to an account, for example). The record follows what you did: its row takes the new login, the log says what it
+  was and what it is now, census says `Login changed` until the next restart, and a revive starts it your way.
+- **A revive starts a session from its row and it comes up on another login** (the account command gave another
+  token, or none; or its row has a login token and no account label, which a revive cannot give back). The row
+  keeps what it had. Nothing is typed into the session; it is listed under "needs you" and
+  census says `Login differs` for as long as it runs so. Look at the login it shows. If that one is right (a renewed
+  token, say): `tardigrade record --accept <its id>` makes its row follow it. If not, close it and start it your
+  usual way. The next revive starts it from its row again and checks again.
+- **A session's environment could not be read** in some pass: its row keeps its login as recorded, and the log says
+  so once. A new session that has no row yet is not written down until its environment can be read.
+
+Tardigrade tells the first two apart by who started the running session: a session a revive started runs under the
+shell of its own start file; one you started does not. Where that cannot be read, the row keeps what it had and the
+line says that it cannot tell. Not seen by us: a read of a session's environment that failed (looked for on a Mac:
+1,300 reads, none failed).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -413,7 +430,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 153 tests on Linux with stand-ins for `claude` and `herdr`, run on every pull request and on every push to main or a release branch,
+- 154 tests on Linux with stand-ins for `claude` and `herdr`, run on every pull request and on every push to main or a release branch,
   with Python 3.9 (the floor) and 3.13, on a runner image the workflow names.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.

@@ -802,7 +802,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G2_51_a_rows_login_is_never_emptied_by_a_failed_read_and_never_changed_without_a_line",
    "proven": "",
    "issue": 63,
    "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",

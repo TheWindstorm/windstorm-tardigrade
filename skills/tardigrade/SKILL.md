@@ -28,6 +28,7 @@ If neither file exists, this skill was installed without its plugin. Get the scr
 | Windows for the hidden ones | `open` |
 | Bring back what is down | `revive --dry-run`, show it, then `revive` |
 | Bring back one | `revive --only "Name"` |
+| A row takes the login its session runs on (on the user's word only) | `record --accept "Name"` |
 | Check before a planned reboot | `revive --dry-run --all` |
 | Have the trust question answered after a restart | `trust on` (see below) |
 | Switch it off | `uninstall` |
@@ -64,6 +65,11 @@ do not call any session down, do not run `revive` and do not start any session b
 
 If the census has a **CANNOT TELL** list, or a line that a session file could not be read, show it as it is. Those
 sessions are not down: do not call them down, and do not start one with `revive --only` unless the user says it is down.
+
+If the census has a **Login differs** or **Login changed** line, show it as it is. `Login changed` is news: the user
+started that session again on another login, and the record followed. `Login differs` needs the user: a session that
+Tardigrade started came up on another login than its row has. Do not run `record --accept` yourself: which login is
+the right one is the user's to say. Ask them to look at the login the session shows, and run it only on their word.
 
 Do not end, restart or change any session because of what the census shows. List them and ask. A hidden session may
 be doing exactly what its owner wants.

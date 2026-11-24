@@ -1056,6 +1056,174 @@ class Revive(Base):
         time.sleep(2)
         self.assertEqual(self.typed(), [])
 
+    def test_G2_51_a_rows_login_is_never_emptied_by_a_failed_read_and_never_changed_without_a_line(self):
+        """T57: three sessions were ended and started again by hand on the machine's own login; the record followed
+        what ran and no line said that a row's account had changed. And in the code a read of a session's environment
+        that failed was written down as "no account, no token": one failed pass would have emptied a row for good."""
+        import shlex
+        self.script("acctwrap", '#!/bin/bash\necho "$@" >> "$HOME/acctwrap.log"\n[ "$1" = use ] || exit 2\n'
+                                'tok="tok-$2"; [ -f "$HOME/wraptoken-$2" ] && tok=$(cat "$HOME/wraptoken-$2")\nshift 2\n'
+                                'CLAUDE_CODE_OAUTH_TOKEN="$tok" exec claude "$@"\n')
+        self.cfg({"account_env": "ACCT_NAME", "account_command": "acctwrap use {account}"})
+        a = self.start_lane("alpha", "Alpha Lane", extra_env={"ACCT_NAME": "sam", "CLAUDE_CODE_OAUTH_TOKEN": "tok-sam"})
+        b = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        login = ("account", "token_keys", "token_print", "config_dir", "carry_env")
+
+        def row(sid):
+            return next((r for r in self.table()["lanes"] if r["session_id"] == sid), None)
+
+        def facts(sid):
+            return {k: row(sid)[k] for k in login}
+
+        def prints(tok):
+            return hashlib.sha256(("tardigrade:CLAUDE_CODE_OAUTH_TOKEN=" + tok).encode()).hexdigest()[:8]
+
+        def pid_of(sid):
+            return [x["pid"] for x in self.launches() if x["sid"] == sid][-1]
+        first = facts(a)
+        self.assertEqual((first["account"], first["token_print"], row(a).get("env_read")), ("sam", prints("tok-sam"), True))
+        beta = facts(b)
+
+        # 1. the read of every session's environment fails for a pass: nothing is emptied, and it is said once
+        rc, out = self.tg("record", TARDIGRADE_FAKE_ENV_UNREAD=1)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((facts(a), facts(b)), (first, beta), out)
+        self.assertIn("record: Alpha Lane: its environment could not be read; its login is kept as recorded "
+                      "(account sam), nothing is emptied", out)
+        self.assertIn("record: Beta Lane: its environment could not be read; its login is kept as recorded "
+                      "(this machine's own login)", out)
+        since = row(a)["env_unread_since"]
+        self.assertTrue(since)
+        c = self.start_lane("gamma", "Gamma Lane", extra_env={"ACCT_NAME": "tom", "CLAUDE_CODE_OAUTH_TOKEN": "tok-tom"})
+        rc, out = self.tg("record", TARDIGRADE_FAKE_ENV_UNREAD=1)
+        self.assertNotIn("Alpha Lane: its environment could not be read", out)          # said when it begins, once
+        self.assertEqual((facts(a), row(a)["env_unread_since"]), (first, since))
+        self.assertIn("record: Gamma Lane: its environment could not be read and it has no row yet; nothing is "
+                      "written down for it until it can be read", out)
+        self.assertIsNone(row(c), "a session whose login is not known is not written down as one with none")
+        rc, out = self.tg("record")                                                       # the read works again
+        self.assertEqual((facts(a), row(c)["account"]), (first, "tom"), out)
+        self.assertNotIn("env_unread_since", row(a))
+        self.assertNotIn("Alpha Lane", out)
+
+        # 2. a revive starts Alpha from its row, and the account command gives another login
+        self.reboot()
+        with open(os.path.join(self.home, "wraptoken-sam"), "w") as f:
+            f.write("tok-other")
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
+        new = {x["sid"]: x for x in self.wait_launches(n + 3)[n:]}
+        self.assertEqual(new[a]["seen"].get("ACCT_NAME"), "sam")            # the label is the row's: the start file sets it
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((sorted(rep["started"]), rep["needs_you"]), (["Beta Lane", "Gamma Lane"], ["Alpha Lane"]), out)
+        self.assertIn("needs you  Alpha Lane: it came back on a different login than it had before (the account "
+                      "command gave another login, or none). It is idle and nothing was typed. Next step: look at the "
+                      f"login it shows; if that is the right one, `record --accept {a}` makes its row follow it", out)
+        self.assertEqual([x for x in self.typed() if x["sid"] == a], [])
+        rc, out = self.tg("record")
+        self.assertEqual(facts(a), first, "the row of a session a revive started keeps its login: " + out)
+        seen = row(a)["login_seen"]
+        self.assertEqual((seen["who"], seen["token_print"]), ("tardigrade", prints("tok-other")))
+        self.assertIn("record: Alpha Lane: a revive started it from its row and it runs on another login: the account "
+                      "command gave another login, or none (was account sam, now account sam with another login "
+                      f"token). Its row keeps the recorded one. Next step: look at the login it shows; if that is the "
+                      f"right one, `record --accept {a}` makes its row follow it", out)
+        rc, out = self.tg("record")
+        self.assertNotIn("Alpha Lane", out)                                             # once, not every five minutes
+        self.assertEqual((facts(a), row(a)["login_seen"]), (first, seen))
+        rc, out = self.tg("census")
+        self.assertIn("Login differs: Alpha Lane is recorded on account sam and runs on account sam with another "
+                      "login token", out)
+        self.assertIn(f"A revive started it from its row: the account command gave another login, or none. Its row "
+                      f"keeps the recorded one. Next step: look at the login it shows; if that is the right one, "
+                      f"`record --accept {a}` makes its row follow it.", out)
+        rc, js = self.tg("census", "--json")
+        self.assertEqual([(u["session_id"], u["who"]) for u in json.loads(js)["login_differs"]], [(a, "tardigrade")])
+
+        # 3. a person's word for that one session; a wrong name changes nothing
+        was = self.table()["lanes"]
+        for wrong, said in (("No Such Lane", "no session on the record is named 'No Such Lane'"),
+                            (None, "give the name or the id of one session on the record")):
+            rc, out = self.tg("record", "--accept", *([wrong] if wrong else []))
+            self.assertEqual(rc, 1, out)
+            self.assertIn("record --accept: " + said, out)
+            self.assertIn("Nothing was changed.", out)
+            self.assertEqual(self.table()["lanes"], was)
+        rc, out = self.tg("record", "--accept", "Alpha Lane")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("record: Alpha Lane: its row takes the login it runs on now, on a person's word (was account "
+                      "sam, now account sam with another login token)", out)
+        self.assertEqual((row(a)["account"], row(a)["token_print"]), ("sam", prints("tok-other")))
+        self.assertNotIn("login_seen", row(a))
+        self.assertEqual((facts(b), row(c)["account"]), (beta, "tom"), "that session only")
+        self.assertNotIn("Login differs", self.tg("census")[1])
+        rc, out = self.tg("record", "--accept", a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("record --accept: Alpha Lane: its row already has the login it runs on (account sam); nothing "
+                      "to take", out)
+
+        # 4. its owner ends Alpha and starts it again in the shell that was kept, on the machine's own login
+        self.kill(pid_of(a))
+        gone_soon(lambda: running(pid_of(a)))
+        n = len(self.launches())
+        end = time.time() + WAIT
+        while len(self.launches()) == n and time.time() < end:      # typed again until the kept shell has taken it
+            self.tmux(self.sock, "send-keys", "-t", "=alpha:", "-l",
+                      f"env -u ACCT_NAME {shlex.quote(os.path.join(self.bin, 'claude'))} --resume {a}")
+            self.tmux(self.sock, "send-keys", "-t", "=alpha:", "Enter")
+            time.sleep(1.5)
+        hand = self.wait_launches(n + 1)[n]
+        self.assertEqual((hand["sid"], hand["seen"].get("ACCT_NAME")), (a, None))
+        rc, out = self.tg("record")
+        self.assertIn("record: Alpha Lane: its owner started it again on another login", out)
+        self.assertIn(": was account sam, now this machine's own login. The record follows it, and a revive starts "
+                      "it that way", out)
+        self.assertEqual((row(a)["account"], row(a)["token_print"], "login_seen" in row(a)), ("", "", False), out)
+        rc, out = self.tg("census")
+        self.assertIn("Login changed: Alpha Lane was started again by its owner on another login", out)
+        self.assertIn("was account sam, now this machine's own login. The record follows it", out)
+        rc, out = self.tg("record")
+        self.assertNotIn("Alpha Lane", out)
+        wrapped = len(fread(os.path.join(self.home, "acctwrap.log")).splitlines())
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        new = {x["sid"]: x for x in self.wait_launches(n + 3)[n:]}
+        self.assertNotIn("ACCT_NAME", new[a]["seen"])                 # the way its owner last started it
+        self.assertEqual(len(fread(os.path.join(self.home, "acctwrap.log")).splitlines()), wrapped + 1, "Gamma only")
+        self.assertIn("Alpha Lane", jload(self.state("last-revive.json"))["started"])
+        self.assertNotIn("Login changed", self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-b")[1])   # until the next restart
+
+        # 5. a row an older version wrote (it did not say whether a read had worked) takes what is read, with a line
+        t = self.table()
+        for r in t["lanes"]:
+            if r["session_id"] == b:
+                r.pop("env_read")
+                r["account"] = "zed"
+        jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        rc, out = self.tg("record", TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertIn("record: Beta Lane: its login is taken as read now (was account zed, now this machine's own "
+                      "login); its row was written by an older version", out)
+        self.assertEqual((row(b)["account"], row(b)["env_read"]), ("", True))
+
+        # 6. who started a running Claude: each of the three answers, and the two that must not be mistaken
+        tg = self.load_tool()
+        start = ". " + shlex.quote(os.path.join(tg.launch_dir(), a + ".sh"))
+        me = os.getuid()
+        P = {50: (40, me, "claude"), 40: (30, me, "bash"), 30: (20, me, "bash"), 20: (1, me, "tmux: server")}
+        for above, want in (({40: ["bash", "-ic", start]}, "tardigrade"),
+                            ({40: ["zsh", "-lic", start]}, "tardigrade"),
+                            ({40: ["bash", "/x/acctwrap", "use", "sam"], 30: ["bash", "-ic", start]}, "tardigrade"),
+                            ({40: ["bash", "-l"]}, "owner"),
+                            # the kept login shell, under a shell that only carries the start line as text
+                            ({40: ["bash", "-l"], 30: ["sh", "-c", "bash -ic " + shlex.quote(start)]}, "owner"),
+                            ({40: ["bash", "-ic", start.replace(a, b)]}, "owner"),      # another session's start file
+                            ({40: []}, "unknown"),
+                            ({40: [], 30: ["bash", "-ic", start]}, "tardigrade")):
+            argv = {30: ["bash", "-l"], 20: ["tmux", "new-session"], **above}
+            self.assertEqual(tg.started_by(50, a, P, argv=lambda q: argv.get(q, [])), want, above)
+
     def test_G2_53_a_revive_after_one_stopped_part_way_starts_each_session_at_most_once(self):
         # T85: a revive stopped by time (SIGTERM after 0.2 to 5 s) and run again gave each session one start, 8 of 8;
         # a stop by time does not reach each point on purpose. Here the run ends itself at planted points, at once
@@ -1159,6 +1327,19 @@ class Revive(Base):
         rep = jload(self.state("last-revive.json"))
         self.assertEqual((rep["started"], rep["needs_you"]), (["Alpha Lane"], ["Beta Lane"]), out)
         self.assertIn("different login", out)
+        # G2.51 (T57): the line says why, and the one next step; the row keeps the login it had until a person says
+        self.assertIn("needs you  Beta Lane: it came back on a different login than it had before (its row has a login "
+                      "token and no account label, and a revive cannot give such a login back). It is idle and nothing "
+                      f"was typed. Next step: look at the login it shows; if that is the right one, `record --accept {b}`"
+                      " makes its row follow it; if not, close it and start it your usual way.", out)
+        was = next(r for r in self.table()["lanes"] if r["session_id"] == b)["token_print"]
+        rc, out = self.tg("record")
+        self.assertEqual(next(r for r in self.table()["lanes"] if r["session_id"] == b)["token_print"], was, out)
+        self.assertIn("Login differs: Beta Lane is recorded on a login token in its environment and runs on this "
+                      "machine's own login", self.tg("census")[1])
+        rc, out = self.tg("record", "--accept", b)
+        self.assertEqual((rc, next(r for r in self.table()["lanes"] if r["session_id"] == b)["token_print"]), (0, ""), out)
+        self.assertNotIn("Login differs", self.tg("census")[1])
 
     def test_G2_9_two_revives_at_once_do_not_both_run(self):
         self.recorded_then_rebooted()

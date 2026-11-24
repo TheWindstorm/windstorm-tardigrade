@@ -2,6 +2,7 @@
 """Windstorm Tardigrade: bring Claude Code sessions back after a reboot or a crash, and say what is running.
 
   record              write down every live session (a timer runs this every 5 minutes)
+  record --accept NAME   for one running session: its row takes the login it runs on now (your word for it)
   revive [--boot]     start every recorded session that is not running (runs once after boot)
   revive --only NAME  bring back just that one
   revive --dry-run --all   show the start line of every recorded session, as if none ran
@@ -393,19 +394,26 @@ def env_facts(pid):
     """Facts from a process's environment. The values kept are one folder path, an account label, and the
     settings variables named in carry_env; a name that looks like a secret's is never among them. A login
     token is reduced, in memory, to 8 hex digits of its SHA-256: enough to tell "same login or not",
-    useless for getting the token back."""
-    facts = {"child": False, "token_keys": [], "config_dir": "", "token_print": "", "account": "", "carry": {}}
+    useless for getting the token back. "read" says whether the environment could be read at all."""
+    facts = {"child": False, "token_keys": [], "config_dir": "", "token_print": "", "account": "", "carry": {},
+             "read": False}
     tok = []
     carry = plain_names(CFG.get("carry_env"))
     acct = (plain_names([CFG.get("account_env")]) or [""])[0]
     if MAC:
-        pairs = run(["ps", "eww", "-o", "command=", "-p", str(pid)])[1].split()
+        rc, out = run(["ps", "eww", "-o", "command=", "-p", str(pid)])
+        pairs = out.split() if rc == 0 else []
     else:
         try:
             with open(f"/proc/{pid}/environ", "rb") as f:
                 pairs = [x.decode(errors="replace") for x in f.read().split(b"\0") if x]
         except OSError:
             return facts
+    if TESTING and os.environ.get("TARDIGRADE_FAKE_ENV_UNREAD"):
+        return facts
+    # G2.51 (T57): a read that failed, or brought no KEY=value pair, is "not read": never "this session has no
+    # account, no token and no folder of its own". What a row knows of a login is not emptied on it.
+    facts["read"] = any("=" in kv for kv in pairs)
     for kv in pairs:
         k, eq, v = kv.partition("=")
         if not eq:
@@ -1212,7 +1220,7 @@ def live(with_launch=True):
             "pid": pid, "session_id": sid, "name": (sj.get("name") or "").strip(),
             "cwd": sj.get("cwd") or HOME, "host": kind, "config_dir": ef["config_dir"],
             "token_keys": ef["token_keys"], "token_print": ef["token_print"], "entrypoint": sj.get("entrypoint", "cli"),
-            "account": ef["account"], "carry_env": ef["carry"],
+            "account": ef["account"], "carry_env": ef["carry"], "env_read": ef["read"],
             "status": sj.get("status", ""), "updated_at": int((sj.get("updatedAt") or 0) / 1000),
             "started_at": int((sj.get("startedAt") or 0) / 1000),
             "tmux_socket": "", "tmux_session": "", "attached": 0, "herdr_tab": "", "herdr_workspace": "",
@@ -1374,16 +1382,35 @@ def read_table():
 
 def record():
     force = "--force" in ARGS
+    # G2.51 (T57): `record --accept <session>` is a person's word for one session: its row takes the login it runs on
+    accept = ""
+    if "--accept" in ARGS:
+        want = ARGS[ARGS.index("--accept") + 1] if ARGS.index("--accept") + 1 < len(ARGS) else ""
+        hit = [r for r in read_table()["lanes"] if want and want in (r["name"], r["session_id"], r["tmux_session"])]
+        if len(hit) != 1:
+            log("record --accept: " + (
+                "give the name or the id of one session on the record" if not want else
+                f"no session on the record is named {want!r}" if not hit else
+                f"{len(hit)} sessions on the record match {want!r}; give the session id of the one you mean ("
+                + ", ".join(r["session_id"] for r in hit) + ")") + ". Nothing was changed.")
+            return 1
+        accept = hit[0]["session_id"]
+
+    def skipped():
+        if accept:
+            log("record --accept: nothing was changed, because this pass was skipped (the line above says why). "
+                "Run it again after that.")
+        return 1 if accept else 0
     if not force:
         if in_boot_window() and not os.path.exists(marker()):
             log("record: skipped (the machine just started and this boot's revive has not finished)")
-            return 0
+            return skipped()
         if CFG["auto_revive"] and not os.path.exists(marker()):
             log("record: skipped (this boot's revive has not run; the record is kept as it was)")
-            return 0
+            return skipped()
     if not force and run_going() and not starts_finished():
         log("record: skipped (a revive is starting sessions; waiting screens are not sessions gone)")
-        return 0
+        return skipped()
     mine, _, _ = live()
     # A failed read is "cannot tell", never "not running" or "no window": the process list and the pane list are
     # each one shared read, so when one failed nothing is known about any session, and nothing is written (T55).
@@ -1394,13 +1421,21 @@ def record():
             sk = read_json(SKIP_PATH, {})
             since = sk.get("since") if isinstance(sk, dict) and sk.get("since") else int(time.time())
             write_json(SKIP_PATH, {"since": since, "why": "; ".join(bad), "last": int(time.time())})
-        return 0
+        return skipped()
     try:
         os.remove(SKIP_PATH)       # the reads work again
     except OSError:
         pass
     old = read_table()
     old_by = {r["session_id"]: r for r in old["lanes"]}
+    if accept:
+        me = [r for r in mine if r["session_id"] == accept]
+        if not me or me[0].get("unread") or not me[0].get("env_read"):
+            log(f"record --accept: {display(old_by[accept])} "
+                + ("is not running" if not me else "is running, and its environment could not be read")
+                + ", so there is no login to take. Nothing was changed.")
+            return 1
+    accepted = False
     labels = ({}, {})
     if "--no-herdr" not in ARGS and CFG["herdr"] and CFG["herdr_tabs"] and herdr_up():
         labels = herdr_labels()
@@ -1422,6 +1457,16 @@ def record():
         if left_out_why(r):
             continue
         o = old_by.get(r["session_id"], {})
+        if not r["env_read"] and not o:
+            # G2.51: a new session whose environment could not be read. Which login it is on, and whether another
+            # session started it as its helper, is not known: nothing is written down for it this pass.
+            log(f"record: {display(r)}: its environment could not be read and it has no row yet; nothing is written "
+                "down for it until it can be read")
+            continue
+        login, login_keys, said = login_carried(r, o, PROCS_NOW[0], take=force or r["session_id"] == accept)
+        for line in said:
+            log(f"record: {display(r)}: {line}")
+            accepted = accepted or r["session_id"] == accept
         # labels from, in order: Herdr now, the record before, the table at tsv_path (G5.6)
         tab, ws = (labels[0].get((r["tmux_socket"], r["tmux_session"])) or labels[1].get(r["pid"])
                    or ((o.get("herdr_tab", ""), o.get("herdr_workspace", "")) if o.get("herdr_tab") else None)
@@ -1443,10 +1488,13 @@ def record():
             "effort": r["effort"], "mode": r["mode"], "add_dirs": r["add_dirs"], "flags": r["flags"],
             "dropped": r["dropped"], "host": r["host"],
             "tmux_socket": sock, "tmux_session": name, "herdr_tab": tab, "herdr_workspace": ws,
-            "config_dir": r["config_dir"], "token_keys": r["token_keys"], "token_print": r["token_print"],
-            "account": r["account"], "carry_env": r["carry_env"],
-            "last_seen": int(time.time()),
+            "config_dir": login["config_dir"], "token_keys": login["token_keys"], "token_print": login["token_print"],
+            "account": login["account"], "carry_env": login["carry_env"],
+            "last_seen": int(time.time()), **login_keys,
         })
+    if accept and not accepted:
+        log(f"record --accept: {display(old_by[accept])}: its row already has the login it runs on "
+            f"({login_text(old_by[accept])}); nothing to take")
     was = {r["session_id"]: r for r in old["lanes"]}
     for r in rows:              # a flag that cannot be carried is named once, when it is first seen (G2.39)
         o = was.get(r["session_id"], {})
@@ -1819,8 +1867,120 @@ def login_words(r):
 
 
 def same_login(r, pid):
+    """True, False, or None when the session's environment could not be read: that is "cannot tell" (G2.51)"""
     want = login_print(r)
-    return want == "unknown" or env_facts(pid)["token_print"] == want
+    if want == "unknown":
+        return True
+    ef = env_facts(pid)
+    return (ef["token_print"] == want) if ef["read"] else None
+
+
+LOGIN_FACTS = {"account": "", "token_keys": [], "token_print": "", "config_dir": "", "carry_env": {}}
+
+
+def login_text(f):
+    """a login as a row or a read knows it, in words: never a token, never its fingerprint"""
+    t = (f"account {f['account']}" if f.get("account")
+         else "a login token in its environment" if login_print(f) else "this machine's own login")
+    return t + (f", Claude Code folder {f['config_dir']}" if f.get("config_dir") else "")
+
+
+def start_fault(r):
+    """why a session that a revive started from this row can come up on another login (G2.51)"""
+    return ("the account command gave another login, or none" if r.get("account") else
+            "its row has a login token and no account label, and a revive cannot give such a login back"
+            if login_print(r) else "its start gave it a login token, or another Claude Code folder, that its row "
+            "does not have")
+
+
+def login_now_text(was, got):
+    """the login a session runs on now, in words that differ from its row's whenever the login does: the same
+    account label with another token is not the same login"""
+    a, b = login_text(was), login_text(got)
+    pw, pg = login_print(was), login_print(got)
+    if a != b or pw == pg:
+        return b
+    if not got.get("account"):          # both are "a login token in its environment"
+        return "another " + b[2:]
+    return b + (" with another login token" if pw and pg else
+                " with no login token in its environment" if pw else " with a login token in its environment")
+
+
+def started_by(pid, sid, P, argv=None):
+    """G2.51 (T57): who started this running Claude. "tardigrade": a process above it is the shell a revive starts
+    for this very session (`<shell> -ic '. <its start file>'`). When Claude ends, the start file replaces that shell
+    with a plain login shell, so a session its owner starts again in the same place has no such process above it:
+    "owner". "unknown": a command line above it could not be read. Read from the process list a pass already took;
+    there is no marker of ours in any environment."""
+    argv = argv or argv_of
+    want = ". " + shlex.quote(os.path.join(launch_dir(), sid + ".sh"))
+    q, unknown = pid, False
+    for _ in range(16):
+        q = P.get(q, (0,))[0]
+        if q <= 1 or q not in P:
+            break
+        a = argv(q)
+        if not a:
+            unknown = True
+        elif len(a) == 3 and a[1] in ("-ic", "-lic") and a[2] == want:
+            return "tardigrade"
+    return "unknown" if unknown else "owner"
+
+
+def login_carried(r, o, P, take=False):
+    """G2.51 (T57): (the login facts this session's row gets, the row's other login keys, the lines to log).
+    r is the running session as this pass read it, o its row on the record ({} for a new one). The login facts are
+    those of a session's start, not of each pass:
+      * environment not read: the row keeps what it had, nothing is emptied;
+      * read, the same login: as read;
+      * read, another login, and its owner started it again: the row follows, and the pass says so;
+      * read, another login, and a revive started it (or who did cannot be told): the row keeps what it had and is
+        marked; only a person's word (record --accept, record --force) makes it follow;
+      * a row an older version wrote (no env_read): as read, and the pass says so when it differs."""
+    now = int(time.time())
+    got = {k: r[k] for k in LOGIN_FACTS}
+    if not o:
+        return got, {"env_read": True}, []
+    was = {k: o.get(k) or type(v)() for k, v in LOGIN_FACTS.items()}
+    keep = {k: o[k] for k in ("env_read", "login_seen", "login_changed") if o.get(k)}
+    if not r["env_read"]:
+        said = [] if o.get("env_unread_since") else [
+            f"its environment could not be read; its login is kept as recorded ({login_text(was)}), nothing is emptied"]
+        return was, dict(keep, env_unread_since=o.get("env_unread_since") or now), said
+    if login_key(was) == login_key(got):
+        said = [f"it runs on its recorded login again ({login_text(was)})"] if keep.pop("login_seen", None) else []
+        return got, dict(keep, env_read=True), said
+    a, b = login_text(was), login_now_text(was, got)
+    change = f"was {a}, now {b}"
+    sid = r["session_id"]
+    if not o.get("env_read"):
+        keep.pop("login_seen", None)
+        return got, dict(keep, env_read=True), [
+            f"its login is taken as read now ({change}); its row was written by an older version, which did not "
+            "write down whether a read had worked"]
+    if take:
+        keep.pop("login_seen", None)
+        keep.pop("login_changed", None)
+        return got, keep, [f"its row takes the login it runs on now, on a person's word ({change})"]
+    who = started_by(r["pid"], sid, P)
+    if who == "owner":
+        keep.pop("login_seen", None)
+        since = time.strftime("%Y-%m-%d %H:%M", time.localtime(r["started_at"])) if r.get("started_at") else ""
+        keep["login_changed"] = {"was": a, "now": b, "at": now, "since": since, "boot": boot_id()}
+        return got, keep, [f"its owner started it again on another login{' at ' + since if since else ''}: {change}. "
+                           "The record follows it, and a revive starts it that way"]
+    seen = {k: got[k] for k in ("account", "token_print", "config_dir")}
+    prev = o.get("login_seen") or {}
+    first = {k: prev.get(k) for k in seen} != seen or prev.get("who") != who
+    keep["login_seen"] = dict(seen, who=who, now=b, at=now if first else prev.get("at", now))
+    if not first:
+        return was, keep, []
+    how = (f"a revive started it from its row and it runs on another login: {start_fault(was)}"
+           if who == "tardigrade" else
+           "it runs on another login than its row has, and who started it cannot be told (a command line above it "
+           "could not be read)")
+    return was, keep, [f"{how} ({change}). Its row keeps the recorded one. Next step: look at the login it shows; "
+                       f"if that is the right one, `record --accept {sid}` makes its row follow it"]
 
 
 def new_session(sock, name, cwd, cmd, then=()):
@@ -2609,14 +2769,20 @@ def _revive(boot):
         last_up = time.time()
         child = ("CLAUDE_CODE_CHILD_SESSION PRESENT (BAD: this session does not save its transcript)"
                  if env_facts(pid)["child"] else "child marker absent")
-        if same_login(r, pid):
+        same = same_login(r, pid)
+        if same:
             log(f"  {nm}: up ({child}" + ("; same login as before)" if login_print(r) else ")"))
             report["started"].append(nm)
             if note and not r.get("fresh") and wants_note(r):
                 note_for[sid] = note
+        elif same is None:
+            log(f"needs you  {nm}: it is up, and its environment could not be read, so which login it came back on "
+                "is not known. It is idle and nothing was typed. Next step: look at the login it shows.")
+            report["needs_you"].append(nm)
         else:
-            log(f"needs you  {nm}: it came back on a different login than it had before. "
-                "It is idle and nothing was typed. Close it and start it your usual way.")
+            log(f"needs you  {nm}: it came back on a different login than it had before ({start_fault(r)})"
+                ". It is idle and nothing was typed. Next step: look at the login it shows; if that is the right "
+                f"one, `record --accept {sid}` makes its row follow it; if not, close it and start it your usual way.")
             report["needs_you"].append(nm)
         pending.pop(sid, None)
         prog["back"] += 1
@@ -3178,6 +3344,15 @@ def census_data():
                     "since": int(next((x.get("unread_at") or 0 for x in table["lanes"]
                                        if x["session_id"] == r["session_id"]), 0))} for r in mine if r.get("unread")],
         "unread_no_row": len([u for u in UNREAD_NOW if u["row"] is None]),
+        # G2.51 (T57): a session that runs on another login than its row keeps, and one whose owner moved it
+        "login_differs": [{"name": display(r), "session_id": r["session_id"], "recorded": login_text(r),
+                           "fault": start_fault(r),
+                           "now": r["login_seen"].get("now", ""), "who": r["login_seen"].get("who", ""),
+                           "since": int(r["login_seen"].get("at") or 0)}
+                          for r in table["lanes"] if r.get("login_seen") and r["session_id"] in live_ids],
+        "login_changed": [{"name": display(r), "session_id": r["session_id"], "was": r["login_changed"].get("was", ""),
+                           "now": r["login_changed"].get("now", ""), "at": int(r["login_changed"].get("at") or 0)}
+                          for r in table["lanes"] if (r.get("login_changed") or {}).get("boot") == boot_id()],
         "cannot_tell_running": cannot_tell,
         "down_during_restore": down_during_restore(live_ids),
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
@@ -3325,6 +3500,16 @@ def census():
               f"({u['why']}"
               + (f"; first at {clock(u['since'])}" if u["since"] else "")
               + "). Its row on the record is kept as it was; it is not taken as gone.")
+    for u in d["login_differs"]:            # G2.51 (T57)
+        print(f"Login differs: {u['name']} is recorded on {u['recorded']} and runs on {u['now']} (first seen "
+              f"{clock(u['since'])}). "
+              + (f"A revive started it from its row: {u['fault']}. "
+                 if u["who"] == "tardigrade" else "Who started it cannot be told. ")
+              + "Its row keeps the recorded one. Next step: look at the login it shows; if that is the right one, "
+              f"`record --accept {u['session_id']}` makes its row follow it.")
+    for u in d["login_changed"]:
+        print(f"Login changed: {u['name']} was started again by its owner on another login (seen {clock(u['at'])}): "
+              f"was {u['was']}, now {u['now']}. The record follows it, and a revive starts it that way.")
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
