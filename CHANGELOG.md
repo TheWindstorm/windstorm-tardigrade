@@ -28,9 +28,10 @@
   line with the one command that closes it (`chmod go-w <folder>`); census repeats it until it is closed. A folder of
   your own private group with nobody else in it is not named. A folder another account owns is named with its owner
   and no command. What is read is the mode bits and the groups' members; access lists are not read. Seen on a stock
-  Linux machine, and on two Macs (macOS 13 and 27): setup, census and uninstall, the walk naming nothing at a home of
-  700 and naming a folder opened to the group every Mac account is in; an open launch agents' folder was not steered
-  (T80).
+  Linux machine, and on two Macs in test accounts. On macOS 27, logged in at the screen: setup (exit 0), census and
+  uninstall. On macOS 13, with no login at the screen: setup stopped (exit 1, launchd took no job), and census and
+  uninstall ran. On both, the walk named nothing at a home of 700 and named a folder opened to the group every Mac
+  account is in; an open launch agents' folder was not steered (T80).
 - **Only what Tardigrade wrote.** Setup, revive and uninstall overwrite or remove only files Tardigrade wrote, known by
   their own marks (seen on 0.1.9 in a scratch home: setup wrote over a person's own `tardigrade.py`, uninstall removed
   it and a person's `__pycache__` folder whole, a revive removed a person's folder named `lock` and a person's file in
