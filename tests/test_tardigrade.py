@@ -567,7 +567,7 @@ class Base(unittest.TestCase):
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
 
-    def load_tool(self):
+    def load_tool(self, script=SCRIPT):
         """the tool loaded in this test's process with this test's home (the suite's marker in it) and the test
         setting, kept for the whole test: some of its functions read the environment at each call (the guard)"""
         from unittest import mock
@@ -575,7 +575,7 @@ class Base(unittest.TestCase):
                                 TARDIGRADE_FAKE_X11_DIR=os.path.join(self.tmp, "x11"))
         patch.start()
         self.addCleanup(patch.stop)
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        spec = importlib.util.spec_from_file_location("tardigrade", script)
         tg = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(tg)
         return tg
@@ -5366,7 +5366,7 @@ sys.exit(rc)
         self.registry({key: [{"scope": "user", "version": ver}]})
         rc, out = from_plugin("setup")
         self.assertEqual(rc, 0, out)
-        self.assertEqual(jload(notes)["from"], os.path.join(plug, "tardigrade.py"))
+        self.assertEqual(jload(notes)["from"], os.path.join(base, "plugins", "cache"))      # G5.25
         rc, out = self.tg("census")                                 # the row is there: no line
         self.assertNotIn("removed the Tardigrade plugin", out)
         self.assertEqual(json.loads(self.tg("census", "--json")[1])["plugin"]["answer"], "same")
@@ -5432,7 +5432,133 @@ sys.exit(rc)
         r = subprocess.run([sys.executable, "-I", copy, "setup"], capture_output=True, text=True,
                            env=dict(self.env, TARDIGRADE_FAKE_BOOT_ID="boot-c"), timeout=240)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(jload(notes)["from"], os.path.join(plug, "tardigrade.py"))
+        self.assertEqual(jload(notes)["from"], os.path.join(base, "plugins", "cache"))
+
+    # ----- G5.25 (T100): nothing setup writes names a path inside a plugin cache version folder -----
+    def plugin_copy(self):
+        """a copy of the skill in a made-up plugin cache, as Claude Code lays one out:
+        <home>/.claude/plugins/cache/<catalog>/<plugin>/<version>/scripts/tardigrade.py, with its row in Claude
+        Code's list -> (the cache folder, the script in it, the row's key, the version)"""
+        import re
+        ver = re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1)
+        cache = os.path.join(self.home, ".claude", "plugins", "cache")
+        plug = os.path.join(cache, "some-marketplace", "windstorm-tardigrade", ver, "scripts")
+        os.makedirs(plug)
+        shutil.copyfile(SCRIPT, os.path.join(plug, "tardigrade.py"))
+        key = "windstorm-tardigrade@some-marketplace"
+        self.registry({key: [{"scope": "user", "version": ver}]})
+        return cache, os.path.join(plug, "tardigrade.py"), key, ver
+
+    def below_cache(self, cache):
+        """Everything in this test's home outside the made-up cache itself, read byte by byte: every file's whole
+        content and every link's target. -> [(the path under home, the value found)] for each that names a path
+        below the cache folder."""
+        key, found = os.fsencode(cache + os.sep), []
+        for d, dirs, files in os.walk(self.home):
+            dirs[:] = [n for n in dirs if os.path.join(d, n) != cache or os.path.islink(os.path.join(d, n))]
+            for n in sorted(dirs + files):
+                p = os.path.join(d, n)
+                if os.path.islink(p):
+                    data = os.fsencode(os.readlink(p))
+                elif os.path.isfile(p):
+                    with open(p, "rb") as f:
+                        data = f.read()
+                else:
+                    continue
+                at = data.find(key)
+                if at >= 0:
+                    value = re.split(rb'[\s"<]', data[at:at + len(key) + 200])[0]
+                    found.append((os.path.relpath(p, self.home), value.decode(errors="replace")))
+        return found
+
+    def test_G5_25_nothing_setup_writes_on_linux_names_a_path_inside_a_plugin_cache_version_folder(self):
+        """T100, in the shape the family's rule gives: a copy of the skill in a made-up plugin cache version folder,
+        setup run from there, then every file and every link setup left is read byte by byte for a path below the
+        cache folder. Claude Code removes a plugin's older version folder after an update, so a stored path into
+        one stops working. The list of made folders keeps the cache folder only; the plugin line answers the same
+        from that and from a list an older version wrote; the next setup cuts an older list. Last, the reader is
+        shown not to be blind: a unit pointed into the folder by hand is found."""
+        self.stand_in_services()
+        cache, script, key, ver = self.plugin_copy()
+        notes = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "folders-made.json")
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+
+        def answer():
+            return json.loads(self.tg("census", "--json")[1])["plugin"]["answer"]
+
+        def run(path, *a):
+            r = subprocess.run([sys.executable, "-I", path, *a], capture_output=True, text=True, env=self.env,
+                               timeout=240)
+            return r.returncode, r.stdout + r.stderr
+
+        self.start_lane("alpha", "Alpha Lane")
+        rc, out = run(script, "setup")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("is set up", out)
+        ud = os.path.join(self.home, ".config", "systemd", "user")
+        for unit in ("windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service",
+                     "windstorm-tardigrade-record.timer"):
+            self.assertTrue(os.path.isfile(os.path.join(ud, unit)), unit)       # what is read below is all there
+        self.assertTrue(os.path.isfile(copy) and os.path.isfile(notes))
+        self.assertEqual(self.below_cache(cache), [], "setup wrote a path below the plugin cache folder")
+        self.assertEqual(jload(notes)["from"], cache)
+        # the plugin line answers from the short value as it did from the whole path
+        self.assertEqual(answer(), "same")
+        self.registry({})
+        self.assertEqual(answer(), "removed")
+        # a list an older version wrote holds the script's whole path: read as before, with and without the row
+        older = dict(jload(notes), **{"from": script})
+        with open(notes, "w") as f:
+            json.dump(older, f, indent=1)
+        self.assertEqual(answer(), "removed")
+        self.registry({key: [{"scope": "user", "version": ver}]})
+        self.assertEqual(answer(), "same")
+        self.assertEqual([p for p, _ in self.below_cache(cache)],
+                         [os.path.relpath(notes, self.home)], "the reader finds the older list's value")
+        # the next setup, run from the installed copy as the README says after an update, cuts the older list
+        rc, out = run(copy, "setup")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((jload(notes)["from"], self.below_cache(cache), answer()), (cache, [], "same"))
+        # a copy set up from a clone keeps the clone's script whole, as before
+        rc, out = self.tg("setup")
+        self.assertEqual((rc, jload(notes)["from"], self.below_cache(cache)), (0, SCRIPT, []), out)
+        # the reader is not blind: a unit pointed into the version folder by hand is found, with its value
+        unit = os.path.join(ud, "windstorm-tardigrade-revive.service")
+        text = fread(unit)
+        self.assertIn(copy, text)
+        with open(unit, "w") as f:
+            f.write(text.replace(copy, script))
+        self.assertEqual(self.below_cache(cache), [(os.path.relpath(unit, self.home), script)])
+        with open(unit, "w") as f:
+            f.write(text)
+        self.assertEqual(self.below_cache(cache), [])
+
+    def test_G5_25_nothing_setup_writes_with_the_mac_stand_in_names_a_path_inside_a_plugin_cache_version_folder(self):
+        """T100 on a Mac: the same read after setup run from the plugin copy with launchd's stand-in: the copy,
+        the two launchd files and the list of made folders."""
+        import contextlib
+        import io
+        from unittest import mock
+        cache, script, key, ver = self.plugin_copy()
+        tg = self.load_tool(script)
+        patch = mock.patch.dict(os.environ, PATH=self.path)     # the tool's children find this test's launchctl
+        patch.start()
+        self.addCleanup(patch.stop)
+        tg.MAC, tg.ARGS, tg.DRY = True, [], False
+        tg.CFG["tmux"] = TMUX                   # the settings are read in main(), which a loaded tool does not run
+        self.script("launchctl", "#!/bin/sh\nexit 0\n")         # launchd takes both jobs and answers for both
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = tg.setup()
+        la = os.path.join(self.home, "Library", "LaunchAgents")
+        notes = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "folders-made.json")
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        for f in (copy, notes, *(os.path.join(la, f"ai.thewindstorm.tardigrade-{x}.plist") for x in ("revive", "record"))):
+            self.assertTrue(os.path.isfile(f), f"{f}: {out.getvalue()}")      # what is read below is all there
+        self.assertEqual(rc, 0, out.getvalue())
+        self.assertEqual(self.below_cache(cache), [], "setup wrote a path below the plugin cache folder")
+        self.assertEqual(jload(notes)["from"], cache)
+        self.assertEqual(tg.plugin_facts()["answer"], "same")
 
     def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))

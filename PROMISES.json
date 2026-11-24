@@ -1405,7 +1405,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G5_25_nothing_setup_writes_on_linux_names_a_path_inside_a_plugin_cache_version_folder",
    "proven": "",
    "issue": 108,
    "moved_why": "",

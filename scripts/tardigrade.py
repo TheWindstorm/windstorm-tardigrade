@@ -4232,7 +4232,7 @@ def setup():
         os.makedirs(os.path.join(HOME, "Library", "LaunchAgents"), exist_ok=True)
     else:
         os.makedirs(os.path.join(HOME, ".config", "systemd", "user"), exist_ok=True)
-    source = setup_from() if os.path.abspath(__file__) == script else os.path.abspath(__file__)
+    source = from_kept(setup_from() if os.path.abspath(__file__) == script else os.path.abspath(__file__))
     write_made(new, older, source)      # kept from the first folder on: a setup that stops later has left its list
     if MAC:
         la = os.path.join(HOME, "Library", "LaunchAgents")
@@ -4501,8 +4501,18 @@ def write_made(new, older, source):
     write_private(made_list(), text + "\n")
 
 
+def from_kept(source):
+    """G5.25 (T100): what setup keeps of the script it ran from. Run from a plugin, only the part up to
+    /plugins/cache: Claude Code removes a plugin's older version folder after an update, so nothing of ours names
+    a path below that folder. That part is all the tool reads (the copy came from a plugin, and where Claude Code's
+    folder is). A clone's path is kept whole. A list an older version wrote is cut the same way at the next setup."""
+    m = re.fullmatch(r"(.+/plugins/cache)/.+", source or "")
+    return m.group(1) if m else source
+
+
 def setup_from():
-    """the script setup ran from, as setup wrote it down, or "" when that cannot be read"""
+    """where setup ran from, as setup wrote it down (a clone's script, or a plugin cache folder; a list written
+    before 0.1.11 holds the script's whole path there), or "" when that cannot be read"""
     if not is_ours(made_list(), "made"):
         return ""
     d = read_json(made_list(), None)
@@ -4569,7 +4579,7 @@ def plugin_facts():
     if not is_ours(script, "copy"):
         return dict(out, answer="no copy")
     out["installed"] = version_of(script)
-    m = re.fullmatch(r"(.+)/plugins/cache/.+", setup_from())
+    m = re.fullmatch(r"(.+)/plugins/cache(?:/.+)?", setup_from())      # G5.25: both what 0.1.11 keeps and older
     base = m.group(1) if m else os.path.join(HOME, ".claude")
     ans, x = plugin_registry(base)
     if ans == "unread":
