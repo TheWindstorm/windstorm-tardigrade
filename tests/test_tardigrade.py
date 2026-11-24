@@ -2685,13 +2685,36 @@ class Revive(Base):
         self.assertNotIn("(set)", dry, "nothing is hidden, so nothing is said")
         for cmd, shown in ((f"TOKEN={secret} claude", "TOKEN=(set) claude"),
                            (f"TOKEN='{secret} two' OTHER=\"{secret}\" claude", "TOKEN=(set) OTHER=(set) claude"),
-                           (f"env TOKEN={secret} claude", "env TOKEN=(set) claude")):
+                           (f"env TOKEN={secret} claude", "env TOKEN=(set) claude"),
+                           # wherever the word stands in the person's own command
+                           (f"env -i TOKEN={secret} claude", "env -i TOKEN=(set) claude"),
+                           (f"env -u X TOKEN={secret} claude", "env -u X TOKEN=(set) claude"),
+                           (f"export TOKEN={secret}; claude", "export TOKEN=(set); claude"),
+                           (f"export A=1 TOKEN={secret} && claude", "export A=(set) TOKEN=(set) && claude"),
+                           (f"sh -c 'TOKEN={secret} exec claude \"$@\"' sh", "sh -c 'TOKEN=(set) exec claude \"$@\"' sh")):
             self.cfg({"claude_command": cmd})
             for args in (("--dry-run",), ("--dry-run", "--all"), ("--dry-run", "--only", "Alpha Lane")):
                 rc, dry = self.tg("revive", *args)
                 self.assertNotIn(secret, dry, (cmd, args))
                 self.assertRegex(dry, rf"tmux default:alpha   {re.escape(shown)} .*--resume {a}\n", (cmd, args))
                 self.assertEqual(dry.count(note), 1, (cmd, args, dry))
+            # with --start-file the start file is printed whole, as its name says: the note then says that this
+            # screen holds the value, never that it is not shown here
+            rc, dry = self.tg("revive", "--dry-run", "--start-file")
+            self.assertRegex(dry, rf"tmux default:alpha   {re.escape(shown)} .*--resume {a}\n", cmd)
+            self.assertIn(secret, dry, cmd)
+            self.assertEqual((dry.count(note), dry.count(
+                "(set) stands for a value that the start line above does not show. The start file printed under "
+                "each line shows it: what is on this screen now holds the value.")), (0, 1), (cmd, dry))
+        # the words the tool puts behind the command are left as they are, and a value given any other way (a
+        # flag's own word) is shown as it is: the README says so
+        other = "made-up-" + uuid.uuid4().hex
+        self.cfg({"claude_command": f"claude-wrap --login {other} --as={other}"})
+        rc, dry = self.tg("revive", "--dry-run")
+        self.assertRegex(dry, rf"tmux default:alpha   claude-wrap --login {other} --as={other} .*--resume {a}\n")
+        self.assertNotIn("(set)", dry)
+        self.assertIn("A value written any other way, such as a flag's (`--token VALUE`, `--token=VALUE`), is shown "
+                      "as it is.", " ".join(fread(os.path.join(ROOT, "README.md")).split()))
         self.cfg({"claude_command": f"TOKEN={secret} claude"})
         n = len(self.launches())
         rc, out = self.tg("revive")                         # the start itself keeps the value

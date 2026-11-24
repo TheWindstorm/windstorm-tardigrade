@@ -1721,10 +1721,11 @@ def fill(template, r):
     return re.sub(r"\{(\w+)\}", sub, str(template))
 
 
-def claude_line(r):
-    """the one command that starts this session again"""
+def claude_words(r):
+    """the one command that starts this session again, in two parts: (the person's own command from the settings,
+    the words the tool puts behind it)"""
     if CFG.get("start_command"):
-        return fill(CFG["start_command"], r)
+        return fill(CFG["start_command"], r), []
     if r.get("account") and CFG.get("account_command"):
         head = fill(CFG["account_command"], r)       # a session pinned to an account starts through its wrapper
     else:
@@ -1733,7 +1734,13 @@ def claude_line(r):
         tail = ["--name", shlex.quote(r["name"])] if r.get("name") and not has_name_flag(r) else []
     else:
         tail = ["--resume", r["session_id"]]
-    return " ".join([head] + [shlex.quote(x) for x in flags_of(r)] + tail)
+    return head, [shlex.quote(x) for x in flags_of(r)] + tail
+
+
+def claude_line(r):
+    """the one command that starts this session again"""
+    head, rest = claude_words(r)
+    return " ".join([head] + rest)
 
 
 def env_file_pairs():
@@ -1858,20 +1865,22 @@ def write_launch_file(r):
 
 NOT_SHOWN = ("(set) stands for a value that is not shown here. It is in your config.json and in the session's "
              "start file; put it back in before you run such a line by hand.")
-_VALUE_WORD = re.compile(r"""([A-Za-z_][A-Za-z0-9_]*)=(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s'"\\])*(\s+|$)""", re.S)
+NOT_SHOWN_BUT_FILE = ("(set) stands for a value that the start line above does not show. The start file printed under "
+                      "each line shows it: what is on this screen now holds the value.")
+# a word NAME=value: at the line's start, after a blank or one of ; & | ( and at the start of a quoted command
+_VALUE_WORD = re.compile(r"""(?<![^\s;&|('"])([A-Za-z_][A-Za-z0-9_]*)=(?:'[^']*'|"(?:[^"\\]|\\.)*"|\\.|[^\s'"\\;&|()<>])*""",
+                         re.S)
 
 
-def shown_line(line):
-    """G2.56 (T106): a start line as it is printed or logged. A VAR=value word that stands before the program (also
-    after a leading `env`) shows as VAR=(set): a value there can be a key or a token, and a printed line lands in
-    whatever reads it. The rest of the line is unchanged. -> (the line to show, how many values it hides)"""
-    pos = re.match(r"\s*(?:env\s+)?", line).end()
-    out, n = line[:pos], 0
-    while True:
-        m = _VALUE_WORD.match(line, pos)
-        if not m:
-            return out + line[pos:], n
-        out, pos, n = out + m.group(1) + "=(set)" + m.group(2), m.end(), n + 1
+def shown_line(r):
+    """G2.56 (T106): a session's start line as it is printed. In the person's own command (claude_command,
+    account_command, start_command) every word of the form VAR=value shows as VAR=(set), wherever it stands: before
+    the program, after `env` and its options, after `export`, at the start of a quoted command. A value there can be
+    a key or a token, and a printed line lands in whatever reads it. The words the tool puts behind the command are
+    unchanged. -> (the line to show, how many values it hides)"""
+    head, rest = claude_words(r)
+    head, n = _VALUE_WORD.subn(lambda m: m.group(1) + "=(set)", head)
+    return " ".join([head] + rest), n
 
 
 def launch_cmd(r):
@@ -3072,7 +3081,7 @@ def _revive(boot):
             + (f"  [account {r['account']}]" if r.get("account") else "")
             + ("  [pinned login: checked before anything is typed]" if login_print(r) else ""))
         if DRY:
-            shown, n_hidden = shown_line(claude_line(r))
+            shown, n_hidden = shown_line(r)
             hidden += n_hidden
             log(f"      tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}   {shown}")
             if "--start-file" in ARGS:      # to the screen only, never to the log: it holds the env_file's values
@@ -3080,7 +3089,7 @@ def _revive(boot):
         todo.append(r)
     if DRY:
         if hidden:
-            log(NOT_SHOWN)
+            log(NOT_SHOWN_BUT_FILE if "--start-file" in ARGS else NOT_SHOWN)
         return 0
     try:        # start files of sessions that are no longer on the record
         on_record = {r["session_id"] + end for r in read_table()["lanes"] for end in (".sh", ".mark")}

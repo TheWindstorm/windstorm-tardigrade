@@ -92,9 +92,9 @@ After the starts, `revive` keeps looking for a few minutes and prints a count: L
 Show that line. UP-NOT-LOADED means a question is open on that session's screen: the person opens its window.
 
 Before a planned reboot, run `revive --dry-run --all` and show it: it lists the line that will start each
-recorded session, and starts nothing. A value the person put before the program (`VAR=value`) is shown as
-`VAR=(set)`. Do not add `--start-file` unless the person asks for it: that prints the start file whole, values
-included, into this conversation.
+recorded session, and starts nothing. A `VAR=value` word in the person's own start command is shown as
+`VAR=(set)`; a value given as a flag's word is shown as it is. Do not add `--start-file` unless the person asks
+for it: that prints the start file whole, values included, into this conversation.
 
 A line "Starting it new" means that session never had a conversation, so there was nothing to resume; it came
 back as a new session with the same name. Nothing was lost.
