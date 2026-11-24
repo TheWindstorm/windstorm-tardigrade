@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -1368,6 +1369,668 @@ class Revive(Base):
         # and only whole paths, once each: "", "." or "rel/bin" would mean the session's own project folder
         self.assertEqual(new["path"].split(":"), [local, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
                                                          "/usr/sbin", "/sbin", STUBS, extra], out)
+
+    # ----- G5.19 (T88), family rule 2: a person's machine is full where a stock one is empty -----
+    LIVED_IN_TMUX = ("set -g base-index 1\nsetw -g pane-base-index 1\nset -g default-shell /bin/sh\n"
+                     "set -g default-command 'exec sleep 600'\nset -g remain-on-exit on\n"
+                     "set -g status-right '#(date)'\nset -g @plugin 'tmux-plugins/tpm'\nrun-shell 'true'\n")
+    LIVED_IN_SHELL = ('echo "welcome back"\nexport PATH="$PATH:$HOME/.local/bin"\nnvm() { :; }\n'
+                      "eval \"$(echo 'export NVM_DIR=$HOME/.nvm')\"\nset -o noclobber\n")
+    # the lines of tests/lived-in-list.md that the suite plants itself; the others are for the round on a stock machine
+    LIVED_IN_PLANTED = ["base-index 1", "a default shell and a default command", "remain-on-exit", "destroy-unattached",
+                        "a status line that runs a command", "a plugin-manager line", "prints", "asks with read",
+                        "starts tmux itself", "puts ~/.local/bin late on PATH", "runs a version manager's init",
+                        "sets noclobber", "ends the shell", "hands the pane to another program", "runs a program that does not end",
+                        "hands the pane to another shell", "TMUX_TMPDIR",
+                        "an exported token"]
+
+    def lived_in(self, conf=None, rc=None):
+        """the person's own settings, written after the session's first start so that only the revive meets them"""
+        for name, text in ((".tmux.conf", conf), (".bashrc", rc)):
+            path = os.path.join(self.home, name)
+            if text is None:
+                if os.path.exists(path):
+                    os.remove(path)
+            else:
+                with open(path, "w") as f:
+                    f.write(text)
+
+    def test_G5_19_what_the_tool_starts_gets_an_environment_it_built_and_a_lived_in_machine_gets_its_session_back(self):
+        """T88, parts 1 and 2: the tmux server the tool starts gets an environment the tool built, by name; tmux is
+        always given its socket; the units hand nothing on; and with a person's tmux settings and shell start file
+        in place (the suite's share of tests/lived-in-list.md) the session comes back as itself. One of those
+        settings ends every session with no window attached: the one session the tool makes is asked to stay, and
+        the server's own setting is the same before and after."""
+        sid = self.recorded_then_rebooted()
+        work_before = sorted(os.listdir(self.work))
+        self.lived_in(self.LIVED_IN_TMUX + "set -g destroy-unattached on\n", self.LIVED_IN_SHELL)
+        envf = os.path.join(self.home, "desk.env")
+        with open(envf, "w") as f:
+            f.write("DISPLAY=:10.0\n")
+        seen = self.script("tmux-seen", '#!/bin/sh\nprintf "%s %s\\n" "$1" "$2" >> "$HOME/tmux-calls.log"\n'
+                           f'exec {shlex.quote(TMUX)} "$@"\n')
+        self.cfg({"env_file": envf, "tmux": seen})
+        # before: what this person's tmux settings say, asked of a server that reads them and ends again
+        ask = lambda *a: self.tmux(self.sock, *a)[1].strip()
+        self.assertEqual(ask("start-server", ";", "show-options", "-gv", "destroy-unattached"), "on")
+        self.until(lambda: self.tmux(self.sock, "list-sessions")[0] != 0, "the asked server to have ended")
+        noise = {"LIVED_IN_NOISE": "1", "CLAUDE_CODE_OAUTH_TOKEN": "tok-lived-in", "NVM_DIR": "/nowhere/.nvm",
+                 "TMUX_PLUGIN_MANAGER_PATH": "/nowhere/tpm", "SSH_AUTH_SOCK": "/nowhere/agent", "EDITOR": "vi"}
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, **noise)
+        self.assertEqual(rc, 0, out)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid, out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["failed"], rep.get("failed_why")), (["Alpha Lane"], [], None), out)
+        # (1) the server's environment, by name: the nine, the env file's pair, and the suite's own test key
+        names = {x.lstrip("-").split("=", 1)[0] for x in ask("show-environment", "-g").splitlines() if x.strip()}
+        must = {"HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "PATH"}
+        may = must | {"TMPDIR", "XDG_RUNTIME_DIR", "DISPLAY", "TARDIGRADE_TESTING", "PWD"}    # PWD: tmux's own line
+        self.assertEqual((sorted(must - names), sorted(names - may)), ([], []), "the tmux server's environment, by name")
+        self.assertEqual(new["claude_env"], [], "nothing of the caller's Claude settings reached the session")
+        try:
+            with open(f"/proc/{new['pid']}/environ", "rb") as f:
+                got = dict(x.decode("utf-8", "replace").split("=", 1) for x in f.read().split(b"\0") if b"=" in x)
+            self.assertEqual(sorted(k for k, v in noise.items() if got.get(k) == v), [],
+                             "what the tool was called with stayed with the tool")
+            # and the session has the person's environment on purpose, through the person's own shell start
+            self.assertEqual(got.get("NVM_DIR"), os.path.join(self.home, ".nvm"))
+            self.assertEqual(got["PATH"].split(":")[-1], os.path.join(self.home, ".local", "bin"))
+        except OSError:
+            pass                                    # no /proc: the server's own list above is the read
+        # (2) the person's setting is as it was; only the one session the tool made is asked to stay
+        self.assertEqual((ask("show-options", "-gv", "destroy-unattached"),
+                          ask("show-options", "-v", "-t", "=alpha:", "destroy-unattached")), ("on", "off"))
+        self.tmux(self.sock, "new-session", "-d", "-s", "persons-own", "sleep 30")
+        self.until(lambda: self.tmux(self.sock, "has-session", "-t", "=persons-own")[0] != 0,
+                   "the person's own detached session to end, as their settings say")
+        self.assertEqual(self.tmux(self.sock, "has-session", "-t", "=alpha")[0], 0)
+        # the pane's own process is the shell the tool started, also where the person's tmux runs commands with a
+        # shell that stays above them (default-shell /bin/sh): only so can the tool read what the pane holds
+        pane = ask("display", "-p", "-t", "=alpha:", "#{pane_pid} #{pane_current_command}").split()
+        self.assertEqual(cmdline_of(int(pane[0])).split()[:2], ["bash", "-ic"])
+        self.assertNotIn(pane[1], ("sh", "dash", "bash"), "tmux names the session's program, not a shell above it")
+        # tmux always gets its socket: every call of this record, census and revive
+        self.tg("record", "--force")
+        rc, census = self.tg("census")
+        self.assertIn("Running: 1 ", census)
+        calls = fread(os.path.join(self.home, "tmux-calls.log")).splitlines()
+        self.assertGreater(len(calls), 5)
+        self.assertEqual([c for c in calls if not (c.startswith("-S " + self.tmp + os.sep) or c == "-V ")], [])
+        # (a) the mark is the tool's own, in its state folder; the session's folder and the home got nothing; the
+        # census counts no session for it
+        mark = self.state(os.path.join("launch", sid + ".mark"))
+        self.assertEqual(fread(mark), "reached\n")
+        self.assertEqual(sorted(os.listdir(self.work)), work_before)
+        self.assertEqual([x for x in os.listdir(self.home) if x.endswith(".mark")], [])
+        self.assertEqual(len(self.table()["lanes"]), 1)
+        # the units hand nothing on, and run the installed copy
+        tool = self.load_tool()
+        texts = list(tool.units("/PY", "/COPY").values()) + [tool.plist("l", "/PY", "/COPY revive --boot", "exec", "")]
+        for text in texts:
+            self.assertNotIn("Environment", text)
+        self.assertEqual(re.findall(r"^ExecStart=(.*)$", "\n".join(texts), re.M),
+                         ["/PY -I /COPY revive --boot", "/PY -I /COPY record"])
+        # uninstall takes the mark, and keeps a file of the person's that only has its ending
+        own = self.state(os.path.join("launch", "my-own.mark"))
+        with open(own, "w") as f:
+            f.write("mine\n")
+        self.boot_answers("disabled", "inactive", True)
+        rc, out = self.tg("uninstall")
+        self.assertEqual((rc, os.path.exists(mark), fread(own)), (0, False, "mine\n"), out)
+        self.assertIn("  " + mark, out.split("Removed:")[1].split("Kept")[0])
+        self.assertIn("  " + own, out.split("Kept, because Tardigrade did not write them")[1])
+        # (3) the list for the lived-in round is beside the tests, and says which of its lines the suite plants
+        lines = [x[2:].strip() for x in fread(os.path.join(ROOT, "tests", "lived-in-list.md")).splitlines()
+                 if x.startswith("- ")]
+        self.assertEqual(sorted(x[:-len(" (suite)")] for x in lines if x.endswith(" (suite)")),
+                         sorted(self.LIVED_IN_PLANTED))
+        self.assertGreaterEqual(len([x for x in lines if x.endswith(" (round)")]), 10)
+        self.assertEqual([x for x in lines if not x.endswith((" (suite)", " (round)"))], [])
+
+    ENDED_AT_ONCE = ("the shell ended before it read the session's start file. The usual cause is a line in the shell's "
+                     "start files (~/.bashrc) that ends the shell, or that runs a program in the shell's place which "
+                     "ends (an `exit`, an `exec tmux`). Next step: in that file, keep that line from running inside "
+                     "tmux, then run `tardigrade revive`.")
+
+    # ----- G5.19 and G1.20: every step is taken as printed, in the state the failure left, after a plain record
+    # pass and with no restart between (family rule 7). Two sessions: Alpha Lane is the one a revive has to start;
+    # Beta Lane was started by hand first, so a session runs and a record pass does what the timer's would.
+    other = None
+
+    def one_up_one_down(self):
+        a = self.start_lane("alpha", "Alpha Lane")
+        self.other = self.start_lane("beta", "Beta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        return a
+
+    def other_up(self):
+        """the person starts Beta Lane by hand (not through the shell's start files), unless it runs"""
+        if self.other and self.tmux(self.sock, "has-session", "-t", "=beta")[0] != 0:
+            self.by_hand(self.other, "beta")
+
+    def names(self, key="lanes"):
+        return sorted(r["name"] for r in self.table()[key])
+
+    def pane(self, what, session="alpha"):
+        return self.tmux(self.sock, "display", "-p", "-t", f"={session}:", "#{" + what + "}")[1].strip()
+
+    def record_pass(self, case):
+        """a plain record pass, as the timer runs one every five minutes: a session that is not back stays on the
+        list a revive reads (G1.20)"""
+        rc, out = self.tg("record")
+        self.assertEqual((rc, self.names(), self.names("down")),
+                         (0, ["Alpha Lane"] + (["Beta Lane"] if self.other else []), []), f"{case}: {out}")
+        return out
+
+    def not_back(self, case, rc=None, cfg=None, conf=None):
+        """One revive that the person's settings stop. It is not counted as brought back, its line names the case
+        and the one next step, the report keeps it; then a plain record pass, and the census says it under the
+        row, read at that moment. -> (the reason, the revive's output)"""
+        self.lived_in(self.LIVED_IN_TMUX if conf is None else conf, rc)
+        self.cfg(dict({"retry_min": 0.1, "claude_command": None}, **(cfg or {})))
+        self.other_up()
+        n = len(self.launches())
+        rcode, out = self.tg("revive")
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["failed"], rep["skipped"], len(self.launches())),
+                         ([], ["Alpha Lane"], ["Beta Lane"] if self.other else [], n), f"{case}: {out}")
+        why = rep.get("failed_why", {}).get("Alpha Lane", "")
+        gave = [x for x in out.splitlines() if "Alpha Lane: GAVE UP after" in x]
+        self.assertEqual(len(gave), 1, out)
+        self.assertTrue(why and gave[0].endswith(": " + why), f"{case}: the line and the report say the same: {gave} {why!r}")
+        self.assertLessEqual(why.count("Next step: "), 1, f"{case}: one next step: {why}")
+        self.assertIn(f"revive: 0 started, {1 if self.other else 0} already running, 1 failed, 0 need you\n", out)
+        self.record_pass(case)
+        census = self.tg("census")[1]
+        self.assertIn(f"Running: {1 if self.other else 0} ", census, case)
+        self.assertIn("      A revive did not bring it back: " + why, census, case)
+        return why, out
+
+    def back(self, sid, case, why="", sessions=("alpha",)):
+        """The next step was taken as printed. With no restart in between, and after one more plain record pass,
+        the same `tardigrade revive` brings the session back, once, in its own place; it says first what it is
+        trying again; the place loses our mark when the session has loaded; and the row is an ordinary one again."""
+        self.record_pass(case)
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid, f"{case}: {out}")
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["failed"], rep.get("failed_why"), rep.get("not_started")),
+                         (["Alpha Lane"], [], None, None), f"{case}: {out}")
+        self.assertIn(f"revive: 1 started, {1 if self.other else 0} already running, 0 failed, 0 need you\n", out)
+        if why:
+            self.assertIn("trying again Alpha Lane: last time " + why.split(" Next step:")[0], out, case)
+        time.sleep(1)
+        self.assertEqual(len(self.launches()), n + 1, f"{case}: started once")
+        self.assertEqual(sorted(set(self.tmux(self.sock, "list-panes", "-a", "-F", "#{session_name}")[1].split())),
+                         sorted(list(sessions) + (["beta"] if self.other else [])), case)
+        for mark in ("@tardigrade_waiting", "@tardigrade_session"):
+            self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", "=alpha:", mark)[1].strip(), "", mark)
+        census = self.tg("census")[1]
+        self.assertIn(f"Running: {2 if self.other else 1} ", census, case)
+        self.assertNotIn("A revive did not", census, case)
+        self.assertNotIn("a revive was to start them", census, case)
+        self.record_pass(case)
+        self.assertEqual([k for r in self.table()["lanes"] for k in r if k.startswith("not_started")], [], case)
+        return out
+
+    def test_G5_19_a_shell_that_ends_before_the_start_file_is_named_so_and_is_not_counted_as_back(self):
+        """T88, case 1: the session ended at once and tmux removed it (the shell start file exits, or runs tmux in
+        the shell's place, which refuses to nest and ends)"""
+        sid = self.one_up_one_down()
+        self.script("tmux", f'#!/bin/sh\nexec {shlex.quote(TMUX)} "$@"\n')       # the pane's own tmux: the real one
+        plain = "set -g base-index 1\n"
+        for n, (line, cure) in enumerate((("exit 0", '[ -n "$TMUX" ] || exit 0'),
+                                          ("exec tmux new-session -A -s main",
+                                           '[ -n "$TMUX" ] || exec tmux new-session -A -s main'))):
+            if n:
+                self.reboot()                               # another restart of the machine: a new failure
+            why, out = self.not_back(line, rc=f"echo hi\n{line}\n", conf=plain)
+            self.assertIn("its tmux session is gone: it ended at once and tmux removed it: " + self.ENDED_AT_ONCE, out)
+            self.assertNotEqual(self.tmux(self.sock, "has-session", "-t", "=alpha")[0], 0)
+            # the next step, taken: the line no longer runs inside tmux
+            self.lived_in(plain, f"echo hi\n{cure}\n")
+            self.back(sid, line, why)
+
+    def test_G5_19_a_pane_kept_after_its_shell_ended_is_read_as_ended_and_the_next_revive_starts_there(self):
+        """T88, case 1 where the person's tmux keeps a pane whose program ended (remain-on-exit): the session is
+        still there and holds nothing. Read as a shell, it was said to hold one, with no cause; and the revive
+        after it said "a tmux session named alpha already exists", started nothing and counted it as running."""
+        sid = self.one_up_one_down()
+        why, out = self.not_back("exit, pane kept", rc="echo hi\nexit 0\n")
+        self.assertIn("its tmux session holds a pane whose program has ended (kept by remain-on-exit in your tmux "
+                      "settings): it ended at once: " + self.ENDED_AT_ONCE, out)
+        # at the give-up nothing was touched: the ended pane is there, and it carries the id it was made for
+        place = self.pane("session_id")
+        self.assertEqual((self.pane("pane_dead"), self.tmux(self.sock, "show-options", "-qv", "-t", "=alpha:",
+                                                             "@tardigrade_session")[1].strip()), ("1", sid))
+        self.lived_in(self.LIVED_IN_TMUX, 'echo hi\n[ -n "$TMUX" ] || exit 0\n')
+        self.back(sid, "exit, pane kept", why)
+        self.assertEqual((self.pane("session_id"), self.pane("pane_dead")), (place, "0"), "started in that place")
+
+    def test_G5_19_the_tool_knows_its_own_waiting_screen_under_a_default_shell_that_stays_above_the_command(self):
+        """T88, seen with `default-shell /bin/sh` where sh is dash: dash runs a command as its child and stays, so
+        the pane's own process was `sh -c ...`, never the waiting screen. A run stopped at its waiting screen then
+        left a screen the next run did not know as its own, and that session was not brought back."""
+        sid = self.recorded_then_rebooted()
+        # a shell that does with `-c COMMAND` what dash does, whatever this machine's sh is: the command runs as its
+        # child and the shell stays, unless the command itself says exec
+        stay = self.script("stay-shell", '#!/bin/sh\nif [ "$1" = "-c" ]; then eval "$2"; exit $?; fi\n'
+                           'exec /bin/sh "$@"\n')
+        self.lived_in(f"set -g default-shell {stay}\n", None)
+        n = len(self.launches())
+        rc, out = self.tg("revive", TARDIGRADE_FAKE_STOP_AT="screen_made:1")
+        self.assertEqual(rc, 137, f"the planted stop was not reached: {out}")
+        self.assertEqual(cmdline_of(int(self.pane("pane_pid"))).split()[-2:], ["wait", sid],
+                         "the pane's own process is the waiting screen")
+        self.assertIn("WAITING, STOPPED: a waiting screen holds its place", self.tg("census")[1])
+        self.assertEqual(len(self.launches()), n)
+        self.back(sid, "a waiting screen under a shell that stays")
+        self.assertEqual(cmdline_of(int(self.pane("pane_pid"))).split()[:2], ["bash", "-ic"], "and so is the start shell")
+
+    def another_program(self, conf, rc):
+        """T88, case 2: the shell's start files put another program into the pane. The give-up line names it; a
+        revive that meets it before the step does not touch it, names it and counts the session as not started,
+        never as running. -> (the session id, the reason, the program's pid)"""
+        sid = self.one_up_one_down()
+        why, out = self.not_back("another program", rc=rc, conf=conf)
+        look = f"`{TMUX} -S {self.sock} attach -t '=alpha'`"
+        self.assertIn("its tmux session holds another program (sleep): the shell's start files (~/.bashrc) started "
+                      "another program in the pane (`sleep`) and it has not ended, so the session's start file was not "
+                      "read. Tardigrade does not end that program. Next step: in that file, keep the line that starts "
+                      "`sleep` from running inside tmux, end that program in its window "
+                      f"({look}), then run `tardigrade revive`.", out)
+        self.assertFalse(os.path.exists(self.state(os.path.join("launch", sid + ".mark"))))
+        kids = subprocess.run(["pgrep", "-x", "sleep", "-P", self.pane("pane_pid")], capture_output=True, text=True)
+        pid = int((kids.stdout.split() or [self.pane("pane_pid")])[0])
+        self.assertEqual(cmdline_of(pid).split()[:1], ["sleep"])
+        n, own, began = len(self.launches()), self.pane("pane_pid"), start_time(pid)
+        rc2, again = self.tg("revive")
+        self.assertIn("skip  Alpha Lane: not started: its tmux session alpha holds a running program (`sleep`), and "
+                      f"Tardigrade does not end it. Next step: end that program in its window ({look}), then run "
+                      "`tardigrade revive`.", again)
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", again)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["skipped"], rep.get("in_way")), ([], ["Beta Lane"], ["Alpha Lane"]))
+        self.assertEqual((len(self.launches()), self.pane("pane_pid"), start_time(pid)),
+                         (n, own, began), "the program the person's file started is not touched")
+        self.record_pass("another program, met again")
+        census = self.tg("census")[1]
+        self.assertIn("0 started, 0 failed, 0 need you, 1 not started: a tmux session of that name is in the way", census)
+        self.assertIn("      A revive did not bring it back: " + why, census)
+        return sid, why, pid
+
+    def test_G5_19_another_program_in_the_pane_is_named_and_after_it_is_ended_and_its_window_goes_revive_starts_the_session(self):
+        """the printed step, where ending the program closes its window (no remain-on-exit)"""
+        plain = "set -g base-index 1\n"
+        sid, why, pid = self.another_program(plain, "exec sleep 300\n")
+        self.lived_in(plain, '[ -n "$TMUX" ] || exec sleep 300\n')
+        self.kill(pid)
+        self.until(lambda: self.tmux(self.sock, "has-session", "-t", "=alpha")[0] != 0, "the window to go")
+        self.back(sid, "another program, window gone")
+
+    def test_G5_19_another_program_in_the_pane_is_named_and_after_it_is_ended_and_its_pane_stays_revive_starts_there(self):
+        """the printed step, where the person's tmux keeps the pane of the ended program (remain-on-exit)"""
+        sid, why, pid = self.another_program(self.LIVED_IN_TMUX, "exec sleep 300\n")
+        place = self.pane("session_id")
+        self.lived_in(self.LIVED_IN_TMUX, '[ -n "$TMUX" ] || exec sleep 300\n')
+        self.kill(pid)
+        self.until(lambda: self.pane("pane_dead") == "1", "the pane to be an ended one")
+        self.back(sid, "another program, pane kept")
+        self.assertEqual((self.pane("session_id"), self.pane("pane_dead")), (place, "0"), "started in that place")
+
+    def test_G5_19_another_program_in_the_pane_is_named_and_after_it_is_ended_the_shell_goes_on_and_claude_code_starts(self):
+        """the printed step, where the start file ran the program without handing the shell over: once it is ended
+        the shell goes on, reads the session's start file, and Claude Code starts in that window by itself. The
+        `tardigrade revive` of the step then starts nothing beside it and counts it as running, which it is."""
+        plain = "set -g base-index 1\n"
+        sid, why, pid = self.another_program(plain, "sleep 300\n")
+        self.lived_in(plain, '[ -n "$TMUX" ] || sleep 300\n')
+        n = len(self.launches())
+        self.kill(pid)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid)
+        self.record_pass("another program, shell went on")
+        rc, out = self.tg("revive")
+        self.assertIn("skip  Alpha Lane: already running on this machine", out)
+        self.assertIn("revive: 0 started, 2 already running, 0 failed, 0 need you\n", out)
+        self.assertEqual(len(self.launches()), n + 1)
+        census = self.tg("census")[1]
+        self.assertIn("Running: 2 ", census)
+        self.assertNotIn("A revive did not", census)
+
+    def test_G5_19_a_start_file_that_hands_the_pane_to_another_shell_is_named_so_and_is_not_counted_as_back(self):
+        """T88, case 2 for a common setting: ~/.bashrc ends with `exec zsh` or `exec fish`. The pane then holds a
+        shell, but not the one that was to read the session's start file. It was read as "waits for an answer"."""
+        sid = self.one_up_one_down()
+        plain = "set -g base-index 1\n"
+        why, out = self.not_back("another shell", rc="echo hi\nexec sh\n", conf=plain)
+        self.assertIn("its tmux session holds a shell: the shell's start files (~/.bashrc) handed the pane to another "
+                      "shell (`sh`), so the session's start file was not read. Next step: in that file, keep the line "
+                      "that starts `sh` from running inside tmux, then run `tardigrade revive`.", out)
+        place = self.pane("session_id")
+        self.lived_in(plain, 'echo hi\n[ -n "$TMUX" ] || exec sh\n')
+        self.back(sid, "another shell", why)
+        self.assertEqual(self.pane("session_id"), place, "started in that place")
+
+    QUESTION = ("its tmux session holds a shell: the shell's start files (~/.bashrc) had not finished when it was last "
+                "looked at, so the session's start file was not read: a line there waits for an answer. Next step: "
+                "`%s -S %s attach -t '=alpha'`, answer it there, and Claude Code starts in that window.")
+
+    def test_G5_19_a_start_file_that_waits_for_an_answer_is_named_so_and_answering_it_there_starts_claude_code(self):
+        """T88, case 2: the shell's start files ask something. The step is taken as printed: the question is
+        answered in that window, and Claude Code starts there, with no revive and no restart."""
+        sid = self.one_up_one_down()
+        why, out = self.not_back("a question", rc='echo welcome\nread -p "Pick a profile: " x\n')
+        self.assertIn(self.QUESTION % (TMUX, self.sock), out)
+        n = len(self.launches())
+        self.tmux(self.sock, "send-keys", "-t", "=alpha:", "work", "Enter")
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid)
+        self.record_pass("a question, answered")
+        census = self.tg("census")[1]
+        self.assertIn("Running: 2 ", census)
+        self.assertNotIn("A revive did not", census)
+        self.assertEqual(len(self.launches()), n + 1)
+
+    def test_G5_19_a_pane_that_ends_after_the_give_up_is_read_as_it_is_now_and_the_step_then_printed_is_true(self):
+        """What a revive found can change before the person reads it: the shell that waited at a question ends
+        later and tmux keeps its pane. The census reads the place at that moment, so the step it prints is the one
+        that is true then, and that step is taken."""
+        sid = self.one_up_one_down()
+        why, out = self.not_back("a question", rc='echo welcome\nread -p "Pick a profile: " x\n')
+        self.assertIn(self.QUESTION % (TMUX, self.sock), out)
+        self.kill(int(self.pane("pane_pid")), signal.SIGKILL)
+        self.until(lambda: self.pane("pane_dead") == "1", "the pane to be an ended one")
+        census = self.tg("census")[1]
+        self.assertIn("      A revive did not bring it back: it ended at once: " + self.ENDED_AT_ONCE, census)
+        self.assertNotIn("answer it there", census)
+        self.lived_in(self.LIVED_IN_TMUX, 'echo welcome\n[ -n "$TMUX" ] || read -p "Pick a profile: " x\n')
+        self.back(sid, "the pane ended later", why)
+
+    def test_G5_19_a_start_that_ended_with_a_code_is_named_with_the_code_and_is_not_counted_as_back(self):
+        """T88, case 3: the session's start file was read and its command ended: not found (127), or by itself"""
+        sid = self.one_up_one_down()
+        why, out = self.not_back("not found", rc="export PATH=/usr/bin:/bin\n", cfg={"claude_command": "claude-nowhere"})
+        self.assertIn("its tmux session holds a shell: `claude-nowhere` ended with exit code 127, not found: the PATH "
+                      "that the shell's start files (~/.bashrc) leave has no such program. Next step: set "
+                      "claude_command in config.json to that program's whole path, then run `tardigrade revive`.", out)
+        self.assertEqual(fread(self.state(os.path.join("launch", sid + ".mark"))), "ended 127\n")
+        place = self.pane("session_id")
+        # the next step, taken: the whole path in the setting
+        self.cfg({"claude_command": os.path.join(self.bin, "claude")})
+        self.back(sid, "not found", why)
+        self.assertEqual(self.pane("session_id"), place, "started in that place")
+        self.until(lambda: fread(self.state(os.path.join("launch", sid + ".mark"))) == "reached\n", "a new start's mark")
+        self.reboot()                                       # another restart of the machine: a new failure
+        line = "sh -c 'echo no licence; exit 3'"
+        why, out = self.not_back("a code", cfg={"claude_command": line})
+        self.assertIn("its tmux session holds a shell: `sh` ended by itself with exit code 3; what it said is in its "
+                      f"window. Next step: `{TMUX} -S {self.sock} attach -t '=alpha'` and read it, cure what it names, "
+                      "then run `tardigrade revive`.", out)
+        # the next step as printed: the window says what the command said; its cause is cured; then the revive
+        self.assertIn("no licence", self.tmux(self.sock, "capture-pane", "-p", "-t", "=alpha:")[1])
+        self.cfg({"claude_command": None})
+        self.back(sid, "a code", why)
+
+    def test_G5_19_a_start_that_ended_with_a_code_and_whose_window_then_went_is_named_and_its_printed_step_is_true(self):
+        """T88, case 3 where nothing is left to look at: the command ended with a code and the shell kept in its
+        place ended too (a login start file that ends the shell), so tmux removed the session"""
+        sid = self.one_up_one_down()
+        with open(os.path.join(self.home, ".bash_profile"), "w") as f:
+            f.write("exit 0\n")
+        line = "sh -c 'echo no licence; exit 3'"
+        why, out = self.not_back("a code, window gone", cfg={"claude_command": line}, conf="set -g base-index 1\n")
+        self.assertIn("its tmux session is gone: `sh` ended with exit code 3, and then its tmux session ended. Next "
+                      "step: `tardigrade revive --dry-run` shows the line that starts it; run that line in a terminal "
+                      "to read what it says, cure what it names, then run `tardigrade revive`.", out)
+        # the step as printed: the dry run shows the line, and the line says what it said
+        rc, dry = self.tg("revive", "--dry-run")
+        shown = [x.split("tmux default:alpha", 1)[1].strip() for x in dry.splitlines() if "tmux default:alpha" in x]
+        self.assertEqual([x.startswith(line) for x in shown], [True], dry)
+        said = subprocess.run(["sh", "-c", line], capture_output=True, text=True, env=self.env, timeout=30)
+        self.assertEqual((said.returncode, said.stdout), (3, "no licence\n"))
+        self.cfg({"claude_command": None})
+        self.back(sid, "a code, window gone", why)
+
+    def test_G5_19_a_start_whose_command_has_not_started_claude_code_yet_is_named_and_both_printed_ways_on_are_true(self):
+        """T88: the session's start file was read and its command is still there: a login wrapper that asks, or one
+        that is still at work. Nothing is touched; answered there, or once it is done, Claude Code starts in that
+        window by itself."""
+        sid = self.one_up_one_down()
+        ask = self.script("ask-first", '#!/bin/sh\nprintf "Which account? "\nread x\nexec claude "$@"\n')
+        busy = self.script("busy-first", '#!/bin/sh\nwhile [ ! -e "$HOME/go" ]; do sleep 0.2; done\nexec claude "$@"\n')
+        for k, (word, take) in enumerate((
+                ("ask-first", lambda: self.tmux(self.sock, "send-keys", "-t", "=alpha:", "first", "Enter")),
+                ("busy-first", lambda: open(os.path.join(self.home, "go"), "w").close()))):
+            if k:
+                self.reboot()                               # another restart of the machine: a new failure
+            why, out = self.not_back(word, cfg={"claude_command": ask if k == 0 else busy}, conf="set -g base-index 1\n")
+            self.assertEqual(why, f"its start file was read and `{ask if k == 0 else busy}` has not started Claude Code "
+                             f"yet. Next step: `{TMUX} -S {self.sock} attach -t '=alpha'`: if it asks something, answer "
+                             "it there and Claude Code starts in that window; if it is still at work, Claude Code "
+                             "starts there when it is done.")
+            self.assertEqual(fread(self.state(os.path.join("launch", sid + ".mark"))), "reached\n")
+            n = len(self.launches())
+            take()
+            new = self.wait_launches(n + 1)[-1]
+            self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid, word)
+            self.record_pass(word)
+            census = self.tg("census")[1]
+            self.assertIn("Running: 2 ", census, word)
+            self.assertNotIn("A revive did not", census, word)
+
+    def test_G5_19_a_tmux_session_of_that_name_that_is_not_ours_is_not_touched_and_the_printed_rename_frees_the_name(self):
+        """A tmux session of the row's name that Tardigrade did not make (a tmux that brings its own sessions back
+        does this). It was said to exist "already" and counted as running. Now: named, counted as not started, and
+        the one step is printed whole, with a name read to be free. The step is run word for word."""
+        sid = self.one_up_one_down()
+        self.lived_in("set -g base-index 1\n", None)
+        self.other_up()
+        for name in ("alpha", "alpha-kept"):                # the person's own, and the first free name is taken too
+            self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", name, "-c", self.work, "exec sleep 300")[0], 0)
+        own, n = self.pane("pane_pid"), len(self.launches())
+        rc, out = self.tg("revive")
+        cmd = f"{TMUX} -S {self.sock} rename-session -t '=alpha' alpha-kept-2"
+        said = ("a tmux session named alpha is in the way, and it is not one Tardigrade made for this session (it "
+                f"holds `sleep`). Nothing in it was touched. Next step: give it another name with `{cmd}`, then run "
+                "`tardigrade revive`.")
+        self.assertIn("skip  Alpha Lane: not started: " + said, out)
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", out)
+        rep = jload(self.state("last-revive.json"))
+        self.assertEqual((rep["started"], rep["skipped"], rep.get("in_way"), rep.get("not_started")),
+                         ([], ["Beta Lane"], ["Alpha Lane"], {"Alpha Lane": said}))
+        self.assertEqual((len(self.launches()), self.pane("pane_pid")), (n, own))
+        self.record_pass("in the way")                      # G1.20: the row stays where a revive looks for it
+        census = self.tg("census")[1]
+        self.assertIn("Running: 1 ", census)
+        self.assertIn("      A revive did not start it: " + said, census)
+        done = subprocess.run(["sh", "-c", cmd], env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual((done.returncode, done.stdout + done.stderr), (0, ""))
+        self.back(sid, "in the way", sessions=("alpha", "alpha-kept", "alpha-kept-2"))
+        self.assertEqual(self.pane("pane_pid", "alpha-kept-2"), own, "the person's own session runs on, under its new name")
+
+    def test_G5_19_a_place_where_claude_code_runs_under_another_id_is_not_started_beside_and_not_called_running(self):
+        """the row's tmux session holds Claude Code under another session id (a conversation started new in the
+        same place): nothing is started beside it, no step is asked of the person, and the next record follows it"""
+        sid = self.one_up_one_down()
+        self.lived_in("set -g base-index 1\n", None)
+        self.other_up()
+        new = self.start_lane("alpha", "Alpha Lane")
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.assertIn("skip  Alpha Lane: not started: its tmux session alpha runs Claude Code under another session id "
+                      "(a conversation started new in the same place). Nothing was started beside it; the next record "
+                      "follows that one.", out)
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", out)
+        self.assertEqual(len(self.launches()), n)
+        rc, out = self.tg("record")
+        self.assertEqual(sorted(r["session_id"] for r in self.table()["lanes"]), sorted([new, self.other]), out)
+        self.assertIn("Running: 2 ", self.tg("census")[1])
+
+    def test_G5_19_a_tmux_session_whose_mark_or_pane_gave_no_answer_is_not_touched_and_the_next_revive_reads_again(self):
+        """The read at the place has three answers. Where the mark, the pane's state or its program could not be
+        read, nothing is touched and nothing is counted as running; the line says so, and its step (the same
+        command again) is taken."""
+        sid = self.one_up_one_down()
+        wrap = self.script("tmux-noanswer", '#!/bin/sh\nif [ -e "$HOME/tmux-noanswer" ]; then\n'
+                           '  how=$(cat "$HOME/tmux-noanswer"); show=; mark=; pane=\n'
+                           '  for a; do case "$a" in show-options) show=1;; @tardigrade_session) mark=1;; '
+                           '*pane_dead*) pane=1;; esac; done\n'
+                           '  [ "$how" = mark ] && [ -n "$show" ] && [ -n "$mark" ] && exit 1\n'
+                           '  [ "$how" = pane ] && [ -n "$pane" ] && exit 0\n'
+                           '  [ "$how" = program ] && [ -n "$pane" ] && { echo 0; exit 0; }\nfi\n'
+                           f'exec {shlex.quote(TMUX)} "$@"\n')
+        flag = os.path.join(self.home, "tmux-noanswer")
+        for k, how in enumerate(("mark", "pane", "program")):
+            if k:
+                self.reboot()                               # another restart of the machine: a new failure
+            why, out = self.not_back(how, cfg={"claude_command": "claude-nowhere", "tmux": wrap},
+                                     conf="set -g base-index 1\n")
+            self.cfg({"claude_command": os.path.join(self.bin, "claude")})      # the cause is cured
+            self.record_pass(how)
+            own, n = self.pane("pane_pid"), len(self.launches())
+            with open(flag, "w") as f:
+                f.write(how)
+            rc, out = self.tg("revive")
+            os.remove(flag)
+            self.assertIn("skip  Alpha Lane: not started: a tmux session named alpha is there, and whether Tardigrade "
+                          "made it for this session could not be read (tmux or the process list gave no answer). "
+                          "Nothing in it was touched. Next step: run `tardigrade revive` again.", out, how)
+            self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you, 1 not started: its tmux session "
+                          "could not be read\n", out, how)
+            self.assertEqual((len(self.launches()), self.pane("pane_pid")), (n, own), how)
+            self.back(sid, how)
+
+    def test_G5_19_a_run_that_was_stopped_after_a_start_that_failed_leaves_a_place_the_next_revive_starts_in(self):
+        """A run that ends between a start and its give-up (a reboot, a kill) writes no give-up line and no report.
+        The place it made carries the session's id, the record keeps the row, the census reads the cause from the
+        place, and the next revive starts the session there."""
+        sid = self.one_up_one_down()
+        self.lived_in("set -g base-index 1\n", None)
+        self.other_up()
+        self.cfg({"claude_command": "claude-nowhere"})
+        n = len(self.launches())
+        rc, out = self.tg("revive", TARDIGRADE_FAKE_STOP_AT="claude_started:1")
+        self.assertEqual(rc, 137, f"the planted stop was not reached: {out}")
+        mark = self.state(os.path.join("launch", sid + ".mark"))
+        self.until(lambda: os.path.exists(mark) and fread(mark) == "ended 127\n", "the start to have failed")
+        place = self.pane("session_id")
+        self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", "=alpha:", "@tardigrade_session")[1].strip(), sid)
+        self.record_pass("a stopped run")
+        census = self.tg("census")[1]
+        self.assertIn("      A revive did not bring it back: `claude-nowhere` ended with exit code 127, not found", census)
+        self.assertIn("1 of the sessions under DOWN: a revive was to start them", census)
+        self.cfg({"claude_command": os.path.join(self.bin, "claude")})
+        self.back(sid, "a stopped run")
+        self.assertEqual((self.pane("session_id"), len(self.launches())), (place, n + 1), "started in that place")
+
+    def test_G5_19_a_session_that_loaded_while_its_mark_was_still_on_and_later_ends_alone_is_started_again_in_its_place(self):
+        """The mark comes off when the run that started a session sees it loaded. A run that ended before that
+        leaves the mark on a session that then loaded. If its Claude Code later ends by itself (not by /exit), the
+        shell kept in its place is a place of ours with nothing running: the next revive starts the session there."""
+        sid = self.one_up_one_down()
+        self.lived_in("set -g base-index 1\n", None)
+        self.other_up()
+        n = len(self.launches())
+        rc, out = self.tg("revive", TARDIGRADE_FAKE_STOP_AT="claude_started:1")
+        self.assertEqual(rc, 137, f"the planted stop was not reached: {out}")
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid)
+        place = self.pane("session_id")
+        self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", "=alpha:", "@tardigrade_session")[1].strip(), sid)
+        self.kill(new["pid"])                               # it ends alone
+        self.until(lambda: self.pane("pane_current_command") == "bash", "the shell kept in its place")
+        self.back(sid, "ended alone, mark still on")
+        self.assertEqual((self.pane("session_id"), len(self.launches())), (place, n + 2), "started in that place")
+
+    # ----- G1.20 (T103): the record keeps a row that a revive was to start and that was not seen loaded -----
+    KEPT = ("record: Alpha Lane: a revive was to start it and it has not been seen running since. It stays on the list "
+            "a revive reads: `tardigrade revive` tries it again; `tardigrade record --force` moves every session that "
+            "is not running to the down list.")
+    KEPT_BELOW = ("1 of the sessions under DOWN: a revive was to start them and they were not seen running since. They "
+                  "stay on the list a revive reads: `tardigrade revive` tries them again. To let them go: `tardigrade "
+                  "record --force` (it moves every session that is not running to the down list).")
+
+    def test_G1_20_a_session_whose_start_failed_stays_on_the_list_a_revive_reads_until_it_runs_or_the_person_lets_it_go(self):
+        """T103. Seen on a stock machine with 0.1.10.1: with another session up, the timer's first record after a
+        start that failed moved the row to the down list, and no revive looked at it again. Now the row stays; no
+        clock ends that; and the one way to let it go, printed under the table, is taken."""
+        sid = self.one_up_one_down()
+        why, out = self.not_back("not found", cfg={"claude_command": "claude-nowhere"}, conf="set -g base-index 1\n")
+        row = lambda: next(r for r in self.table()["lanes"] if r["session_id"] == sid)
+        self.assertEqual((self.logged(self.KEPT), bool(row().get("not_started_since")), row().get("not_started_why")),
+                         (1, True, why))
+        self.record_pass("a second pass")
+        self.assertEqual(self.logged(self.KEPT), 1, "said once, not at every pass")
+        self.assertIn(self.KEPT_BELOW, self.tg("census")[1])
+        # no clock: thirty days on, the row is where it was. The kept times are moved, never the calendar.
+        t = self.table()
+        for r in t["lanes"]:
+            if r["session_id"] == sid:
+                r["not_started_since"] -= 30 * 86400
+                r["last_seen"] -= 30 * 86400
+        jdump(t, os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
+        self.record_pass("thirty days on")
+        census = self.tg("census")[1]
+        self.assertIn(self.KEPT_BELOW, census)
+        self.assertIn("      A revive did not bring it back: " + why, census)
+        # the way to let it go, as printed
+        n = len(self.launches())
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, self.names(), self.names("down")), (0, ["Beta Lane"], ["Alpha Lane"]), out)
+        rc, out = self.tg("revive")
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you\n", out)
+        self.assertEqual(len(self.launches()), n)
+        self.assertNotIn("a revive was to start them", self.tg("census")[1])
+
+    def test_G1_20_a_session_its_owner_ended_is_not_kept_and_a_row_the_progress_file_does_not_name_goes_down_as_before(self):
+        """T103, the two ways a row still leaves by itself: its owner's /exit, read as before; and a session that
+        simply is not running, of which no revive's progress file says that it was being started"""
+        sid = self.one_up_one_down()
+        why, out = self.not_back("not found", cfg={"claude_command": "claude-nowhere"}, conf="set -g base-index 1\n")
+        self.conversation(sid, time.time())                 # its owner ended it, after the revive gave up
+        rc, out = self.tg("record")
+        down = self.table()["down"]
+        self.assertEqual((self.names(), [(r["name"], r.get("ended")) for r in down]),
+                         (["Beta Lane"], [("Alpha Lane", "exit")]), out)
+        self.assertEqual([k for r in down for k in r if k.startswith("not_started")], [])
+        # a row that no progress file names: started by hand, seen by a record, then gone by itself
+        self.assertTrue(os.path.exists(self.state("progress.json")))
+        self.start_lane("gamma", "Gamma Lane")
+        rc, out = self.tg("record")
+        self.assertEqual(self.names(), ["Beta Lane", "Gamma Lane"], out)
+        self.kill(self.launches()[-1]["pid"])
+        self.until(lambda: self.tmux(self.sock, "has-session", "-t", "=gamma")[0] != 0, "its window to go")
+        rc, out = self.tg("record")
+        self.assertEqual((self.names(), sorted(r["name"] for r in self.table()["down"])),
+                         (["Beta Lane"], ["Alpha Lane", "Gamma Lane"]), out)
+
+    def test_G1_20_a_progress_file_that_could_not_be_read_keeps_the_rows_it_might_name_and_says_so(self):
+        """T103, three answers: where the last revive's progress file is there and cannot be read, which sessions it
+        was starting is not known. A row that is not running is then kept, never silently dropped, and the log
+        says so once; a revive starts it."""
+        sid = self.one_up_one_down()
+        self.lived_in("set -g base-index 1\n", None)
+        self.other_up()
+        os.makedirs(self.state(""), exist_ok=True)
+        with open(self.state("progress.json"), "w") as f:
+            f.write('{"pid": 1, "sessions": {')
+        said = ("record: the last revive's progress file could not be read, so which sessions it was starting is not "
+                "known. These are not running and stay on the list a revive reads: Alpha Lane")
+        out = self.record_pass("an unread progress file")
+        self.assertIn(said, out)
+        self.record_pass("a second pass")
+        self.assertEqual(self.logged(said), 1, "said once")
+        self.assertIn(self.KEPT_BELOW, self.tg("census")[1])
+        self.back(sid, "an unread progress file")
 
     def test_G2_2_the_revived_session_is_told_what_happened(self):
         sid = self.recorded_then_rebooted()

@@ -582,6 +582,8 @@ def is_ours(path, kind):
         return False
     if kind == "start":
         return head.startswith(MARKS["start"])
+    if kind == "mark":          # G5.19: what a start file says about itself; nothing else is ever in it
+        return bool(re.fullmatch(r"(reached|ended \d{1,3})?\n?", head))
     return MARKS[kind] in head
 
 
@@ -1380,6 +1382,33 @@ def read_table():
     return d
 
 
+def start_not_done(gone):
+    """G1.20 (T103): of the rows that are not running, the ones a revive was starting and that were not seen loaded,
+    read from that run's own progress file: {session id: (when the run began, its cause)}. Three answers for the
+    file: not there (nothing); read (a row counts when the file names it, not as loaded and not as running
+    elsewhere, and no record has seen the row running since that run began); there and could not be read (every row
+    it might name counts, and the second answer says so)."""
+    p = progress_path()
+    if not os.path.lexists(p):
+        return {}, ""
+    try:
+        with open(p, encoding="utf-8") as f:
+            pr = json.load(f)
+        began = int(pr["began"])
+        ses = pr["sessions"]
+        if not isinstance(ses, dict):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError):
+        return {r["session_id"]: (int(time.time()), "") for r in gone}, "could not be read"
+    out = {}
+    for r in gone:
+        me = ses.get(r["session_id"])
+        if isinstance(me, dict) and me.get("state") not in ("loaded", "elsewhere") \
+                and float(r.get("last_seen") or 0) <= began:
+            out[r["session_id"]] = (began, str(me.get("why") or ""))
+    return out, ""
+
+
 def record():
     force = "--force" in ARGS
     # G2.51 (T57): `record --accept <session>` is a person's word for one session: its row takes the login it runs on
@@ -1445,7 +1474,8 @@ def record():
         if r.get("unread"):
             # G1.17 (T54): its own session file could not be read. Its row stays as it was, marked with the time
             # this was first so; nothing of it is taken as changed and nothing as gone. The rest is written.
-            o = {k: v for k, v in old_by.get(r["session_id"], {}).items() if k != "lost_since"}    # it runs
+            o = {k: v for k, v in old_by.get(r["session_id"], {}).items()
+                 if k not in ("lost_since", "not_started_since", "not_started_why")}    # it runs
             if not o:
                 continue
             if not o.get("unread_at"):
@@ -1548,10 +1578,33 @@ def record():
         if u["row"] is None and (u["in_tmux"] or u["new"]):
             log(f"record: a running Claude (process {u['pid']}) has a session file that could not be read "
                 f"({u['why']}) and no row on the record; nothing is written down for it until the file can be read")
+    # G1.20 (T103): a row that a revive was starting and that was not seen loaded is not a session its owner ended.
+    # It stays on the list a revive reads until it is seen running, its owner's /exit, another session in its
+    # place, or `record --force`. No clock ends it. It is never part of a crash count.
+    asked = [r for r in gone if not r.get("not_started_since") and not exits[r["session_id"]] and not print_run(r)]
+    failed, unread_progress = ({}, "") if force else start_not_done(asked)
+    if unread_progress and failed:
+        log("record: the last revive's progress file could not be read, so which sessions it was starting is not "
+            "known. These are not running and stay on the list a revive reads: "
+            + ", ".join(display(r) for r in asked if r["session_id"] in failed))
+    not_started = []
+    for r in list(gone):
+        sid = r["session_id"]
+        if force or exits[sid] or print_run(r) or not (r.get("not_started_since") or sid in failed):
+            continue
+        gone.remove(r)
+        if sid in failed:
+            if not unread_progress:
+                log(f"record: {display(r)}: a revive was to start it and it has not been seen running since. It stays "
+                    "on the list a revive reads: `tardigrade revive` tries it again; `tardigrade record --force` "
+                    "moves every session that is not running to the down list.")
+            r = dict(r, not_started_since=failed[sid][0], not_started_why=failed[sid][1])
+        not_started.append(r)
     fresh = [r for r in gone if not r.get("lost_since") and not exits[r["session_id"]]]
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
     lost = []
     for r in gone:
+        r = {k: v for k, v in r.items() if k not in ("not_started_since", "not_started_why")}
         if print_run(r):            # a print-mode run is never kept as lost, crash or not (G2.47)
             down.append(dict({k: v for k, v in r.items() if k != "lost_since"}, down_since=now, ended="print-run"))
             continue
@@ -1570,7 +1623,7 @@ def record():
     if crash:
         log(f"record: {len(fresh)} of {len(old['lanes'])} recorded sessions vanished together (a crash?). They stay "
             f"on the record for {CFG['lost_keep_h']} h: `revive` brings them back; `record --force` lets them go.")
-    rows += lost
+    rows += lost + not_started
     if DRY:
         for r in rows:
             log("record (dry): " + json.dumps(r, sort_keys=True))
@@ -1742,10 +1795,20 @@ def launch_dir():
     return os.path.join(STATE, "launch")
 
 
+def mark_path(sid):
+    """G5.19 (T88): where a session's start file says how far it came. In the tool's own state folder, beside the
+    start file: never in the session's folder, never in the person's home."""
+    return os.path.join(launch_dir(), sid + ".mark")
+
+
 def launch_text(r):
     """what the start file for one session says"""
     sh = CFG["shell"]
     lines = ["# Windstorm Tardigrade start file. Written again at each revive; safe to delete."]
+    # G5.19 (T88): the shell's start files ran before this line, and they are the person's: they can ask, exit or
+    # start another program. This mark says they let the start file be read (`>|`: also under noclobber).
+    mark = shlex.quote(mark_path(r["session_id"]))
+    lines.append(f"{{ echo reached >| {mark}; }} 2>/dev/null")
     pairs, left = env_file_pairs()
     if left and not SAID.get("env_file"):
         SAID["env_file"] = True      # once per run, names only
@@ -1769,7 +1832,8 @@ def launch_text(r):
         lines.append(f"unset {acct}")
     # the session's own folder, whatever the shell's start files or the env_file said
     lines.append(f"cd -- {shlex.quote(r['cwd'] if os.path.isdir(r['cwd']) else HOME)} 2>/dev/null")
-    lines.append(f'{claude_line(r)}; echo; echo "[session ended; shell kept]"; exec {sh} -l')
+    lines.append(f'{claude_line(r)}; {{ echo "ended $?" >| {mark}; }} 2>/dev/null; echo; '
+                 f'echo "[session ended; shell kept]"; exec {sh} -l')
     return "\n".join(lines) + "\n"
 
 
@@ -1779,6 +1843,11 @@ def write_launch_file(r):
     matches by text could match it."""
     os.makedirs(launch_dir(), mode=0o700, exist_ok=True)
     path = os.path.join(launch_dir(), r["session_id"] + ".sh")
+    if is_ours(mark_path(r["session_id"]), "mark"):
+        try:
+            os.remove(mark_path(r["session_id"]))       # a new start: what the last one said is not this one's
+        except OSError:
+            pass
     fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(launch_text(r))
@@ -1788,7 +1857,7 @@ def write_launch_file(r):
 
 def launch_cmd(r):
     sh = CFG["shell"]
-    return f"{sh} -{'l' if sh == 'zsh' else ''}ic {shlex.quote('. ' + shlex.quote(write_launch_file(r)))}"
+    return f"exec {sh} -{'l' if sh == 'zsh' else ''}ic {shlex.quote('. ' + shlex.quote(write_launch_file(r)))}"
 
 
 def pace():
@@ -1983,7 +2052,10 @@ def login_carried(r, o, P, take=False):
                        f"if that is the right one, `record --accept {sid}` makes its row follow it"]
 
 
-def new_session(sock, name, cwd, cmd, then=()):
+OURS_MARK = "@tardigrade_session"      # G5.19: a tmux option on a session the tool made: the id it was made for
+
+
+def new_session(sock, name, cwd, cmd, then=(), sid=""):
     """a new tmux session running cmd. `then`: one more tmux command (a list) for the SAME call: tmux runs it
     right after it made the session, so a stop of ours between the two cannot leave the session without it (G2.53)."""
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
@@ -1993,6 +2065,12 @@ def new_session(sock, name, cwd, cmd, then=()):
     if conf and os.path.isfile(conf):
         argv += ["-f", conf]         # read only when this call is the one that starts the server
     argv += ["new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", cwd, cmd]
+    # G5.19 (T88): a session comes back with no window attached. Where the person's tmux settings end such a session
+    # (destroy-unattached), this one session is asked to stay, in the call that makes it: a moment later it would be
+    # gone. The server's own setting, and every session the person makes, stay as they are.
+    argv += [";", "set-option", "-t", f"={name}:", "destroy-unattached", "off"]
+    if sid:     # G5.19: the next revive knows this place as its own while the session has not loaded
+        argv += [";", "set-option", "-t", f"={name}:", OURS_MARK, str(sid)]
     if then:
         argv += [";"] + list(then)
     return run(argv, env=server_env())[0]      # nothing of the caller's environment, and no value on a command line
@@ -2000,8 +2078,16 @@ def new_session(sock, name, cwd, cmd, then=()):
 
 def start_lane(r, created):
     sock, name = r["tmux_socket"], r["tmux_session"]
-    cmd = launch_cmd(r)
     cwd = r["cwd"] if os.path.isdir(r["cwd"]) else HOME
+    if (sock, name) in created and has_session(sock, name) and not is_waiting(sock, name):
+        # a retry, or (G5.19) a place an earlier run made: it is started in only where it holds a shell with nothing
+        # under it (claude ended), or a pane whose program has ended and that tmux keeps (remain-on-exit). Read
+        # before the start file is written again: writing it takes away the mark that a start still at work left.
+        cur = pane_holds(r)
+        if cur is not None and cur not in SHELLS:
+            log(f"  {display(r)}: its tmux session is busy ({cur or 'could not be read'}); not touching it")
+            return False
+    cmd = launch_cmd(r)
     if (sock, name) in created and has_session(sock, name):
         if is_waiting(sock, name):
             # its turn: Claude replaces the waiting screen in the same pane, through the same start file.
@@ -2015,14 +2101,9 @@ def start_lane(r, created):
             planted_stop("respawned")
             tmux(sock, "clear-history", "-t", f"={name}:")
             return rc == 0
-        # a retry: the session this run made holds a shell because claude ended
-        cur = tmux(sock, "display", "-p", "-t", f"={name}:", "#{pane_current_command}")[1].strip()
-        if cur not in SHELLS:
-            log(f"  {display(r)}: its tmux session is busy ({cur}); not touching it")
-            return False
         rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
     else:
-        rc = new_session(sock, name, cwd, cmd)
+        rc = new_session(sock, name, cwd, cmd, sid=r["session_id"])
         created.add((sock, name))
     return rc == 0
 
@@ -2045,6 +2126,89 @@ def is_waiting(sock, name):
     return len(a) >= 3 and a[-2] == "wait" and any(x.endswith("tardigrade.py") for x in a)
 
 
+def ours_not_started(r):
+    """G5.19 (T88): the tmux session of this row's name, where it is not a waiting screen: is it a place this tool
+    made for this very session, in which the session is not running? True: its mark is this row's id and its pane
+    has ended or holds only a shell: a revive starts the session there, as it does in a waiting screen. False: no
+    mark of ours, a mark for another id, or a program runs in it: not touched. None: the mark or the pane could not
+    be read: not touched, and said so."""
+    sock, name = r["tmux_socket"], r["tmux_session"]
+    rc, out = tmux(sock, "show-options", "-qv", "-t", f"={name}:", OURS_MARK, timeout=6)
+    if rc != 0:
+        return None
+    cur = pane_holds(r)
+    if cur == "":
+        return None
+    if out.strip() != str(r["session_id"]):
+        return False
+    return cur is None or cur in SHELLS
+
+
+def free_name(sock, name):
+    """a tmux session name on this socket that no session has now, read: NAME-kept, NAME-kept-2, ..."""
+    for k in range(1, 50):
+        new = f"{name}-kept" + (f"-{k}" if k > 1 else "")
+        if not has_session(sock, new):
+            return new
+    return f"{name}-kept-{int(time.time())}"
+
+
+def claude_in(sock, name):
+    """does a Claude Code of this user run inside this tmux session now? True, False, or None when the process
+    list or the pane list could not be read"""
+    P, PN = procs(), panes()
+    if not P.ok or not PN.ok:
+        return None
+    for pid, (_, uid, comm) in P.items():
+        if is_claude(comm) and uid == os.getuid() and not left_alone(pid):
+            kind, detail = where(pid, P, PN)
+            if kind == "tmux" and tuple(detail[:2]) == (sock, name):
+                return True
+    return False
+
+
+def in_way_text(r, ours):
+    """G5.19 (T88): why a session was not started where a tmux session of its name is in the way, with the one next
+    step, printed whole. `ours`: what ours_not_started said (False or None)."""
+    sock, name = r["tmux_socket"], r["tmux_session"]
+    at = f"{CFG['tmux']} -S {shlex.quote(sock)}"
+    runs = None if ours is None else claude_in(sock, name)
+    if runs is None:
+        return (f"a tmux session named {name} is there, and whether Tardigrade made it for this session could not be "
+                "read (tmux or the process list gave no answer). Nothing in it was touched. Next step: run "
+                "`tardigrade revive` again.")
+    cur = pane_holds(r)
+    mine = tmux(sock, "show-options", "-qv", "-t", f"={name}:", OURS_MARK, timeout=6)[1].strip() == str(r["session_id"])
+    if runs:
+        return (f"its tmux session {name} runs Claude Code under another session id (a conversation started new in "
+                "the same place). Nothing was started beside it; the next record follows that one.")
+    if mine:
+        return (f"its tmux session {name} holds a running program (`{cur}`), and Tardigrade does not end it. Next "
+                f"step: end that program in its window (`{at} attach -t {q_target(name)}`), then run "
+                "`tardigrade revive`.")
+    holds = ("a pane whose program has ended" if cur is None else "a shell" if cur in SHELLS else f"`{cur}`")
+    return (f"a tmux session named {name} is in the way, and it is not one Tardigrade made for this session (it "
+            f"holds {holds}). Nothing in it was touched. Next step: give it another name with "
+            f"`{at} rename-session -t {q_target(name)} {shlex.quote(free_name(sock, name))}`, then run "
+            "`tardigrade revive`.")
+
+
+def down_why(r, tried):
+    """G5.19, G1.20: what holds a row that is not running back, read now: ("start it" | "bring it back", the words
+    with the one next step). tried: a revive started it and gave up. "" where there is nothing to say: its place
+    holds a waiting screen, or is free and no start was tried."""
+    sock, name = r["tmux_socket"], r["tmux_session"]
+    if has_session(sock, name):
+        if is_waiting(sock, name):
+            return "", ""
+        ours = ours_not_started(r)
+        mark = tmux(sock, "show-options", "-qv", "-t", f"={name}:", OURS_MARK, timeout=6)[1].strip()
+        if ours is None or mark != str(r["session_id"]):
+            return "start it", in_way_text(r, ours)
+        return "bring it back", not_back_text(r)
+    return ("bring it back", not_back_text(r)) if tried else ("", "")
+
+
 def show_waiting(todo, created):
     """At the start of a run: each session to be started gets its own tmux session at once, holding the
     waiting screen, so the place where it will appear says from the first minute that it is coming."""
@@ -2058,13 +2222,119 @@ def show_waiting(todo, created):
                 created.add((sock, name))
             continue
         cwd = r["cwd"] if os.path.isdir(r["cwd"]) else HOME
-        cmd = f"{shlex.quote(py)} -I {shlex.quote(script)} wait {shlex.quote(str(r['session_id']))}"
+        cmd = f"exec {shlex.quote(py)} -I {shlex.quote(script)} wait {shlex.quote(str(r['session_id']))}"
         # the screen and its mark in one tmux call: a run stopped right here never leaves a waiting screen that
         # the next run cannot know as ours (it would take it for someone's session and start nothing in it)
-        if new_session(sock, name, cwd, cmd, then=["set-option", "-t", f"={name}:", WAIT_MARK, "1"]) == 0:
+        if new_session(sock, name, cwd, cmd, then=["set-option", "-t", f"={name}:", WAIT_MARK, "1"],
+                       sid=r["session_id"]) == 0:
             created.add((sock, name))
             planted_stop("screen_made")
             tmux(sock, "select-pane", "-t", f"={name}:", "-T", f"{display(r)} (coming back)")
+
+
+def pane_program(sock, name):
+    """the program a tmux session's pane runs now, as tmux names it: "" when it cannot be read, None when the pane's
+    program has ended and tmux keeps the pane (the person's remain-on-exit)"""
+    out = tmux(sock, "display", "-p", "-t", f"={name}:", "#{pane_dead} #{pane_current_command}", timeout=6)[1].split()
+    return None if out[:1] == ["1"] else " ".join(out[1:])
+
+
+def pane_holds(r):
+    """G5.19 (T88): what the pane of this row's tmux session runs, for the question "may a revive start the session
+    there": as pane_program, and where tmux names a shell, a program that runs under that shell is named in the
+    shell's place, read from the process list. tmux names the shell while a program runs under it where the shell
+    is still in its start files (it reads them with job control off), where the program is a shell script, and
+    where it runs in the background. Shells under the shell with nothing else below them are "a shell". "" also
+    when the process list could not be read: then it cannot be told, and nothing is touched."""
+    sock, name = r["tmux_socket"], r["tmux_session"]
+    cur = pane_program(sock, name)
+    if not cur or cur not in SHELLS:
+        return cur
+    pid = tmux(sock, "display", "-p", "-t", f"={name}:", "#{pane_pid}", timeout=6)[1].strip()
+    P = procs()
+    if not pid.isdigit() or not P.ok:
+        return ""
+    kids, p = kids_of(P), int(pid)
+    for _ in range(40):
+        below = sorted(kids.get(p, ()))
+        if not below:
+            break
+        p = below[0]
+        if P[p][2] not in SHELLS:
+            return P[p][2]
+    return cur
+
+
+def start_mark(r):
+    """what the session's start file last said about itself: "" (not read by the shell), "reached", "ended N" """
+    p = mark_path(r["session_id"])
+    if not is_ours(p, "mark"):
+        return ""
+    try:
+        with open(p, encoding="utf-8") as f:
+            return f.read(64).strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def not_back_text(r):
+    """G5.19 (T88): why a session that was started is not there, read from what really happened (what its tmux
+    session holds, and the mark its start file leaves), with the one next step. Three cases: it ended at once and
+    tmux removed it; the shell's start files handed the pane to another program, or wait; its command ended with a
+    code. "" where the tmux session holds a waiting screen: holds_text says that one whole."""
+    sock, name = r["tmux_socket"], r["tmux_session"]
+    files = "~/.zshenv, ~/.zprofile, ~/.zshrc" if CFG["shell"] == "zsh" else "~/.bashrc"
+    key = ("start_command" if CFG.get("start_command") else
+           "account_command" if r.get("account") and CFG.get("account_command") else "claude_command")
+    try:
+        word = (shlex.split(claude_line(r)) or ["claude"])[0]
+    except ValueError:
+        word = "claude"
+    mark = start_mark(r)
+    code = mark[6:] if mark.startswith("ended ") else ""
+    again = "then run `tardigrade revive`"
+    gone = not has_session(sock, name)
+    if gone or pane_program(sock, name) is None:
+        if not mark:
+            return ("it ended at once" + (" and tmux removed it" if gone else "") + ": the shell ended before it read "
+                    f"the session's start file. The usual cause is a line in the shell's start files ({files}) that "
+                    "ends the shell, or that runs a program in the shell's place which ends (an `exit`, an "
+                    f"`exec tmux`). Next step: in that file, keep that line from running inside tmux, {again}.")
+        return ((f"`{word}` ended with exit code {code}" if code else f"its start file was read and `{word}` was started")
+                + (", and then its tmux session ended" if gone else ", and then the shell kept in its place ended too")
+                + ". Next step: `tardigrade revive --dry-run` shows the line that starts it; run that line in a "
+                f"terminal to read what it says, cure what it names, {again}.")
+    if is_waiting(sock, name):
+        return ""
+    look = f"`{CFG['tmux']} -S {shlex.quote(sock)} attach -t {q_target(name)}`"
+    if not mark:
+        cur = pane_holds(r)
+        if cur and cur not in SHELLS:
+            return (f"the shell's start files ({files}) started another program in the pane (`{cur}`) and it "
+                    "has not ended, so the session's start file was not read. Tardigrade does not end that program. "
+                    f"Next step: in that file, keep the line that starts `{cur}` from running inside tmux, end that "
+                    f"program in its window ({look}), {again}.")
+        pid = tmux(sock, "display", "-p", "-t", f"={name}:", "#{pane_pid}", timeout=6)[1].strip()
+        own = argv_of(int(pid)) if pid.isdigit() else []
+        if cur and own and not any(launch_dir() in x for x in own):
+            # the pane's own process is no longer the shell that was to read the start file: another shell took
+            # its place (an `exec zsh`, an `exec fish` in the start files)
+            return (f"the shell's start files ({files}) handed the pane to another shell (`{cur}`), so the "
+                    "session's start file was not read. Next step: in that file, keep the line that starts "
+                    f"`{cur}` from running inside tmux, {again}.")
+        return (f"the shell's start files ({files}) had not finished when it was last looked at, so the session's "
+                f"start file was not read: a line there waits for an answer. Next step: {look}, answer it there, and "
+                "Claude Code starts in that window.")
+    if code == "127":
+        return (f"`{word}` ended with exit code 127, not found: the PATH that the shell's start files ({files}) "
+                f"leave has no such program. Next step: set {key} in config.json to that program's whole path, "
+                f"{again}.")
+    if code:
+        return (f"`{word}` ended by itself with exit code {code}; what it said is in its window. "
+                f"Next step: {look} and read it, cure what it names, {again}.")
+    return (f"its start file was read and `{word}` has not started Claude Code yet. Next step: {look}: if it asks "
+            "something, answer it there and Claude Code starts in that window; if it is still at work, Claude Code "
+            "starts there when it is done.")
 
 
 def holds_text(r):
@@ -2073,7 +2343,10 @@ def holds_text(r):
         return "is gone"
     if is_waiting(r["tmux_socket"], r["tmux_session"]):
         return "still holds its waiting screen, which now says the restore stopped and to run `tardigrade revive`"
-    return "holds a shell"
+    cur = pane_holds(r)
+    if cur is None:
+        return "holds a pane whose program has ended (kept by remain-on-exit in your tmux settings)"
+    return "holds a shell" if not cur or cur in SHELLS else f"holds another program ({cur})"
 
 
 def end_waiting_screen(sock, name):
@@ -2332,6 +2605,8 @@ class Watch:
         self.stale_limit = set()        # sessions whose last limit reply has reset since (G2.48)
         self.gone_at = {}               # sid: when the watch saw it go down (G3.17)
         self.after_due = {}             # sid: (when its note was typed, its screen just before, its row) (G2.45)
+        self.loaded = set()             # sessions seen loaded: their tmux session no longer carries our mark (G5.19)
+        self.on_loaded = None           # the run's own note of it, in its progress file (G1.20)
 
     def take_gone(self):
         out, self.gone_new = self.gone_new, []
@@ -2399,6 +2674,14 @@ class Watch:
                     self.answered.append(display(r))
                 waiting += 1
                 continue
+            if sid not in self.loaded:
+                # G5.19: it has loaded. Its place is a running session's from here: the mark comes off, so no later
+                # revive takes a shell left in it for a start that failed.
+                self.loaded.add(sid)
+                if r.get("tmux_session"):
+                    tmux(r["tmux_socket"], "set-option", "-qu", "-t", f"={r['tmux_session']}:", OURS_MARK, timeout=6)
+                if self.on_loaded:
+                    self.on_loaded(sid)
             final = (HELD_CONV, HELD_ACCOUNT)
             if sid in self.note_for and sid not in self.noted_ids and self.held.get(sid) not in final:
                 # its own reasons first: an old limit reply in its conversation (looked at once), its screen now
@@ -2663,6 +2946,10 @@ def _revive(boot):
                                     and not in_skip_folder(r.get("cwd", ""))], [True]
     note = wake_note(boot)
     todo, report = [], {"started": [], "skipped": [], "failed": [], "needs_you": [], "ended": [], "left_out": []}
+    mine_again = set()         # G5.19: tmux sessions an earlier run made for a row, where the session is not running
+    held_back = []             # rows not started because a tmux session of their name is in the way, or unread
+    lr = read_json(os.path.join(STATE, "last-revive.json"), {})
+    last_failed = lr.get("failed_why") if isinstance(lr, dict) and isinstance(lr.get("failed_why"), dict) else {}
     # Nothing is typed into a session before its login is checked: a session that comes back on another
     # login than it had (possible where sessions on one machine are pinned to accounts) is listed as
     # "needs you" and gets no note, so nothing runs on the wrong account.
@@ -2707,9 +2994,21 @@ def _revive(boot):
             continue
         if has_session(r["tmux_socket"], r["tmux_session"]) and not as_if_down and not is_waiting(
                 r["tmux_socket"], r["tmux_session"]):
-            log(f"skip  {nm}: a tmux session named {r['tmux_session']} already exists")
-            report["skipped"].append(nm)
-            continue
+            # G5.19 (T88): a tmux session of that name is there. One read, three answers. It is never counted as
+            # "already running": the session is not running.
+            ours = ours_not_started(r)
+            if ours:
+                mine_again.add((r["tmux_socket"], r["tmux_session"]))     # started there, as in a waiting screen
+            else:
+                why = in_way_text(r, ours)
+                log(f"skip  {nm}: not started: {why}")
+                report.setdefault("not_started", {})[nm] = why
+                report.setdefault("unread" if ours is None else "in_way", []).append(nm)
+                held_back.append(r)
+                continue
+        again = r.get("not_started_why") or last_failed.get(nm) or ""
+        if again and not DRY:      # the person at the terminal knows what this run waits on (T103)
+            log(f"trying again {nm}: last time " + again.split(" Next step:")[0])
         log(f"start {nm} ({r['session_id'][:8]}, {r['mode']}, {r.get('model') or 'default model'}) in {r['cwd']}"
             + (f"  [account {r['account']}]" if r.get("account") else "")
             + ("  [pinned login: checked before anything is typed]" if login_print(r) else ""))
@@ -2721,14 +3020,15 @@ def _revive(boot):
     if DRY:
         return 0
     try:        # start files of sessions that are no longer on the record
-        on_record = {r["session_id"] + ".sh" for r in read_table()["lanes"]}
+        on_record = {r["session_id"] + end for r in read_table()["lanes"] for end in (".sh", ".mark")}
         for f in os.listdir(launch_dir()):
             p = os.path.join(launch_dir(), f)
-            if f not in on_record and is_ours(p, "start"):      # G3.28: only start files we wrote
+            # G3.28: only start files we wrote, and (G5.19) the marks they left
+            if f not in on_record and is_ours(p, "mark" if f.endswith(".mark") else "start"):
                 os.remove(p)
     except OSError:
         pass
-    created, came, note_for = set(), [], {}
+    created, came, note_for = set(mine_again), [], {}
     pending = {r["session_id"]: [r, 0] for r in todo}
     try:
         os.remove(herdr_wait_path())       # G4.10: what an earlier run found about Herdr is not this run's
@@ -2739,6 +3039,9 @@ def _revive(boot):
             "boot_wait_s": int(float(CFG["boot_wait_s"])),
             "sessions": {r["session_id"]: {"name": display(r), "state": "waiting",
                                            "place": f"{r['tmux_socket']}:{r['tmux_session']}"} for r in todo}}
+    for r in held_back:       # G1.20: the record reads here that this run was to start them, and did not
+        prog["sessions"][r["session_id"]] = {"name": display(r), "state": "not_started",
+                                             "place": f"{r['tmux_socket']}:{r['tmux_session']}"}
     write_progress(prog)
     show_waiting(todo, created)
     if todo:
@@ -2755,6 +3058,12 @@ def _revive(boot):
     if note:                   # spaced notes take longer: the watch lasts until each could have its turn
         watch_s = max(watch_s, len(todo) / max(1, int(float(CFG.get("notes_per_min") or 6))) * (6 if TESTING else 60) + 30)
     w = Watch(note_for, rows)
+
+    def loaded(sid):
+        if sid in prog["sessions"]:
+            prog["sessions"][sid]["state"] = "loaded"
+            write_progress(prog)
+    w.on_loaded = loaded
     w.tabs()                   # each tab at once, to its session's waiting screen
     next_try, last_up, tries_done, said = 0.0, time.time(), False, False
     cannot_tell = ""      # T52: why the last pass started nothing, when its read failed
@@ -2939,9 +3248,16 @@ def _revive(boot):
         if not tries_done and (not pending or time.time() >= deadline):
             tries_done = True
             for sid, (r, n) in pending.items():
+                why = not_back_text(r)
+                prog["sessions"].setdefault(sid, {}).update(state="failed", why=why)
                 log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}"
-                    + (f". Not started at the last pass: {cannot_tell}" if cannot_tell else ""))
+                    + (f": {why}" if why else "")
+                    + (f"{' ' if why else '. '}Not started at the last pass: {cannot_tell}" if cannot_tell else ""))
                 report["failed"].append(display(r))
+                if why:
+                    report.setdefault("failed_why", {})[display(r)] = why
+            if pending:
+                write_progress(prog)
             report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows), began=prog["began"],
                           uptime_at_start=prog["uptime_at_start"], boot_run=boot, user_up_s=up_s,
                           boot_wait_s=prog["boot_wait_s"])
@@ -2949,7 +3265,7 @@ def _revive(boot):
             if boot:
                 write_marker(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
             log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
-                f"{len(report['failed'])} failed, {len(report['needs_you'])} need you"
+                f"{len(report['failed'])} failed, {len(report['needs_you'])} need you" + not_started_count(report)
                 + (f", {len(report['left_out'])} never started (print-mode runs, folders left alone)" if report["left_out"] else ""))
         # the sessions that are up are looked after in every pass, also while another start is being retried
         if inflight:
@@ -3025,6 +3341,13 @@ def say_tab(r):
         log(f"revive --only {display(r)}: tab: not attached: {left[0]}")
     else:
         log(f"revive --only {display(r)}: tab: not attached (Herdr did not answer, or its tmux session is not there)")
+
+
+def not_started_count(rep):
+    """G5.19 (T88): a session that was not started is counted as that, never among the ones already running"""
+    way, unread = len(rep.get("in_way") or []), len(rep.get("unread") or [])
+    return ((f", {way} not started: a tmux session of that name is in the way" if way else "")
+            + (f", {unread} not started: its tmux session could not be read" if unread else ""))
 
 
 def on_done(report):
@@ -3334,6 +3657,7 @@ def census_data():
         "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
         "trust": len([r for r in mine if r["status"] == "trust?"]),
         "lost": len([r for r in down if r.get("lost_since") and not r.get("ended")]),
+        "not_started": len([r for r in down if r.get("not_started_since") and not r.get("ended")]),
         "record_not_written": record_not_written(),
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
@@ -3514,7 +3838,10 @@ def census():
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
               f"{len(lr.get('started', []))} started, {len(lr.get('failed', []))} failed, "
-              f"{len(lr.get('needs_you', []))} need you")
+              f"{len(lr.get('needs_you', []))} need you" + not_started_count(lr))
+
+    not_back = lr.get("failed_why") if isinstance(lr.get("failed_why"), dict) else {}
+    not_started = lr.get("not_started") if isinstance(lr.get("not_started"), dict) else {}
 
     def table(title, rows, down=False):
         if not rows:
@@ -3522,11 +3849,19 @@ def census():
         print(f"\n{title}")
         for r in sorted(rows, key=lambda x: display(x).lower()):
             if down:
+                how_not = ""
+                if (display(r) in not_started or display(r) in not_back or r.get("not_started_since")) \
+                        and r.get("tmux_session") and not r.get("ended"):
+                    # G5.19, G1.20: said under the row while it is down, and read NOW, so that the step it names
+                    # is true for the state the row's place is in at this moment, not the one a revive found
+                    kind, why = down_why(r, bool(not_back.get(display(r)) or r.get("not_started_why")))
+                    if why:
+                        how_not = f"\n      A revive did not {kind}: {why}"
                 t = r.get("down_since") or r.get("last_seen") or 0
                 how = {"exit": "   ended by its owner (/exit)",
                        "shell": "   ended (its pane holds the shell it left)",
                        "print-run": "   a print-mode run (claude -p), never brought back"}.get(r.get("ended"), "")
-                print(f"  {display(r):<34} last seen {ago(now - t)} ago   {r.get('cwd', '')}{how}")
+                print(f"  {display(r):<34} last seen {ago(now - t)} ago   {r.get('cwd', '')}{how}{how_not}")
             else:
                 q = ago(now - r["updated_at"]) if r["updated_at"] else "?"
                 mark = "   STARTED BY HAND while its session was coming back" if r.get("by_hand") else ""
@@ -3560,6 +3895,10 @@ def census():
     if d["lost"]:
         print(f"\n{d['lost']} of the sessions under DOWN vanished together, which looks like a crash. They are still "
               f"on the record: `tardigrade revive` brings them back. If you ended them yourself: record --force")
+    if d.get("not_started"):
+        print(f"\n{d['not_started']} of the sessions under DOWN: a revive was to start them and they were not seen "
+              "running since. They stay on the list a revive reads: `tardigrade revive` tries them again. To let "
+              "them go: `tardigrade record --force` (it moves every session that is not running to the down list).")
     if d["same_name"]:
         print("\nSAME NAME: more than one session carries it. A name is not enough to tell them apart; use the id.")
         for nm, ids in sorted(d["same_name"].items()):
@@ -3622,6 +3961,7 @@ def report_cmd():
         print(f"  counted               {at(rep.get('counted_at'))}   {len(rep.get('started', []))} started, "
               f"{len(rep.get('loaded', []))} loaded, {len(rep.get('not_loaded', []))} not loaded, "
               f"{len(rep.get('down_again', []))} down again, {len(rep.get('skipped', []))} already running"
+              + not_started_count(rep)
               + (f", {len(rep['left_out'])} never started (print-mode runs, folders left alone)" if rep.get("left_out") else "")
               + (f"   ({ago(rep['counted_at'] - booted)} after boot)" if rep.get("boot_run") and rep.get("counted_at") else ""))
     tabs = rep.get("tabs") or {}
@@ -4537,6 +4877,12 @@ def uninstall():
         names = []
     for f in names:            # Python's cache of our script only; anything else in there is the person's
         remove_ours(os.path.join(cache, f), "cache", kept, failed, gone)
+    try:                       # G5.19: the marks start files left
+        marks = sorted(f for f in os.listdir(launch_dir()) if f.endswith(".mark"))
+    except OSError:
+        marks = []
+    for f in marks:
+        remove_ours(os.path.join(launch_dir(), f), "mark", kept, failed, gone)
     stayed, went = [], []      # (folder, why) for each of our folders that is still there; folders taken away
     for d in (cache, INSTALL_DIR):
         if os.path.islink(d) or not os.path.isdir(d):

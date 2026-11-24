@@ -176,16 +176,12 @@ session back anyway: `revive --only <its id>`. One known edge: a session being m
 moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down; `revive --only
 <its name>` brings it back.
 
-Known edge until 0.1.11 (T103, T104): a session whose start fails after a restart is tried again for 25 minutes
-(`retry_min`) and then given up. If other sessions are running, the next record, at most 5 minutes later, takes it
-off the list that `revive` reads: the census shows it under DOWN as "ended (its pane holds the shell it left)",
-`tardigrade revive` no longer starts it, and `revive --only <its name>` answers that no session on the record has
-that name. To bring it back today: cure what stopped its start, then start it yourself in its folder with Claude
-Code's own `claude --resume` (its help, at 2.1.331: "Resume a conversation by session ID or name, or pick from a
-list"). Once it runs, the next record puts it back on the list. What was seen, on a stock machine with 0.1.10.1 and
-a stand-in for Claude Code: the fault as written here, and that a session started by hand with
-`claude --resume <its id>` is on the list again at the next record. Resuming by name or from the list was not
-walked by us.
+Known edge until 0.1.11 (T104): a session that ended by itself is moved to the down list by the next record. The
+census shows it under DOWN, `tardigrade revive` does not start it, and `revive --only <its name>` answers that no
+session on the record has that name. To bring it back today: start it yourself in its folder with Claude Code's
+own `claude --resume` (its help, at 2.1.331: "Resume a conversation by session ID or name, or pick from a list").
+Once it runs, the next record puts it back on the list (that last part was seen on a stock machine with 0.1.10.1
+and a stand-in for Claude Code; resuming by name or from the list was not walked by us).
 
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
@@ -247,6 +243,33 @@ replaces it when its turn comes. `census` says that a restore is running, and `r
 **Where they come back:** inside tmux, so a session outlives its window. A session that was already in tmux returns
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
 (socket `tardigrade`) with no window, and `tardigrade open` shows it.
+
+### Your own tmux and shell settings
+
+A session comes back through your own shell start files, on purpose: that is where your `PATH` and your tools come
+from. Your tmux settings stay yours too. Three things follow.
+
+A session Tardigrade brings back has no window attached at first. If your tmux settings end such sessions
+(`destroy-unattached`), Tardigrade asks tmux to keep that one session. Your setting and your own sessions are not
+changed. A session it brought back therefore also stays when you close its window later.
+
+If a start file keeps a session from starting, revive does not count it as brought back. Its line, and the census
+under the session's row, say which case it was and the one next step: the shell ended before it reached the
+session's start (an `exit`, an `exec tmux`); the start files started another program in the pane that has not ended, or
+handed the pane to another shell (an `exec zsh`), or wait for an answer; or the command that starts Claude Code ended, with its exit code (127: not
+found on the `PATH` your start files leave), or has not started Claude Code yet. When revive gives up it touches
+nothing. The session stays on the list revive reads, also after the next record, until it runs again or you let it
+go with `tardigrade record --force` (which moves every session that is not running to the down list). The census
+reads the session's place again each time, so the step under its row is the one that is true at that moment.
+
+After the step, `tardigrade revive` starts the session in the same tmux session where that is one Tardigrade made
+for it and it holds only a shell or an ended pane. A program running there is never ended for you. A tmux session
+of the same name that Tardigrade did not make is never touched: the session is counted as "not started", never as
+running, and the line prints the whole command that gives that tmux session another name. A run that starts a
+session the last one did not bring back says so first ("trying again NAME: last time ..."); a start that fails
+for good is tried again at every restart and every `tardigrade revive`, for `retry_min` each time.
+
+The settings this is tested with are listed in `tests/lived-in-list.md`; all of it is seen on tmux 3.4 so far.
 
 ## Who has to log in after a restart
 
@@ -444,7 +467,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 157 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 178 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 
