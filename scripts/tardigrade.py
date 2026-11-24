@@ -2187,7 +2187,10 @@ def in_way_text(r, ours):
                 f"step: end that program in its window (`{at} attach -t {q_target(name)}`), then run "
                 "`tardigrade revive`.")
     holds = ("a pane whose program has ended" if cur is None else "a shell" if cur in SHELLS else f"`{cur}`")
-    return (f"a tmux session named {name} is in the way, and it is not one Tardigrade made for this session (it "
+    # "does not know it as one it made": it carries no mark of ours for this session. That is a tmux session the
+    # person made, and also one this tool made in which the session had loaded (the mark comes off then).
+    return (f"a tmux session named {name} is in the way, and Tardigrade does not know it as one it made for this "
+            "session (it "
             f"holds {holds}). Nothing in it was touched. Next step: give it another name with "
             f"`{at} rename-session -t {q_target(name)} {shlex.quote(free_name(sock, name))}`, then run "
             "`tardigrade revive`.")
@@ -2283,13 +2286,18 @@ def not_back_text(r):
     tmux removed it; the shell's start files handed the pane to another program, or wait; its command ended with a
     code. "" where the tmux session holds a waiting screen: holds_text says that one whole."""
     sock, name = r["tmux_socket"], r["tmux_session"]
-    files = "~/.zshenv, ~/.zprofile, ~/.zshrc" if CFG["shell"] == "zsh" else "~/.bashrc"
+    # the files that the shell the tool starts the session with reads before the session's start file (bash -ic;
+    # zsh -lic, by zsh's documentation). For any other shell no file is named: a wrong file is a wrong next step.
+    files = {"zsh": "~/.zshenv, ~/.zprofile, ~/.zshrc, ~/.zlogin", "bash": "~/.bashrc"}.get(CFG["shell"], "")
+    sf = f"the shell's start files ({files})" if files else "the shell's own start files"
     key = ("start_command" if CFG.get("start_command") else
            "account_command" if r.get("account") and CFG.get("account_command") else "claude_command")
     try:
-        word = (shlex.split(claude_line(r)) or ["claude"])[0]
+        words = shlex.split(claude_line(r))
     except ValueError:
-        word = "claude"
+        words = []
+    # the program's name only: a start command may begin with VAR=value, and a value can be a key or a token
+    word = next((w for w in words if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", w, re.S)), "claude")
     mark = start_mark(r)
     code = mark[6:] if mark.startswith("ended ") else ""
     again = "then run `tardigrade revive`"
@@ -2297,7 +2305,7 @@ def not_back_text(r):
     if gone or pane_program(sock, name) is None:
         if not mark:
             return ("it ended at once" + (" and tmux removed it" if gone else "") + ": the shell ended before it read "
-                    f"the session's start file. The usual cause is a line in the shell's start files ({files}) that "
+                    f"the session's start file. The usual cause is a line in {sf} that "
                     "ends the shell, or that runs a program in the shell's place which ends (an `exit`, an "
                     f"`exec tmux`). Next step: in that file, keep that line from running inside tmux, {again}.")
         return ((f"`{word}` ended with exit code {code}" if code else f"its start file was read and `{word}` was started")
@@ -2310,7 +2318,7 @@ def not_back_text(r):
     if not mark:
         cur = pane_holds(r)
         if cur and cur not in SHELLS:
-            return (f"the shell's start files ({files}) started another program in the pane (`{cur}`) and it "
+            return (f"{sf} started another program in the pane (`{cur}`) and it "
                     "has not ended, so the session's start file was not read. Tardigrade does not end that program. "
                     f"Next step: in that file, keep the line that starts `{cur}` from running inside tmux, end that "
                     f"program in its window ({look}), {again}.")
@@ -2319,14 +2327,14 @@ def not_back_text(r):
         if cur and own and not any(launch_dir() in x for x in own):
             # the pane's own process is no longer the shell that was to read the start file: another shell took
             # its place (an `exec zsh`, an `exec fish` in the start files)
-            return (f"the shell's start files ({files}) handed the pane to another shell (`{cur}`), so the "
+            return (f"{sf} handed the pane to another shell (`{cur}`), so the "
                     "session's start file was not read. Next step: in that file, keep the line that starts "
                     f"`{cur}` from running inside tmux, {again}.")
-        return (f"the shell's start files ({files}) had not finished when it was last looked at, so the session's "
+        return (f"{sf} had not finished when it was last looked at, so the session's "
                 f"start file was not read: a line there waits for an answer. Next step: {look}, answer it there, and "
                 "Claude Code starts in that window.")
     if code == "127":
-        return (f"`{word}` ended with exit code 127, not found: the PATH that the shell's start files ({files}) "
+        return (f"`{word}` ended with exit code 127, not found: the PATH that {sf} "
                 f"leave has no such program. Next step: set {key} in config.json to that program's whole path, "
                 f"{again}.")
     if code:

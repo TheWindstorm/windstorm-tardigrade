@@ -255,16 +255,18 @@ changed. A session it brought back therefore also stays when you close its windo
 
 If a start file keeps a session from starting, revive does not count it as brought back. Its line, and the census
 under the session's row, say which case it was and the one next step: the shell ended before it reached the
-session's start (an `exit`, an `exec tmux`); the start files started another program in the pane that has not ended, or
-handed the pane to another shell (an `exec zsh`), or wait for an answer; or the command that starts Claude Code ended, with its exit code (127: not
-found on the `PATH` your start files leave), or has not started Claude Code yet. When revive gives up it touches
-nothing. The session stays on the list revive reads, also after the next record, until it runs again or you let it
-go with `tardigrade record --force` (which moves every session that is not running to the down list). The census
-reads the session's place again each time, so the step under its row is the one that is true at that moment.
+session's start (an `exit`, an `exec tmux`); the start files started another program in the pane that has not
+ended, or handed the pane to another shell (an `exec zsh`), or wait for an answer; or the command that starts
+Claude Code ended, with its exit code (127: not found on the `PATH` your start files leave), or has not started
+Claude Code yet. When revive gives up it touches nothing. The session stays on the list revive reads, also after
+the next record, until it runs again or you let it go with `tardigrade record --force` (which moves every session
+that is not running to the down list). The census reads the session's place again each time, so the step under
+its row is the one that is true at that moment.
 
-After the step, `tardigrade revive` starts the session in the same tmux session where that is one Tardigrade made
-for it and it holds only a shell or an ended pane. A program running there is never ended for you. A tmux session
-of the same name that Tardigrade did not make is never touched: the session is counted as "not started", never as
+After the step, `tardigrade revive` starts the session in the same tmux session where that is the one Tardigrade
+made for that start and it holds only a shell or an ended pane. A program running there is never ended for you. A
+tmux session of the same name that Tardigrade does not know as one it made for this session (yours, or one in
+which the session had already loaded) is never touched: the session is counted as "not started", never as
 running, and the line prints the whole command that gives that tmux session another name. A run that starts a
 session the last one did not bring back says so first ("trying again NAME: last time ..."); a start that fails
 for good is tried again at every restart and every `tardigrade revive`, for `retry_min` each time.
@@ -467,7 +469,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 178 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 180 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

@@ -1837,7 +1837,8 @@ class Revive(Base):
         own, n = self.pane("pane_pid"), len(self.launches())
         rc, out = self.tg("revive")
         cmd = f"{TMUX} -S {self.sock} rename-session -t '=alpha' alpha-kept-2"
-        said = ("a tmux session named alpha is in the way, and it is not one Tardigrade made for this session (it "
+        said = ("a tmux session named alpha is in the way, and Tardigrade does not know it as one it made for this "
+                "session (it "
                 f"holds `sleep`). Nothing in it was touched. Next step: give it another name with `{cmd}`, then run "
                 "`tardigrade revive`.")
         self.assertIn("skip  Alpha Lane: not started: " + said, out)
@@ -1950,6 +1951,73 @@ class Revive(Base):
         self.until(lambda: self.pane("pane_current_command") == "bash", "the shell kept in its place")
         self.back(sid, "ended alone, mark still on")
         self.assertEqual((self.pane("session_id"), len(self.launches())), (place, n + 2), "started in that place")
+
+    def test_G5_19_the_line_names_the_start_files_of_the_shell_the_tool_starts_and_no_file_where_it_has_no_list(self):
+        """The line that sends a person to a start file names the files of the shell the tool itself starts the
+        session with (its `shell` setting, else the login shell): the ones zsh reads for zsh, never a ~/.bashrc
+        that a person on a Mac does not have; and no file at all for a shell it has no list for. The stand-in
+        shells end at once, so this reads the words only; the step is taken by the tests with a real bash."""
+        self.one_up_one_down()
+        for k, (shell, files) in enumerate((
+                ("zsh", "the shell's start files (~/.zshenv, ~/.zprofile, ~/.zshrc, ~/.zlogin)"),
+                ("fish", "the shell's own start files"))):
+            if k:
+                self.reboot()                               # another restart of the machine: a new failure
+            self.script(shell, "#!/bin/sh\nexit 0\n")
+            why, out = self.not_back(shell, cfg={"shell": shell}, conf="set -g base-index 1\n")
+            self.assertEqual(why, "it ended at once and tmux removed it: the shell ended before it read the session's "
+                             f"start file. The usual cause is a line in {files} that ends the shell, or that runs a "
+                             "program in the shell's place which ends (an `exit`, an `exec tmux`). Next step: in that "
+                             "file, keep that line from running inside tmux, then run `tardigrade revive`.", shell)
+            self.assertNotIn("bashrc", out + self.tg("census")[1], shell)
+
+    def test_G5_19_a_program_in_the_pane_is_named_by_its_name_only_never_by_its_command_line(self):
+        """A command line can carry a key or a token. The lines that name a program in the pane take its name from
+        tmux (the pane's program) or from the name column of the process list, never its arguments: a stand-in
+        started with a made-up secret in its arguments, with and without exec, is named, and no line, no log and no
+        file of the tool holds the secret. The same for the command that starts Claude Code: a setting that begins
+        with VAR=value is named by its program."""
+        secret = "tok-MADE-UP-" + uuid.uuid4().hex
+        self.script("holder", f"#!{sys.executable}\nimport time\ntime.sleep(300)\n")
+        sid = self.one_up_one_down()
+        plain = "set -g base-index 1\n"
+
+        def nowhere(said, case, but=()):
+            self.assertNotIn(secret, said, case)
+            for d, dirs, files in os.walk(self.home):
+                for n in files:
+                    p = os.path.join(d, n)
+                    if os.path.relpath(p, self.home) in but or os.path.islink(p) or not os.path.isfile(p):
+                        continue
+                    with open(p, "rb") as f:
+                        self.assertNotIn(secret.encode(), f.read(), f"{case}: {p}")
+
+        def said():
+            return "".join(self.tg(*a)[1] for a in (("census",), ("census", "--json"), ("report",)))
+
+        for k, rc in enumerate((f"exec holder --token {secret}\n", f"holder --token {secret}\n")):
+            if k:
+                self.reboot()                               # another restart of the machine: a new failure
+            why, out = self.not_back(f"a program with arguments, {k}", rc=rc, conf=plain)
+            own = self.pane("pane_pid")
+            kids = subprocess.run(["pgrep", "-P", own], capture_output=True, text=True).stdout.split()
+            pid = int((kids or [own])[0])
+            self.assertIn(secret, cmdline_of(pid), "the stand-in runs with the secret in its arguments")
+            m = re.search(r"started another program in the pane \(`([^`]+)`\) and it has not ended", why)
+            self.assertTrue(m and m.group(1) in ("holder", os.path.basename(sys.executable)), why)
+            rc2, again = self.tg("revive")
+            self.assertIn(f"holds a running program (`{m.group(1)}`), and Tardigrade does not end it.", again)
+            self.record_pass(f"a program with arguments, {k}, met again")
+            self.assertIsNotNone(start_time(pid), "and it was not ended")
+            nowhere(out + again + said(), f"a program with arguments, {k}", but=(".bashrc",))
+        self.reboot()
+        why, out = self.not_back("a start command that begins with VAR=value",
+                                 cfg={"claude_command": f"TOKEN={secret} claude-nowhere"}, conf=plain)
+        self.assertTrue(why.startswith("`claude-nowhere` ended with exit code 127, not found: "), why)
+        # two files hold it and must: the person's own setting, and the session's start file made from it
+        nowhere(out + said(), "a start command that begins with VAR=value",
+                but=(os.path.join(".config", "windstorm-tardigrade", "config.json"),
+                     os.path.relpath(self.state(os.path.join("launch", sid + ".sh")), self.home)))
 
     # ----- G1.20 (T103): the record keeps a row that a revive was to start and that was not seen loaded -----
     KEPT = ("record: Alpha Lane: a revive was to start it and it has not been seen running since. It stays on the list "
@@ -2562,7 +2630,14 @@ class Revive(Base):
         self.kill([x for x in self.launches()[n:] if x["sid"] == e][0]["pid"])
         time.sleep(1.5)
         rc, out = self.tg("revive")                # its pane holds the shell it left
-        self.assertIn("skip  Echo Lane: a tmux session named echo already exists", out)
+        # G5.19: the revive above made that tmux session, and its mark came off when the session loaded; it is not
+        # started in, not counted as running, and the words are true for it
+        self.assertIn("skip  Echo Lane: not started: a tmux session named echo is in the way, and Tardigrade does not "
+                      "know it as one it made for this session (it holds a shell). Nothing in it was touched. Next "
+                      f"step: give it another name with `{TMUX} -S {self.sock} rename-session -t '=echo' echo-kept`, "
+                      "then run `tardigrade revive`.", out)
+        self.assertIn("revive: 0 started, 3 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", out)
         self.tmux(self.sock, "kill-session", "-t", "=echo")     # and then its owner closed that too
         self.conversation(e, time.time() + 1)
         n = len(self.launches())
