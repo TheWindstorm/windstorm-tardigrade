@@ -103,7 +103,7 @@ DOWN: on the record, not running now
   Data Import                        last seen 2 h ago   /home/you/import
 ```
 
-"Comes back after a reboot" is read at that moment from the things themselves: the installed copy, and the boot service enabled and the record timer active (on a Mac, both launchd jobs loaded). When one is not there it says NO and names it; when systemctl or launchctl gives no answer it says "could not be read", never yes. Up to 0.1.10 it was read from the setting alone, and could say yes with the boot service off.
+"Comes back after a reboot" is read at that moment from the things themselves: the installed copy, and the boot service enabled and the record timer active (on a Mac, both launchd jobs loaded). When one is not there it says NO and names it; when systemctl or launchctl gives no answer it says "could not be read", never yes, and names the step: log out and in (on a Mac, log in at its screen as this user), then run setup again. Up to 0.1.10 it was read from the setting alone, and could say yes with the boot service off.
 
 "Quiet" is the time since the session last did anything. A hidden session that has been quiet for nine days is
 usually one you forgot.

@@ -2576,6 +2576,7 @@ class Setup(Base):
         line = said()
         self.assertIn("could not be read: systemctl gave no answer about the boot service (exit 1); systemctl gave "
                       "no answer about the record timer (exit 1)", line)
+        self.assertIn(". Next: log out and in (this login has no systemd user manager to ask), then run setup again", line)
         self.assertNotIn("NO", line)
         self.assertNotIn("yes", line)
         self.boot_answers("enabled", None, copy=True)               # one part there, one unread: not yes
@@ -2614,7 +2615,8 @@ class Setup(Base):
         self.assertEqual(rc, 3, out)
         self.assertIn("Setup could not read whether it is set up: systemctl gave no answer about the boot service "
                       "(exit 1); systemctl gave no answer about the record timer (exit 1). So it does not say it is.", out)
-        self.assertIn("Log out and in", out)
+        self.assertIn("So it does not say it is. Log out and in (this login has no systemd user manager to ask), "
+                      "then run setup again.", out)
         self.assertNotIn("NOT set up", out)
         self.assertNotIn("is set up.", out)
         self.assertIn("boot service: no answer   record timer: no answer", out)

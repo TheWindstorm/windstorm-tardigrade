@@ -3417,9 +3417,9 @@ def setup():
               "~/.config/systemd/user/. Log out and in, then run setup again.") + " Nothing comes back by itself yet.")
         return 1
     if unread:
+        step = unread_step()
         print("Setup could not read whether it is set up: " + "; ".join(unread) + ". So it does not say it is. "
-              + ("Log in at this Mac's screen as this user, then run setup again." if MAC else
-                 "Log out and in (this login has no systemd user manager to ask), then run setup again."))
+              + step[0].upper() + step[1:] + ".")
         return 3
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")
     for line in who_logs_in():
@@ -3502,6 +3502,12 @@ def boot_read():
     return missing, unread, "   ".join(seen)
 
 
+def unread_step():
+    """the one next step when boot_read() got no answer; setup and the census both say it"""
+    return ("log in at this Mac's screen as this user, then run setup again" if MAC else
+            "log out and in (this login has no systemd user manager to ask), then run setup again")
+
+
 def comes_back():
     """the census's short answer to: after a reboot, do the sessions come back?"""
     if not CFG["auto_revive"]:
@@ -3510,7 +3516,7 @@ def comes_back():
     if missing:
         return "NO: " + "; ".join(missing) + " (run setup)"
     if unread:
-        return "could not be read: " + "; ".join(unread)
+        return "could not be read: " + "; ".join(unread) + ". Next: " + unread_step()
     if MAC:
         return mac_story(*mac_facts())[0]
     return "yes, by itself" if linger_on() else "yes, after you log in (lingering is off)"

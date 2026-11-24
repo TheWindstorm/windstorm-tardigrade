@@ -8,7 +8,7 @@
   census still said "yes, by itself" (seen on 0.1.10 in a scratch home holding only the setting). It now reads the
   installed copy, the boot service (enabled) and the record timer (active), on a Mac both launchd jobs (loaded), at
   that moment: NO names what is missing and says to run setup; "could not be read" when systemctl or launchctl gives
-  no answer, never yes. Setup's "is set up" is the same read, made as its last act: exit 0 only when it passes, 1
+  no answer, never yes, with the step to take (Linux: log out and in; Mac: log in at the screen; then setup again). Setup's "is set up" is the same read, made as its last act: exit 0 only when it passes, 1
   with what is missing, 3 when it could not be read (T93).
 
 ## 0.1.10 (2026-11-24)
