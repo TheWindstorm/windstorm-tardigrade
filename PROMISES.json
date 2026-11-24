@@ -1503,7 +1503,7 @@
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
    "test": "",
-   "proven": "",
+   "proven": "2026-11-24, the Linux half, with the 0.1.11 build's commit d23c824 (script sha256 7744cca801e53244; the script still names itself 0.1.10.1, so the commit is what names it). On a stock Ubuntu 24.04.5 virtual machine (systemd 255, tmux 3.4, Python 3.12.3, lingering on), three rounds, each through a real restart of the machine (boot ids 9d01b52c, then 9d745f6b, 6ba29e0a, 7aa8a408) with two stand-in sessions: the boot service's revive started both (\"2 started, 0 already running, 0 failed\"), the tmux server it had started sat in the boot service's group (pids 1054, 1053, 1053), and with the boot service read active (exited) uninstall ended with exit 0 in under half a second and sent it no stop. \"Server, panes and stand-ins the same processes as before uninstall\" read YES right after and again 10 minutes later, in all three rounds, 6 of 6 reads. The start limit, same machine and script: 30 starts of the record service by hand hit systemd's start limit and left it \"failed\" (Result=start-limit-hit); the next uninstall said that entry was cleared, after reading it gone. Not proven yet: the Mac half (setup run twice with the job running, then uninstall, on each macOS the release names).",
    "issue": 115,
    "moved_why": "",
    "moved_by_person": ""
