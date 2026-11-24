@@ -1241,6 +1241,20 @@
    "issue": 95,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T89",
+   "seen": "2026-11-24, on a stock Ubuntu 24.04.5 VM, in a new account with no ~/.claude folder, after 0.1.7 then 0.1.10 were set up and the machine rebooted: the boot run's log said \"the prompt history in /home/<account>/.claude could not be used: it cannot be read (FileNotFoundError)\". A file that is not there is the answer \"not there\", not \"could not be read\"; a person on a fresh install of Claude Code has no history file either. In 0.1.10 the decision is the same in all three cases (with the file there, a session whose last typed prompt is /exit or /quit after the record last saw it running is not brought back; not there or not readable, no session is taken as ended by it and the conversation's last turn is still checked): only the log's words are wrong.",
+   "promise": "a missing history file is said as not there, never as could not be read; an unreadable one (a permission or read error) is said as could not be read, with its cause; nothing is decided differently because of the word. A test holds the three answers: there, not there, could not be read.",
+   "codon": "G2.54",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 96,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
