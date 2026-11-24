@@ -42,8 +42,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh skill --help >/dev/null 2>&1; then
-            gh skill publish --dry-run
-          else
-            echo "::warning::this runner's gh has no 'skill' command; the strict YAML step above still ran"
+          if ! gh skill --help >/dev/null 2>&1; then
+            echo "::error::this runner's gh has no 'skill' command, so the validator could not run. A check that did not run has not passed."
+            exit 1
           fi
+          gh skill publish --dry-run

@@ -4819,6 +4819,17 @@ class Strand(unittest.TestCase):
         self.assertEqual(bad, ["test_b: did not pass in this run"])
         self.assertEqual(here, ["test_c (needs Linux and tmux)"])
 
+    def test_G7_6_the_validator_step_fails_when_it_cannot_run(self):
+        # T62: when the runner's gh had no `skill` command, the step printed a warning and passed: the check could
+        # pass without having run
+        wf = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+        step = wf[wf.index("Agent Skills validator"):]
+        self.assertIn("\n          gh skill publish --dry-run\n", step)          # the validator's own pass or fail
+        self.assertRegex(step, r"if ! gh skill --help >/dev/null 2>&1; then\n(?:(?!\bfi\b)[\s\S])*\bexit 1\n\s+fi\n", "cannot run: fails")
+        for soft in ("::warning::", "|| true", "continue-on-error", "else"):
+            self.assertNotIn(soft, step, "a way for the step to pass without the validator's pass")
+        self.assertNotIn("continue-on-error", wf)
+
     def test_G7_4_every_place_that_states_the_version_says_the_same_one(self):
         """the plugin manifest said 0.1.7 for three releases while the script moved on (T50): the script, the plugin
         manifest, the marketplace entry and the skill file (if they carry a version) and the changelog's top entry"""
@@ -4837,7 +4848,15 @@ class Strand(unittest.TestCase):
         # G7.9 (T76): every clone line in the README names this version's tag, never the default branch
         for i, tag in enumerate(clone_tags(fread(os.path.join(ROOT, "README.md"))), 1):
             said[f"README.md clone line {i}"] = tag[1:] if tag.startswith("v") else tag
+        # G7.7 (T63): on the 0.1.9 release branch the README's status line still said 0.1.7, and its test count 65
+        # while the suite ran 119
+        readme = fread(os.path.join(ROOT, "README.md"))
+        m = re.search(r"^> \*\*Status: ([0-9.]+),", readme, re.M)
+        said["README.md status line"] = m.group(1) if m else "(no status line)"
         self.assertEqual({k: x for k, x in said.items() if x != v}, {}, f"the script says {v}")
+        m = re.search(r"^- (\d+) tests on Linux", readme, re.M)
+        self.assertEqual(int(m.group(1)) if m else None, len(re.findall(r"^    def test_", fread(__file__), re.M)),
+                         "the README's count of tests is the number of tests in this file")
         # the clone line check itself: a bare clone, a branch and an older tag are each caught
         self.assertEqual(clone_tags("git clone https://example/x\n  git clone --branch main https://example/x\n"
                                     "git clone --depth 1 --branch v0.1.8 https://example/x\n"),
