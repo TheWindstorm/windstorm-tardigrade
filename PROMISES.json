@@ -170,11 +170,11 @@
    "codon": "G3.9",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 13,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -198,11 +198,11 @@
    "codon": "G3.10",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 15,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -269,11 +269,11 @@
    "codon": "G3.11",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 20,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -381,11 +381,11 @@
    "codon": "G3.14",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 28,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -423,11 +423,11 @@
    "codon": "G3.15",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 31,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -451,11 +451,11 @@
    "codon": "G2.46",
    "owner": "maintainer",
    "first_ship_in": "0.1.9",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 33,
-   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes.",
+   "moved_why": "Not built; moved beside T47 with the other before-a-planned-reboot rows, which share one read of each session's processes and environment, so it does not hold back 0.1.9's built and proven fixes. Then: 0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": "the skills' department head"
   },
   {
@@ -661,11 +661,11 @@
    "codon": "G1.16",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 50,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -717,11 +717,11 @@
    "codon": "G5.10",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 55,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -759,11 +759,11 @@
    "codon": "G1.17",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 59,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -787,11 +787,11 @@
    "codon": "G1.19",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 62,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -801,11 +801,11 @@
    "codon": "G2.51",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 63,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -815,11 +815,11 @@
    "codon": "G5.11",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 64,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -829,11 +829,11 @@
    "codon": "G5.12",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 65,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -843,11 +843,11 @@
    "codon": "G3.19",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 66,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -857,11 +857,11 @@
    "codon": "G7.5",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 67,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -871,11 +871,11 @@
    "codon": "G7.6",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 68,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -885,11 +885,11 @@
    "codon": "G7.7",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 69,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -899,11 +899,11 @@
    "codon": "G5.13",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 70,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -969,11 +969,11 @@
    "codon": "G2.52",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 75,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -983,11 +983,11 @@
    "codon": "G3.23",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 76,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -997,11 +997,11 @@
    "codon": "G3.24",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 77,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -1011,11 +1011,11 @@
    "codon": "G3.25",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 78,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -1025,11 +1025,11 @@
    "codon": "G3.26",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 79,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {
@@ -1039,11 +1039,11 @@
    "codon": "G3.27",
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
-   "ship_in": "0.1.10",
+   "ship_in": "0.1.11",
    "test": "",
    "proven": "",
    "issue": 80,
-   "moved_why": "",
+   "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
    "moved_by_person": ""
   },
   {

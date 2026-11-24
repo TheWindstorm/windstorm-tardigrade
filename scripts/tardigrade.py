@@ -976,7 +976,7 @@ def in_skip_folder(path):
 def left_alone(pid):
     """G1.15: is this process working inside a folder named in skip_cwd_prefix? Then this code reads nothing more of it:
     not its environment, not its arguments, not its status file or conversation. (On Linux the system's ps, which
-    procs() runs for the whole list, opens more of every process; 0.1.10 reads /proc itself, T47.)"""
+    procs() runs for the whole list, opens more of every process; 0.1.11 reads /proc itself, T47.)"""
     return bool(CFG.get("skip_cwd_prefix")) and in_skip_folder(proc_cwd(pid))
 
 

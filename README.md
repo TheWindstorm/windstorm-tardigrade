@@ -183,7 +183,7 @@ silently. A first message is never written down.
 `--remote-control` is carried. A session started with it comes back with Remote Control on, which 0.1.7 did not
 do, and the log says so the first time a record sees it.
 
-Known edge until 0.1.10 (T70): the permission mode that census and the dry run show is the start flag. A session
+Known edge until 0.1.11 (T70): the permission mode that census and the dry run show is the start flag. A session
 that Claude Code runs in another mode was shown as "default" (seen once, with auto mode), and it came back in the
 mode Claude Code kept for it.
 
@@ -223,10 +223,10 @@ Setup tells you this for your machine. It never changes it for you.
   sessions, and the record is kept exactly as it was. Only the tmux servers the record depends on count (each
   recorded session's, tmux's default, `loose_socket`, `tsv_socket`). Census names a record that has not been written
   for an hour, and why. A restore that cannot read the process list for all of `retry_min` starts nothing, and
-  `report` and `on_done` say so. Known edge until 0.1.10 (T54): if the session file Claude Code
+  `report` and `on_done` say so. Known edge until 0.1.11 (T54): if the session file Claude Code
   keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
   `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
-  Known edge until 0.1.10 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
+  Known edge until 0.1.11 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
   -v claude)` ends in `cli.js`), a session started by hand cannot be seen as running until it has loaded: Claude Code
   runs under node's name at first, then renames itself and drops its start arguments. A restore can start a second
   copy of such a session. Update Claude Code (2.1.113 and later ship the native program, through npm too), and start
@@ -277,7 +277,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
-| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted, and Tardigrade's own code reads only its folder (from the system): not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. On Linux, the system's `ps`, which Tardigrade runs to list processes, opens more than that for every process on the machine (its environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only process id, parent, user, state and program name. From 0.1.10 the list is read from /proc directly (T47). |
+| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted, and Tardigrade's own code reads only its folder (from the system): not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. On Linux, the system's `ps`, which Tardigrade runs to list processes, opens more than that for every process on the machine (its environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only process id, parent, user, state and program name. From 0.1.11 the list is read from /proc directly (T47). |
 
 On a small machine, set `starts_at_once` to 2, and, if the machine must stay usable while sessions come back, a
 `load_max` of about twice its number of cores. Right after a boot most of the load is the boot itself.
@@ -294,7 +294,7 @@ Check this before the first reboot on a machine. A session started with a login 
 label your start can read, comes back on whatever login the plain `claude` finds, which may be another account.
 If every session on the machine should run on one login, put the wrapper that fetches it into `claude_command`.
 `tardigrade revive --dry-run --all` shows each session's start line, so you can see this before you need it.
-Known edge until 0.1.10 (T57): a session started on an account has been seen to lose its label from its
+Known edge until 0.1.11 (T57): a session started on an account has been seen to lose its label from its
 record row, so the next restart started it on the machine's own login without a word. After starting such a session,
 check that its line in `tardigrade revive --dry-run --all` ends in `[account NAME]`.
 
