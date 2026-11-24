@@ -178,6 +178,21 @@ a stand-in for Claude Code: the fault as written here, and that a session starte
 `claude --resume <its id>` is on the list again at the next record. Resuming by name or from the list was not
 walked by us.
 
+Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
+tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
+"no terminal at all" for every session that runs in tmux, `open` says there is nothing to open, and a `record` or a
+`setup` typed there writes every session down on Tardigrade's own tmux socket under a made name, until the record
+timer's next run, about 5 minutes later, puts the true places back. No running session is called down, none is
+touched, and no second copy is started: whether a session runs is read from the process list by its conversation,
+not from tmux. If the computer restarts before the timer has put them back, each conversation still comes back, in a
+tmux session on Tardigrade's own socket, and the census names where. The way round: run it with `LC_ALL` unset. The
+record timer and the boot service are touched only if your account's systemd itself carries `LC_ALL=C`; on a stock
+Ubuntu 24.04 it does not. How it was seen: with 0.1.10.1 and stand-in sessions on a stock Ubuntu 24.04 virtual
+machine (tmux 3.4, Python 3.12.3) and on an Arch Linux machine (tmux 3.8, Python 3.14.8), under `LC_ALL=C`; no
+second copy on one real revive with two running sessions on the virtual machine and on dry runs on both machines;
+the return on Tardigrade's own socket with the tmux server ended and a revive typed by hand, not through a restart;
+not seen on a Mac.
+
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
 "needs you" and nothing is typed into it.
