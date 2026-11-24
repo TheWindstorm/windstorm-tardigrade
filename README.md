@@ -150,8 +150,11 @@ Known edge until 0.1.11 (T103, T104): a session whose start fails after a restar
 off the list that `revive` reads: the census shows it under DOWN as "ended (its pane holds the shell it left)",
 `tardigrade revive` no longer starts it, and `revive --only <its name>` answers that no session on the record has
 that name. To bring it back today: cure what stopped its start, then start it yourself in its folder with Claude
-Code's own `claude --resume` and choose it. Once it runs, the next record puts it back on the list (seen on a stock
-machine with 0.1.10.1).
+Code's own `claude --resume` (its help, at 2.1.331: "Resume a conversation by session ID or name, or pick from a
+list"). Once it runs, the next record puts it back on the list. What was seen, on a stock machine with 0.1.10.1 and
+a stand-in for Claude Code: the fault as written here, and that a session started by hand with
+`claude --resume <its id>` is on the list again at the next record. Resuming by name or from the list was not
+walked by us.
 
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
