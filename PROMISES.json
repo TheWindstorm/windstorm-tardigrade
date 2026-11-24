@@ -1535,6 +1535,20 @@
    "issue": 117,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T110",
+   "seen": "2026-11-24. In another tool of this family a line of that tool's own words, quoted in a note through a shell heredoc whose mark was not quoted, was run by the shell: a backticked command with sudo, as root, on a machine where sudo asks no password. Nothing was deleted, because the folder it named was not there. A shell runs two forms inside double quotes and inside such a heredoc: a backtick pair and a dollar-parenthesis. Tardigrade asks people to report its lines whole, and an agent files such a report through a shell. Counted in this tool's code the same day, by a script over every string constant except docstrings, not by running every path: the released 0.1.10.1 holds a backtick in 9 statements whose words are printed or logged, all of them the tool's own subcommand names, and a dollar-parenthesis in none; the 0.1.11 build holds a backtick in 37 statements and a dollar-parenthesis in none. Of the 37: 20 hold the tool's own subcommands, 7 a read or a name of another program, 1 words of a shell start file, 2 a command that changes something (`claude plugin uninstall NAME`, and `systemctl --user stop` named as what not to do), and 10 put a value read from the machine between the backticks: the program a pane holds, the start word of the person's start file, and one whole attach line with the socket's path and the session's name; three statements hold two of these kinds. Four commands that change something are printed with neither form but inside a sentence: `sudo loginctl enable-linger USER` and `chmod go-w DIR` (released and build; each ends its line), `launchctl bootout gui/UID/LABEL` (build; ends its line) and `systemctl --user stop UNIT` (build), which is followed by the sentence's full stop, so that pasted to the end of its line it names a unit that does not exist. The attach lines that `open` prints stand after a name and a colon on one line, with no backtick, quoted for the shell. Not seen: a line of Tardigrade's run by a shell on anyone's machine; what the tool prints for a tmux session whose name itself holds a backtick pair.",
+   "promise": "no line the tool prints or logs carries a backtick or a dollar-parenthesis of the tool's own writing. A command the person is to type stands alone on a line of its own, so the line's ends are the command's ends and the command's last character is the line's last; a subcommand's name inside a sentence is a plain word. A value the tool did not write (a tmux session's name, the program a pane holds, a word of the person's start file, a folder, a plugin's name) is never set between backticks or any other mark that makes it read as a command; a command that must carry such a value exactly stands alone on its line, quoted for the shell. One test reads every line the tool can print or log, the reader of the stop, needs-you and next-step lines (G3.36), and fails on either form and on a printed command that does not end its line; it is seen red on a planted line first. README, SKILL.md, this file and the changelog keep markdown's backticks: they are files, read as files. Before the tag, tried once on a stock machine: what census, open, a revive's log line and the attach line print for a tmux session whose name holds a backtick pair, and this row says what came out. The released 0.1.10.1 gets no point release for this: its 9 statements hold only the tool's own subcommand names, and its 2 commands that change something carry neither form.",
+   "codon": "G3.38",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 118,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

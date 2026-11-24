@@ -268,6 +268,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G3.35 | Due in 0.1.12 (T98), with T97 and T66. Census names the number of sessions a revive would start now, on the page and in `census --json`, counted by the same function the revive decides by. `revive --dry-run` writes nothing and removes nothing, also with a lock in its way and in a home that is set up. | Not built yet. |
 | G3.36 | Due in 0.1.11 (T102). Every stop, needs-you and next-step line the tool prints has a test that takes the step as printed, in the state the failure left, with no restart and no reset between and with a record pass run first where the timer would have run one, then reads what the line promised and the tool's own count. | Not built yet. |
 | G3.37 | Due in 0.1.11 (T105). Under DOWN, "last seen" is counted from the last time a record saw the session running, for a row of either list. | Not built yet. |
+| G3.38 | Due in 0.1.11 (T110). No line the tool prints or logs carries a backtick or a dollar-parenthesis of the tool's own writing. A command the person is to type stands alone on a line of its own and ends it; a subcommand's name inside a sentence is a plain word. A value the tool did not write is never set between marks that make it read as a command. One test reads every line the tool can print or log, the reader of G3.36's lines, seen red on a planted line first. | Not built yet. |
 
 ### G4 Windows and tabs
 
