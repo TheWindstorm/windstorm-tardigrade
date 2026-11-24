@@ -254,9 +254,13 @@ Setup tells you this for your machine. It never changes it for you.
   sessions, and the record is kept exactly as it was. Only the tmux servers the record depends on count (each
   recorded session's, tmux's default, `loose_socket`, `tsv_socket`). Census names a record that has not been written
   for an hour, and why. A restore that cannot read the process list for all of `retry_min` starts nothing, and
-  `report` and `on_done` say so. Known edge until 0.1.11 (T54): if the session file Claude Code
-  keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
-  `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
+  `report` and `on_done` say so. The same holds for one session: if the session file Claude Code keeps for a
+  running session (in its `sessions` folder) is there and cannot be read, that session's row on the record is kept
+  as it was, marked with the time, and the rest of the record is written; census names the session and why, and a
+  revive does not start a second copy of it. Tardigrade finds the row by the id the session was resumed with, or by
+  the tmux session it runs in. A session outside tmux that was started without `--resume` cannot be matched that
+  way: census then lists the recorded sessions last seen outside tmux under CANNOT TELL, they are not counted as
+  down, and a revive does not start them beside it (`revive --only <its id>` if you know it is down).
   Known edge until 0.1.12 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
   -v claude)` ends in `cli.js`), a session started by hand cannot be seen as running until it has loaded: Claude Code
   runs under node's name at first, then renames itself and drops its start arguments. A restore can start a second

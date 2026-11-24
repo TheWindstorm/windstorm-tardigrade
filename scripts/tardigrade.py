@@ -406,10 +406,68 @@ def env_facts(pid):
     return facts
 
 
-def session_json(pid, config_dir=""):
+def session_file(pid, config_dir=""):
+    """(what a Claude's own session file says, state, why). state: "ok"; "absent", when no such file is there (a
+    Claude that is still loading has none yet); "unread", when it is there and could not be read, or what was read
+    is not what Claude Code writes (G1.17, T54). A read that failed is never the answer "no session"."""
     base = config_dir or os.path.join(HOME, ".claude")
-    d = read_json(os.path.join(base, "sessions", f"{pid}.json"), {})
-    return d if isinstance(d, dict) else {}
+    try:
+        with open(os.path.join(base, "sessions", f"{pid}.json"), encoding="utf-8") as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return {}, "absent", ""
+    except OSError as e:
+        return {}, "unread", f"{e.__class__.__name__}: {e.strerror or 'no cause given'}"
+    except ValueError:
+        return {}, "unread", "it is not whole JSON"
+    return (d, "ok", "") if isinstance(d, dict) else ({}, "unread", "it is not what Claude Code writes")
+
+
+def session_json(pid, config_dir=""):
+    return session_file(pid, config_dir)[0]
+
+
+UNREAD_NOW = []     # this scan's running Claudes whose own session file could not be read (G1.17)
+
+
+def unread_fact(pid, why, P, PN, lanes):
+    """G1.17 (T54): a running Claude of this user whose own session file could not be read, and the row the record
+    has for it: by the id it was resumed with, else by the tmux session it runs in. "row" is None when the record
+    cannot say which session it is; "new" says it is known not to be on the record (resumed under an id the
+    record does not carry as running)."""
+    m = re.search(r"--resume[ =]([0-9a-f-]{36})", " ".join(argv_of(pid)))
+    kind, detail = where(pid, P, PN)
+    row = None
+    if m:
+        row = next((r for r in lanes if r.get("session_id") == m.group(1)), None)
+    elif kind == "tmux":
+        row = next((r for r in lanes if (r.get("tmux_socket"), r.get("tmux_session")) == tuple(detail[:2])), None)
+    return {"pid": pid, "why": why, "row": row, "in_tmux": kind == "tmux", "new": bool(m and not row)}
+
+
+def unread_claudes(P, PN=None):
+    """G1.17: unread_fact() for every running Claude of this user whose own session file could not be read"""
+    out, lanes = [], None
+    for pid, (_, uid, comm) in sorted(P.items()):
+        if not is_claude(comm) or uid != os.getuid() or left_alone(pid):
+            continue
+        _, state, why = session_file(pid, env_facts(pid)["config_dir"])
+        if state == "unread":
+            if lanes is None:
+                PN = panes() if PN is None else PN
+                t = read_json(TABLE, {})
+                lanes = [r for r in (t.get("lanes") or []) if isinstance(r, dict)] if isinstance(t, dict) else []
+            out.append(unread_fact(pid, why, P, PN, lanes))
+    return out
+
+
+def cannot_tell_rows(unread, rows):
+    """G1.17: of `rows` (recorded sessions not seen running), the ones that may be one of the running Claudes
+    whose session file could not be read and that the record cannot match: such a Claude runs outside tmux and was
+    not resumed by id, so only a row last seen outside tmux can be it."""
+    if not any(u["row"] is None and not u["in_tmux"] and not u["new"] for u in unread):
+        return []
+    return [r for r in rows if r.get("host") != "tmux"]
 
 
 def alive(pid):
@@ -1085,8 +1143,10 @@ def live(with_launch=True):
     PANES_NOW[:], PROCS_NOW[:] = [PN], [P]
     me, mine, others, helpers = os.getuid(), [], 0, 0
     LEFT_ALONE[0] = 0
+    UNREAD_NOW[:] = []
     table = read_json(TABLE, {})
     known = {r["session_id"]: r for r in (table.get("down", []) + table.get("lanes", []))} if isinstance(table, dict) else {}
+    lanes = [r for r in (table.get("lanes") or []) if isinstance(r, dict)] if isinstance(table, dict) else []
     for pid, (_, uid, comm) in sorted(P.items()):
         if not is_claude(comm):
             continue
@@ -1097,10 +1157,20 @@ def live(with_launch=True):
             LEFT_ALONE[0] += 1     # in a folder to leave alone: counted; only its folder was read
             continue
         ef = env_facts(pid)
-        sj = session_json(pid, ef["config_dir"])
+        sj, state, why = session_file(pid, ef["config_dir"])
         sid = sj.get("sessionId")
-        starting = False
-        if not sid:
+        starting, unread = False, ""
+        if state == "unread":
+            # G1.17 (T54): the file is there and could not be read. That is "cannot tell", never "no session": the
+            # row the record has for this process stands in, as it is, and nothing else is taken from the file.
+            u = unread_fact(pid, why, P, PN, lanes)
+            UNREAD_NOW.append(u)
+            if not u["row"]:
+                continue        # the record has no row for it (a new session), or cannot say which: see record()
+            k = u["row"]
+            sid, unread = k["session_id"], why
+            sj = {"name": k.get("name") or "", "cwd": k.get("cwd") or HOME, "status": "unread", "sessionId": sid}
+        elif not sid:
             # No session file yet. A process started with --resume for a session on our record is one that
             # Claude Code is still loading (on a slow machine just after boot this takes minutes): it is
             # running, not down. Anything else without a session file is not a session of ours.
@@ -1108,7 +1178,7 @@ def live(with_launch=True):
             if not m or m.group(1) not in known:
                 continue
             sid, starting = m.group(1), True
-        if starting or not sj.get("status"):
+        if not unread and (starting or not sj.get("status")):
             k = known.get(sid, {})     # until it has loaded, its name and folder are the recorded ones
             sj = dict(sj, name=k.get("name") or sj.get("name") or "", cwd=sj.get("cwd") or k.get("cwd") or HOME,
                       status="starting", sessionId=sid)
@@ -1134,6 +1204,8 @@ def live(with_launch=True):
                 screen = tmux(detail[0], "capture-pane", "-p", "-t", f"={detail[1]}:", timeout=6)[1]
                 if trust_dialog(screen):
                     row["status"] = "trust?"
+        if unread:
+            row["unread"] = unread
         row["window"] = (kind in ("terminal", "ide", "ssh", "herdr")) or (kind == "tmux" and row["attached"] > 0)
         # a session with no terminal of any kind that the CLI did not start is some program's own: not ours to revive
         row["restorable"] = kind != "none" or row["entrypoint"] == "cli"
@@ -1157,16 +1229,21 @@ def left_out_why(r):
 
 def running_sids(P=None):
     """every session id held by a live Claude of this user, in any terminal"""
-    held = set()
-    for pid, (_, uid, comm) in (P or procs()).items():
+    held, unread = set(), False
+    P = P or procs()
+    for pid, (_, uid, comm) in P.items():
         if not is_claude(comm) or uid != os.getuid() or left_alone(pid):
             continue
-        sid = session_json(pid, env_facts(pid)["config_dir"]).get("sessionId")
+        sj, state, _ = session_file(pid, env_facts(pid)["config_dir"])
+        sid = sj.get("sessionId")
         if sid:
             held.add(sid)
         m = re.search(r"--resume[ =]([0-9a-f-]{36})", " ".join(argv_of(pid)))
         if m:
             held.add(m.group(1))
+        unread = unread or state == "unread"
+    if unread:      # G1.17: a Claude whose session file could not be read holds the id of the row at its place
+        held |= {u["row"]["session_id"] for u in unread_claudes(P) if u["row"]}
     return held
 
 
@@ -1309,6 +1386,18 @@ def record():
     table_labels = tsv_labels() if CFG.get("tsv_path") else {}
     rows, used = [], set()
     for r in mine:
+        if r.get("unread"):
+            # G1.17 (T54): its own session file could not be read. Its row stays as it was, marked with the time
+            # this was first so; nothing of it is taken as changed and nothing as gone. The rest is written.
+            o = {k: v for k, v in old_by.get(r["session_id"], {}).items() if k != "lost_since"}    # it runs
+            if not o:
+                continue
+            if not o.get("unread_at"):
+                log(f"record: {display(o)}: its session file could not be read ({r['unread']}); its row is kept "
+                    "as it was, and it is not taken as gone")
+            rows.append(dict(o, unread_at=o.get("unread_at") or int(time.time())))
+            used.add((o["tmux_socket"], o["tmux_session"]))
+            continue
         if left_out_why(r):
             continue
         o = old_by.get(r["session_id"], {})
@@ -1375,6 +1464,21 @@ def record():
     # a memory kill of many sessions leaves shells behind too, and that is a crash.
     EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in gone], [True]
     exits = {r["session_id"]: exited_at(r) for r in gone}
+    # G1.17: a running Claude whose session file could not be read, and that the record cannot match to a row, may
+    # be any recorded session last seen outside tmux. Those rows stay, marked, unless their owner ended them.
+    maybe = [r for r in cannot_tell_rows(UNREAD_NOW, gone) if not exits[r["session_id"]] and not print_run(r)]
+    if maybe:
+        n = len([u for u in UNREAD_NOW if u["row"] is None and not u["in_tmux"] and not u["new"]])
+        if not all(r.get("unread_at") for r in maybe):
+            log(f"record: {n} running Claude process(es) outside tmux have a session file that could not be read, and "
+                f"the record cannot tell which session each is; kept as they were, not taken as gone: "
+                + ", ".join(display(r) for r in maybe))
+        rows += [dict(r, unread_at=r.get("unread_at") or int(time.time())) for r in maybe]
+        gone = [r for r in gone if r not in maybe]
+    for u in UNREAD_NOW:
+        if u["row"] is None and (u["in_tmux"] or u["new"]):
+            log(f"record: a running Claude (process {u['pid']}) has a session file that could not be read "
+                f"({u['why']}) and no row on the record; nothing is written down for it until the file can be read")
     fresh = [r for r in gone if not r.get("lost_since") and not exits[r["session_id"]]]
     crash = not force and len(fresh) >= 3 and len(fresh) * 2 > len(old["lanes"])
     lost = []
@@ -2371,6 +2475,9 @@ def _revive(boot):
         time.sleep(gap)
         P = procs()
     held = running_sids(P)
+    # G1.17 (T54): a running Claude outside tmux whose session file could not be read, and that the record cannot
+    # match to a row, may be any recorded session last seen outside tmux: none of those is started beside it.
+    maybe = {r["session_id"] for r in cannot_tell_rows(unread_claudes(P), [r for r in rows if r["session_id"] not in held])}
     EXIT_SIDS[:], HISTORY_SAY[:] = [r["session_id"] for r in rows if r["session_id"] not in held
                                     and not in_skip_folder(r.get("cwd", ""))], [True]
     note = wake_note(boot)
@@ -2392,6 +2499,13 @@ def _revive(boot):
         if r["session_id"] in held and not as_if_down:
             log(f"skip  {nm}: already running on this machine")
             report["skipped"].append(nm)
+            continue
+        if r["session_id"] in maybe and not as_if_down and want != r["session_id"]:
+            log(f"skip  {nm}: cannot tell whether it is running. A Claude is running outside tmux whose own session "
+                "file could not be read, and this session was last seen outside tmux: it may be that one, so it is "
+                f"not started beside it. If you know it is down: revive --only {r['session_id']}")
+            report["skipped"].append(nm)
+            report.setdefault("cannot_tell_rows", []).append(nm)
             continue
         ex = 0 if as_if_down or want == r["session_id"] else exited_at(r)
         if ex:
@@ -2975,6 +3089,9 @@ def census_data():
             and r["session_id"] not in held_now]
     coming = [r for r in down if r.get("tmux_session") and is_waiting(r["tmux_socket"], r["tmux_session"])]
     down = [r for r in down if r not in coming]
+    # G1.17 (T54): a row that may be a running Claude whose session file could not be read is not said to be down
+    cannot_tell = cannot_tell_rows(UNREAD_NOW, [r for r in down if not r.get("ended")])
+    down = [r for r in down if r not in cannot_tell]
     going = restore_now()
     stopped = [] if going else coming        # a waiting screen left by a restore that is no longer running
     coming = coming if going else []
@@ -3036,6 +3153,11 @@ def census_data():
         "on_record": len(table["lanes"]), "last_revive": read_json(os.path.join(STATE, "last-revive.json"), {}),
         "not_kept": not_kept, "replaced": replaced, "coming_back": len(coming), "waiting_stopped": len(stopped), "restore": going, "same_name": same_name,
         "herdr_not_running": herdr_wait_now(),
+        "unread": [{"name": display(r), "session_id": r["session_id"], "why": r["unread"],
+                    "since": int(next((x.get("unread_at") or 0 for x in table["lanes"]
+                                       if x["session_id"] == r["session_id"]), 0))} for r in mine if r.get("unread")],
+        "unread_no_row": len([u for u in UNREAD_NOW if u["row"] is None]),
+        "cannot_tell_running": cannot_tell,
         "down_during_restore": down_during_restore(live_ids),
         "by_hand": [{"name": r["name"], "session_id": r["session_id"], "in_place_of": r["by_hand"]}
                     for r in mine if r.get("by_hand")],
@@ -3177,6 +3299,11 @@ def census():
               "attached then. This census did not ask Herdr (herdr_tabs is off in the settings, or it found no herdr program), "
               "so it does not say whether Herdr is running now."
               + (" The restore is still running." if hw["running"] else ""))
+    for u in d["unread"]:                   # G1.17 (T54)
+        print(f"Session file could not be read: {u['name']} is running, and its own session file could not be read "
+              f"({u['why']}"
+              + (f"; first at {clock(u['since'])}" if u["since"] else "")
+              + "). Its row on the record is kept as it was; it is not taken as gone.")
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "
@@ -3211,6 +3338,12 @@ def census():
     table("HIDDEN: running, but no window shows them", d["sessions"]["hidden"])
     table("WITH A WINDOW", d["sessions"]["with_window"])
     table("DOWN: on the record, not running now", d["sessions"]["down"], down=True)
+    if d["cannot_tell_running"]:
+        print(f"\nCANNOT TELL ({len(d['cannot_tell_running'])}): on the record, last seen outside tmux. A Claude is "
+              "running outside tmux whose own session file could not be read, and each of these may be that one. "
+              "They are not counted as down, and revive does not start them beside it.")
+        for r in sorted(d["cannot_tell_running"], key=lambda x: display(x).lower()):
+            print(f"  {display(r):<34} last seen {ago(now - (r.get('last_seen') or 0))} ago   {r.get('cwd', '')}")
     if d["replaced"]:
         print(f"\nSTARTED NEW under a new id, in their own place (up, not down; the next record takes the new id): "
               f"{len(d['replaced'])}")

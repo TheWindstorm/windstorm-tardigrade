@@ -60,6 +60,9 @@ If the census says it **cannot tell** (the process list or tmux could not be rea
 do not call any session down, do not run `revive` and do not start any session by hand on the strength of it. Run
 `census` again in a minute; if it still cannot tell, say so to the user and let them look with `tmux ls`.
 
+If the census has a **CANNOT TELL** list, or a line that a session file could not be read, show it as it is. Those
+sessions are not down: do not call them down, and do not start one with `revive --only` unless the user says it is down.
+
 Do not end, restart or change any session because of what the census shows. List them and ask. A hidden session may
 be doing exactly what its owner wants.
 

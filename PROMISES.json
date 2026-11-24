@@ -760,7 +760,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G1_17_a_session_whose_own_file_cannot_be_read_keeps_its_row_and_the_rest_is_written",
    "proven": "",
    "issue": 59,
    "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",

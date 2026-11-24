@@ -806,6 +806,91 @@ class Record(Base):
         self.tg("record", "--force")
         self.assertEqual(self.table()["lanes"][0]["model"], "claude-sonnet-5-5")
 
+    def test_G1_17_a_session_whose_own_file_cannot_be_read_keeps_its_row_and_the_rest_is_written(self):
+        # T54: a probe made each read fail in turn. With one of three sessions' own session file unreadable, record
+        # put that running session on the down list: the next reboot would not have brought it back.
+        a, b, c = (self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma"))
+        self.tg("record", "--force")
+        was = {r["session_id"]: r for r in self.table()["lanes"]}
+        pid = {x["sid"]: x["pid"] for x in self.launches()}
+        sf = os.path.join(self.home, ".claude", "sessions", f"{pid[a]}.json")
+        whole = fread(sf)
+        self.kill(pid[c])                                   # Gamma really goes down: the rest of the record is written
+        time.sleep(1.5)
+        first = 0
+        for how, why in (("half", "it is not whole JSON"), ("folder", "IsADirectoryError: Is a directory")):
+            if how == "half":
+                with open(sf, "w") as f:
+                    f.write(whole[:len(whole) // 2])        # caught half written
+            else:
+                os.remove(sf)
+                os.mkdir(sf)                                # it is there and cannot be opened as a file (root too)
+            rc, out = self.tg("record")
+            t = self.table()
+            rows = {r["session_id"]: dict(r) for r in t["lanes"]}
+            self.assertEqual(sorted(rows), sorted([a, b]), out)                     # not gone
+            self.assertEqual([r["session_id"] for r in t["down"]], [c], out)        # the rest is written
+            mark = rows[a].pop("unread_at")
+            self.assertEqual(rows[a], was[a], "its row is kept as it was")
+            first = first or mark
+            self.assertEqual(mark, first, "the mark is the time it first could not be read")
+            self.assertGreater(rows[b]["last_seen"], was[b]["last_seen"])
+            said = f"record: Alpha Lane: its session file could not be read ({why}); its row is kept as it was"
+            self.assertEqual(said in out, how == "half", out)                       # said once, when it begins
+            rc, cen = self.tg("census")
+            self.assertIn(f"Session file could not be read: Alpha Lane is running, and its own session file could not "
+                          f"be read ({why}; first at {time.strftime('%H:%M', time.localtime(first))}). Its row on "
+                          "the record is kept as it was; it is not taken as gone.", cen)
+            d = json.loads(self.tg("census", "--json")[1])
+            self.assertEqual((d["running"], d["down"], [u["session_id"] for u in d["unread"]]), (2, 1, [a]), cen)
+            self.assertNotIn("Alpha Lane", [r["name"] for r in d["sessions"]["down"]])
+            n = len(self.launches())                        # never a second copy of it
+            rc, out = self.tg("revive")
+            self.assertIn("skip  Alpha Lane: already running on this machine", out)
+            time.sleep(2)
+            self.assertEqual(self.launches()[n:], [], out)
+            time.sleep(1)
+        # the file reads again: the row is written new, and the mark is gone
+        os.rmdir(sf)
+        with open(sf, "w") as f:
+            f.write(whole)
+        self.tg("record")
+        row = [r for r in self.table()["lanes"] if r["session_id"] == a][0]
+        self.assertNotIn("unread_at", row)
+        self.assertGreater(row["last_seen"], was[a]["last_seen"])
+        self.assertNotIn("Session file could not be read", self.tg("census")[1])
+        # a session outside tmux, started without --resume: the record cannot match its process to a row. Its row is
+        # kept, marked, and said as "cannot tell": not down, and not started beside the one that runs
+        d_sid = self.start_loose("Docs Rewrite")
+        self.tg("record", "--force")
+        lp = [x for x in self.launches() if x["sid"] == d_sid][0]["pid"]
+        lf = os.path.join(self.home, ".claude", "sessions", f"{lp}.json")
+        whole = fread(lf)
+        os.remove(lf)
+        os.mkdir(lf)
+        rc, out = self.tg("record")
+        self.assertIn("the record cannot tell which session each is; kept as they were, not taken as gone: Docs Rewrite", out)
+        t = self.table()
+        self.assertIn("unread_at", [r for r in t["lanes"] if r["session_id"] == d_sid][0])
+        self.assertNotIn(d_sid, [r["session_id"] for r in t["down"]])
+        rc, cen = self.tg("census")
+        self.assertIn("CANNOT TELL (1): on the record, last seen outside tmux.", cen)
+        d = json.loads(self.tg("census", "--json")[1])
+        self.assertEqual([r["session_id"] for r in d["cannot_tell_running"]], [d_sid])
+        self.assertNotIn(d_sid, [r["session_id"] for r in d["sessions"]["down"]])
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        self.assertIn("skip  Docs Rewrite: cannot tell whether it is running.", out)
+        time.sleep(2)
+        self.assertNotIn(d_sid, [x["sid"] for x in self.launches()[n:]], out)
+        # when that process has ended, nothing is in doubt any more: the row goes down the usual way
+        self.end_loose()
+        time.sleep(1)
+        self.tg("record", "--force")
+        t = self.table()
+        self.assertEqual([r["session_id"] for r in t["down"] if r["session_id"] == d_sid], [d_sid])
+        self.assertNotIn("CANNOT TELL", self.tg("census")[1])
+
     def test_G1_18_a_failed_pane_or_process_read_leaves_the_record_as_it_was(self):
         """T55, seen 2026-11-23 in a probe on 0.1.8.2 and on the 0.1.9 candidate: with tmux list-panes failing, record
         rewrote both sessions from their tmux places to "no terminal" under new names, so the next restore would put
