@@ -227,6 +227,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G2.23 | With `load_max` set, each start waits (up to `load_wait_s`) while the machine's load is above it. Off by default. | `test_G2_23_with_load_max_set_a_loaded_machine_is_given_time_between_starts` |
 | G2.24 | After the starts it keeps looking for up to `watch_min` minutes, then counts: LOADED (Claude Code has written the session's own file), UP-NOT-LOADED and DOWN, the last two by name. "A process is up" is not counted as loaded. | `test_G2_24_after_the_starts_it_counts_loaded_and_names_what_is_not` |
 | G2.52 | Due in 0.1.11 (T69). Setup and each boot run make every marker they keep readable by the person only, not only the ones they write; a test plants an old marker with a wider mode and sees it tightened. | Not built yet. |
+| G2.53 | Due in 0.1.11 (T85). A revive that starts after an earlier one was stopped part way starts each recorded session at most once: no session id gets a second Claude, no tmux session a second pane; the test stops revive at planted points, not after a time. | Not built yet. |
 
 ### G3 Census: say what is running and what is not
 
@@ -291,6 +292,8 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G5.15 | Due in 0.1.10 (T78). TARDIGRADE_TESTING alone changes nothing: the test behaviour needs the setting and a marker the suite writes in its own temporary home; with the setting alone no wait is shortened, no fact replaced, nothing handed on to a tmux server or session, and the run's first line says the setting was found and ignored; a test for each half, and the suite fails without the marker; by rule 27 every environment setting the tool reads is on one of three lists in the repository (a person's, a fact from the host, our own marker), and a test fails on a read that is on none. | `test_G5_15_the_testing_setting_alone_changes_nothing_and_says_so`, `test_G5_15_every_environment_read_is_on_one_list`, `test_G5_15_the_suite_refuses_to_run_the_tool_outside_its_own_scratch_home` |
 | G5.16 | Due in 0.1.10 (T77). The code and every shown text never run or give `claude plugin marketplace remove` (it uninstalls every plugin from the catalog); the way back is the plugin uninstall alone. | `test_G5_16_no_shown_text_removes_the_plugin_catalog` |
 | G5.17 | Due in 0.1.11 (T83). When launchd does not take a job, setup's stop line says what is on disk, what happens at the next screen login, and the one next step; census says what is true in that state (after a read of whether the file loads at login). | Not built yet. |
+| G5.18 | Due in 0.1.11 (T87). The guard's remaining parts: loud stand-ins first on PATH, a hook counting opens in the real home, children handed it and real programs found, the count failing the test, and a gate test that plants each kind; the row names what the hook cannot see. | Not built yet. |
+| G5.19 | Due in 0.1.11 (T88). What the tool starts as its own gets an environment it built; the person's settings cannot move what it runs without the tool saying so; one lived-in round before the tag, after the stock one. | Not built yet. |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
 ### G7 Tests
@@ -309,6 +312,7 @@ The tests run on a person's own machine, so they must leave it as they found it.
 | G7.8 | Due in 0.1.11 (T67). The real rounds are written as eval cases in the skill-creator style (what the person says, what the agent must run and say), and they run before a release. | Not built yet. |
 | G7.9 | Due in 0.1.10 (T76). Every `git clone` line in the README names the release tag (`--depth 1 --branch v<version>`), never the default branch; the version test reads every clone line and fails on a bare clone, a branch or another tag. | `test_G7_4_every_place_that_states_the_version_says_the_same_one` |
 | G7.10 | Due in 0.1.10 (T84). The cleanup of a test run stopped part way scans again once what it found has exited, until a scan finds none, so the tmux server of a session the run in flight brings back as it is stopped is ended too (G7.1 failed on it under load). At its bound (10 s) the test fails and names what stayed; nothing wider than an exact pid is ended. | `test_G7_10_the_cleanup_of_a_stopped_run_ends_what_its_run_in_flight_starts_as_it_is_stopped` |
+| G7.11 | Due in 0.1.11 (T86). The suite signals a remembered pid only after showing it is still the test's (its folder in the command line or environment, or its start time); the guard's hook fails a test that cannot. | Not built yet. |
 
 ### Planned: what the hundred-session reboot asked for
 
