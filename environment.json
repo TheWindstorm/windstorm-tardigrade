@@ -108,6 +108,10 @@
   {
    "name": "TARDIGRADE_FAKE_LINGER",
    "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_STOP_AT",
+   "note": "read only with both keys; ends the run at a planted point, for the test of a revive stopped part way"
   }
  ]
 }

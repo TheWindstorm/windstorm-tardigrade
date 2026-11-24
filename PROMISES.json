@@ -1195,7 +1195,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G2_53_a_revive_after_one_stopped_part_way_starts_each_session_at_most_once",
    "proven": "",
    "issue": 92,
    "moved_why": "",

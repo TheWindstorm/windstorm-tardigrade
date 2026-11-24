@@ -971,6 +971,38 @@ class Revive(Base):
         time.sleep(2)
         self.assertEqual(self.typed(), [])
 
+    def test_G2_53_a_revive_after_one_stopped_part_way_starts_each_session_at_most_once(self):
+        # T85: a revive stopped by time (SIGTERM after 0.2 to 5 s) and run again gave each session one start, 8 of 8;
+        # a stop by time does not reach each point on purpose. Here the run ends itself at planted points, at once
+        # and with nothing tidied, and the next run is counted: starts, live processes and panes of each session.
+        names = ("alpha", "beta", "gamma")
+        sids = [self.start_lane(n, n.title() + " Lane") for n in names]
+        self.tg("record", "--force")
+        # after the 2nd waiting screen is made (no Claude yet); right after the 2nd Claude took its screen's pane;
+        # after the 2nd start was counted; between the 1st and the 2nd session
+        for point in ("screen_made:2", "respawned:2", "claude_started:2", "between:1"):
+            self.reboot()
+            n = len(self.launches())
+            rc, out = self.tg("revive", TARDIGRADE_FAKE_STOP_AT=point)
+            self.assertEqual(rc, 137, f"{point}: the planted stop was not reached: {out}")
+            rc, out = self.tg("revive")
+            self.wait_launches(n + 3)
+            time.sleep(3)
+            new = self.launches()[n:]
+            self.assertEqual(sorted(x["sid"] for x in new), sorted(sids), f"{point}: a session started twice, or not: {out}")
+            for x in new:
+                os.kill(x["pid"], 0)                        # each one's Claude is alive (raises when it is not)
+            rc, got = self.tmux(self.sock, "list-panes", "-a", "-F", "#{session_name}")
+            self.assertEqual(sorted(got.split()), sorted(names), f"{point}: one pane a session, no session more: {out}")
+            for nm in names:
+                self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", f"={nm}:", "@tardigrade_waiting")[1].strip(),
+                                 "", f"{point}: {nm} is still marked as a waiting screen")
+            self.tg("record", "--force")
+        # tests only: without the suite's two keys the setting is not read at all
+        src = fread(SCRIPT)
+        body = src[src.index("def planted_stop(point):"):src.index("CFG = {")]
+        self.assertLess(body.index("if not TESTING:"), body.index('os.environ.get("TARDIGRADE_FAKE_STOP_AT"'))
+
     def test_G2_4_never_a_second_copy(self):
         self.start_lane("alpha", "Alpha Lane")
         self.tg("record", "--force")

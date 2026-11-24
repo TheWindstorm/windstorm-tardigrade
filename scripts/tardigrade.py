@@ -76,6 +76,19 @@ def test_marked():
 
 TESTING = os.environ.get("TARDIGRADE_TESTING") == "1" and test_marked()
 TESTING_IGNORED = "TARDIGRADE_TESTING" in os.environ and not TESTING
+PASSED = {}             # G2.53, tests only: how often this run passed each planted point
+
+
+def planted_stop(point):
+    """G2.53 (T85), tests only (both keys): TARDIGRADE_FAKE_STOP_AT="<point>:<n>" ends this process at its n-th pass
+    of that point, at once and with nothing tidied or written out, the way a run is left when it is stopped from
+    outside. Outside the tests this does nothing."""
+    if not TESTING:
+        return
+    PASSED[point] = PASSED.get(point, 0) + 1
+    if TESTING and os.environ.get("TARDIGRADE_FAKE_STOP_AT", "") == f"{point}:{PASSED[point]}":
+        os._exit(137)
+
 
 CFG = {
     "shell": None,            # "bash" or "zsh"; default: your login shell
@@ -1685,7 +1698,9 @@ def same_login(r, pid):
     return want == "unknown" or env_facts(pid)["token_print"] == want
 
 
-def new_session(sock, name, cwd, cmd):
+def new_session(sock, name, cwd, cmd, then=()):
+    """a new tmux session running cmd. `then`: one more tmux command (a list) for the SAME call: tmux runs it
+    right after it made the session, so a stop of ours between the two cannot leave the session without it (G2.53)."""
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     ensure_server(sock)
     argv = [CFG["tmux"], "-S", sock]
@@ -1693,6 +1708,8 @@ def new_session(sock, name, cwd, cmd):
     if conf and os.path.isfile(conf):
         argv += ["-f", conf]         # read only when this call is the one that starts the server
     argv += ["new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", cwd, cmd]
+    if then:
+        argv += [";"] + list(then)
     return run(argv, env=server_env())[0]      # nothing of the caller's environment, and no value on a command line
 
 
@@ -1706,8 +1723,11 @@ def start_lane(r, created):
             # The pane gets a new terminal, so nothing typed at the waiting screen reaches Claude.
             # tmux gives a respawned pane the PATH of the client that asks (tmux 3.4): ask with the clean
             # environment, as new_session does, or at boot the pane gets the boot service's PATH (G2.49).
-            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
-            tmux(sock, "set-option", "-u", "-t", f"={name}:", WAIT_MARK)
+            # Claude takes the pane and the screen's mark comes off in one tmux call (G2.53): a run stopped right
+            # after it leaves no session that runs Claude and still carries the mark of a waiting screen
+            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, ";",
+                      "set-option", "-u", "-t", f"={name}:", WAIT_MARK, env=server_env())[0]
+            planted_stop("respawned")
             tmux(sock, "clear-history", "-t", f"={name}:")
             return rc == 0
         # a retry: the session this run made holds a shell because claude ended
@@ -1754,9 +1774,11 @@ def show_waiting(todo, created):
             continue
         cwd = r["cwd"] if os.path.isdir(r["cwd"]) else HOME
         cmd = f"{shlex.quote(py)} -I {shlex.quote(script)} wait {shlex.quote(str(r['session_id']))}"
-        if new_session(sock, name, cwd, cmd) == 0:
+        # the screen and its mark in one tmux call: a run stopped right here never leaves a waiting screen that
+        # the next run cannot know as ours (it would take it for someone's session and start nothing in it)
+        if new_session(sock, name, cwd, cmd, then=["set-option", "-t", f"={name}:", WAIT_MARK, "1"]) == 0:
             created.add((sock, name))
-            tmux(sock, "set-option", "-t", f"={name}:", WAIT_MARK, "1")
+            planted_stop("screen_made")
             tmux(sock, "select-pane", "-t", f"={name}:", "-T", f"{display(r)} (coming back)")
 
 
@@ -2601,6 +2623,7 @@ def _revive(boot):
                         r["tmux_socket"], r["tmux_session"]):
                     w.reattach(sid)    # its waiting screen was closed: a new session, and its tab attached again
                 if start_lane(r, created):
+                    planted_stop("claude_started")
                     inflight[sid] = (r, time.time())
                     report.setdefault("first_start", int(time.time()))
                     report["last_start"] = int(time.time())
@@ -2609,6 +2632,7 @@ def _revive(boot):
                     pending[sid][1] += 1
                     log(f"  {nm}: not running yet (attempt {pending[sid][1]}); will retry")
                 time.sleep(float(CFG["stagger_s"]))
+                planted_stop("between")
             settle(wait_all=True)
             next_try = time.time() + float(CFG["retry_gap_s"])
         if not tries_done and (not pending or time.time() >= deadline):
