@@ -1409,6 +1409,34 @@
    "issue": 108,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T101",
+   "seen": "2026-11-24, read in the code, after the family's rule that a stored command names no folder an updater owns (seen that day for another skill of the family on two Macs: a job file named the python3 inside Xcode, because Python names the real program behind Apple's /usr/bin/python3, and that job breaks without a word when Xcode is moved or removed): this tool's two units and two launchd files run `PYTHON -I COPY`, where COPY is the installed copy and PYTHON is what the Python that ran setup reports as itself. On Linux that is the resolved program, so a setup run by a pyenv, mise or conda python writes that version folder's python into the units; on a Mac it is the program behind /usr/bin/python3. Not seen on a machine by us for this tool; read only. The waiting screen's command names the same python on a pane for the minutes the screen lives; nothing keeps it.",
+   "promise": "the units and the launchd files name a python that no update of something else takes away: where the python that runs setup is Apple's (its real path lies under the folder `xcode-select -p` names), /usr/bin/python3 is written; otherwise the path as the person ran it, not resolved further (a Homebrew program by its bin folder, never a path under Cellar). The census reads whether each stored program is still there, with three answers (there, gone, could not be read), and names the one next step. The test of G5.25 also refuses Xcode.app/Contents/Developer, CommandLineTools/usr/bin, /Cellar/ and a pyenv, mise or conda version folder in what setup writes.",
+   "codon": "G5.26",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 109,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T102",
+   "seen": "2026-11-24, in the 0.1.11 build, before any push of it: each new line that tells a person what to do after a start that failed was taken the way a person would, in the state the failure left, with no restart between. In four cases the step did nothing: the failed start had left its tmux session behind (a pane kept by remain-on-exit, a pane with another program, a shell at a question, the shell kept after exit code 127), and the next `tardigrade revive` said a tmux session of that name already exists, started nothing and counted the session as already running. The tests had hidden it: each restarted first. Seen the same hour: with other sessions up, the timer's next record pass moves a session whose start failed to the down list, and a revive after that no longer looks at it.",
+   "promise": "every stop, needs-you and next-step line the tool prints has a test that takes the step as printed, in the state the failure left, with no restart and no reset between and with a record pass run first where the timer would have run one, then reads what the line promised and the tool's own count. A count never calls running what is not: a session that was not started because a tmux session of its name is in the way is counted and worded as that, in the run's last line, the log and the report. A session whose start failed stays where a revive looks for it. The list of such lines, each with its test, is kept beside the tests.",
+   "codon": "G3.36",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 110,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
