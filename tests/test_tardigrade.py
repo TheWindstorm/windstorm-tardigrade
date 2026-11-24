@@ -4883,11 +4883,90 @@ class Strand(unittest.TestCase):
                 for n, line in enumerate(fread(f).splitlines(), 1) if re.search(r"marketplace\s+(remove|rm)\b", line)}
         self.assertEqual(said, {}, "a shown text or the code removes the catalog")
 
+    def test_G5_13_the_repositorys_own_catalog_entry_is_pinned_to_the_commit_its_release_tag_points_to(self):
+        """T64: a `./` source hands out whatever the default branch holds under a released label; a `sha` that is an
+        annotated tag's own id is not a commit, and git only warns about it"""
+        cat = json.loads(fread(os.path.join(ROOT, ".claude-plugin", "marketplace.json")))
+        mine = [e for e in cat.get("plugins", []) if e.get("name") == "windstorm-tardigrade"]
+        self.assertEqual(len(mine), 1, "the entry is there once: pinned, never removed")
+        src = mine[0].get("source")
+        url = src.get("url", "") if isinstance(src, dict) else ""
+        self.assertEqual(catalog_entry_problems(mine[0], lambda ref: catalog_ref_commit(ROOT, url, ref)), [])
+        # the check itself: each of these must be refused
+        tmp = tempfile.mkdtemp(prefix="tgcat")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        git = ["git", "-C", tmp, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
+               "-c", "tag.gpgsign=false"]
+        for a in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "one"], ["tag", "-a", "v9.9.9", "-m", "a release"],
+                  ["tag", "v9.9.8"]):
+            subprocess.run(git + a, check=True, capture_output=True, env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull})
+        ask = lambda *a: subprocess.run(["git", "-C", tmp] + list(a), capture_output=True, text=True).stdout.strip()
+        commit, tag_id = ask("rev-parse", "HEAD"), ask("rev-parse", "refs/tags/v9.9.9")
+        self.assertNotEqual(commit, tag_id, "the stand-in release tag is an annotated one")
+        self.assertEqual(catalog_ref_commit(tmp, "", "v9.9.9"), commit)
+        self.assertEqual(catalog_ref_commit(tmp, "", "v9.9.8"), commit, "a plain tag is its commit")
+        self.assertEqual(catalog_ref_commit("", "file://" + tmp, "v9.9.9"), commit, "asked of the remote: the commit too")
+        self.assertEqual(catalog_ref_commit("", "file://" + tmp, "v9.9.8"), commit)
+        self.assertIsNone(catalog_ref_commit(tmp, "file://" + tmp, "v9.9.7"), "no such tag: no answer, never a guess")
+        where = lambda ref: catalog_ref_commit(tmp, "", ref)
+        good = {"name": "x", "source": {"source": "url", "url": "https://github.com/o/r.git", "ref": "v9.9.9", "sha": commit}}
+        self.assertEqual(catalog_entry_problems(good, where), [])
+        bad = {"a ./ source": {**good, "source": "./"},
+               "no ref": {**good, "source": {k: v for k, v in good["source"].items() if k != "ref"}},
+               "no sha": {**good, "source": {k: v for k, v in good["source"].items() if k != "sha"}},
+               "a branch as ref": {**good, "source": {**good["source"], "ref": "main"}},
+               "the tag's own id": {**good, "source": {**good["source"], "sha": tag_id}},
+               "a short sha": {**good, "source": {**good["source"], "sha": commit[:12]}},
+               "a tag that is not there": {**good, "source": {**good["source"], "ref": "v9.9.7"}},
+               "a github shorthand": {**good, "source": {"source": "github", "repo": "o/r", "ref": "v9.9.9", "sha": commit}},
+               "not https": {**good, "source": {**good["source"], "url": "git@github.com:o/r.git"}}}
+        for what, entry in bad.items():
+            self.assertNotEqual(catalog_entry_problems(entry, where), [], f"{what} passed")
+
     def test_no_codon_is_used_twice_in_the_plan(self):
         import re, collections
         plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
         seen = collections.Counter(re.findall(r"^\| ((?:G|INV)[0-9.]+) \|", plan, re.M))
         self.assertEqual([c for c, n in seen.items() if n > 1], [], "a codon is used for two claims")
+
+
+def catalog_ref_commit(root, url, ref):
+    """the commit a release tag points to (G5.13, T64): from this clone when the tag is in it, else asked of the
+    remote; None when neither says. An annotated tag's own id is never the answer."""
+    if root:
+        r = subprocess.run(["git", "-C", root, "rev-parse", "--verify", "--quiet", f"refs/tags/{ref}^{{commit}}"],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    if not url:
+        return None
+    r = subprocess.run(["git", "ls-remote", url, f"refs/tags/{ref}", f"refs/tags/{ref}^{{}}"],
+                       capture_output=True, text=True, timeout=120)
+    got = dict(reversed(line.split("\t", 1)) for line in r.stdout.splitlines() if "\t" in line)
+    return got.get(f"refs/tags/{ref}^{{}}") or got.get(f"refs/tags/{ref}")       # the peeled line is the commit
+
+
+def catalog_entry_problems(entry, commit_of):
+    """what is wrong with a catalog entry as a pin to a release (G5.13, T64); commit_of(ref) -> the tag's commit"""
+    import re
+    src = entry.get("source")
+    if not isinstance(src, dict):
+        return [f"its source is {src!r}: a path hands out whatever the branch holds"]
+    out = []
+    if src.get("source") != "url" or not re.match(r"^https://\S+$", src.get("url", "")):
+        out.append(f"its source is not an https url source: {src.get('source')!r} {src.get('url')!r}")
+    ref, sha = src.get("ref", ""), src.get("sha", "")
+    if not re.match(r"^v\d+(\.\d+){2,3}$", ref):
+        out.append(f"its ref {ref!r} is not a release tag")
+    if not re.match(r"^[0-9a-f]{40}$", sha):
+        out.append(f"its sha {sha!r} is not a whole commit id")
+    if not out:
+        at = commit_of(ref)
+        if at is None:
+            out.append(f"where {ref} points could not be read: not a tag in this clone, and the remote did not say")
+        elif at != sha:
+            out.append(f"its sha {sha} is not the commit {ref} points to ({at})")
+    return out
 
 
 def clone_tags(text):

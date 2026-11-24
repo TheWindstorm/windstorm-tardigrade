@@ -901,7 +901,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G5_13_the_repositorys_own_catalog_entry_is_pinned_to_the_commit_its_release_tag_points_to",
    "proven": "2026-11-24 09:35Z, against the pinned entry of v0.1.10 (url source, ref v0.1.10, sha 3fdb74e), on a fresh stock Ubuntu 24.04.5 VM (git 2.43.0), each case in its own new account with Claude Code 2.1.331 from its own installer, not logged in, every step started by hand. The real catalog: `claude plugin marketplace add TheWindstorm/windstorm-tardigrade`, then `claude plugin install windstorm-tardigrade@windstorm-tardigrade`, both exit 0; the registry said 0.1.10 at commit 3fdb74e, its folder .../0.1.10, plugin.json 0.1.10, the script's --version 0.1.10 (sha256 c440b10f403efc1e). Steered: a local copy of the catalog, first at 0.1.9's pin (2f1f9a9: install exit 0, all four places 0.1.9, commit f083567, sha256 2efd6fa4cb7b557a), then moved to main (dbce9b6, the v0.1.10 pin): `claude plugin marketplace update windstorm-tardigrade` exit 0 and still 0.1.9 in all four places; then `claude plugin update windstorm-tardigrade@windstorm-tardigrade` exit 0, \"updated from 0.1.9 to 0.1.10\", and all four places 0.1.10 at commit 3fdb74e (sha256 c440b10f403efc1e). No `marketplace remove` anywhere.",
    "issue": 70,
    "moved_why": "0.1.10 is cut small for one row that closes a way for another account to change what runs at a person's boot; ruled by the skill family's maintainer, 2026-11-23.",
