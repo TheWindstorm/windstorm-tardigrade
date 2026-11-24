@@ -329,9 +329,10 @@ Check this before the first reboot on a machine. A session started with a login 
 label your start can read, comes back on whatever login the plain `claude` finds, which may be another account.
 If every session on the machine should run on one login, put the wrapper that fetches it into `claude_command`.
 `tardigrade revive --dry-run --all` shows each session's start line, so you can see this before you need it.
-Known edge until 0.1.11 (T57): a session started on an account has been seen to lose its label from its
-record row, so the next restart started it on the machine's own login without a word. After starting such a session,
-check that its line in `tardigrade revive --dry-run --all` ends in `[account NAME]`.
+Known edge until 0.1.11 (T57): the record follows the session that runs. If you end a session that is pinned to an
+account and start it again another way (a plain `claude --resume`), its row loses the account and no line says so:
+the next restart starts it as you last did, on the machine's own login. After starting a session again by hand,
+check that its line in `tardigrade revive --dry-run --all` ends in `[account NAME]` if it should.
 
 | Key | Default | Meaning |
 |---|---|---|
