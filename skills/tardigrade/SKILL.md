@@ -122,9 +122,12 @@ the units and the installed copy. A file Tardigrade did not write that sits in o
 is kept and named, with why its folder stayed. That is not a failure; the exit code is success and the last line
 says Tardigrade is off this computer. Exit 1 means something of Tardigrade's could not be removed or still runs, and
 exit 3 that systemd or launchd gave no answer: show the lines, give the one command they name, and do not say it is
-off. If it says it is waiting (for a revive, or for the boot service to end), let it wait. If it says "NOT off this
-computer, and nothing was removed", believe it: show what it read of each unit or job and its one next step as
-printed, and remove nothing by hand.
+off. If it says it is waiting (for a revive, or for the boot service to end), let it wait. If its first line says
+"NOT off this computer, and nothing was removed" (something of Tardigrade's was read still on) or "could not read
+whether everything of Tardigrade's is off, and removed nothing" (systemd or launchd gave no answer, so it is
+neither off nor known to be on), believe it: show what it read of each unit or job and its one next step as
+printed, and remove nothing by hand. If it says that this run stopped the record timer or took the record job off,
+say that too: no record is taken until the next boot or login, or until the setup line it prints is run.
 
 Never delete, and never offer to delete, anything the uninstall kept (the person's files, the record, the log, the
 settings, a folder that stayed) unless the person asks for it in their own words in this conversation.

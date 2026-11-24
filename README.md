@@ -104,19 +104,25 @@ systemd runs (with lingering on, until a restart); it does nothing more, and it 
 on an Arch Linux machine (systemd 262) with a throwaway service of the same shape. With its unit file removed, a
 stop ended the tmux server twice of two, and so did the service ending by itself after a restart into its wait.
 With the file in place a stop left the server running in the first two tries and ended it in the next six. Left
-alone, with the file removed, the server ran on. Not tried with Tardigrade's own service.
+alone, with the file removed, the server ran on: seen once, the server read alive four times over some 6 seconds,
+the last after a `reset-failed` and a second reload. Not tried with Tardigrade's own service.
 
 Uninstall reads everything of its own off before it removes anything. On Linux it stops the record timer and the
 record service and reads them stopped. It never stops the boot service: while that service is on its way (its wait
 of `boot_wait_s`, 45 seconds, then that boot's revive) uninstall waits and says so once a minute; Ctrl-C leaves the
 wait with nothing removed, and when the service has ended uninstall goes on by itself. On a Mac it tells both
 launchd jobs off and reads both gone. Where one is not read off (it still runs, or systemd or launchd gave no
-answer), uninstall removes nothing, says what it read of each and which is already off, and prints its own whole
-command line as the next step. From a shell that cannot reach your account's own systemd (no user bus, as after
+answer), uninstall removes nothing, says what it read of each, which was off already and which this run stopped,
+and prints its own whole command line as the next step, with the python that is running it. Its first line says
+"NOT off this computer" only where something was read still on; where the only trouble is a read with no answer it
+says it could not read whether everything of Tardigrade's is off. Where that run had already stopped the record
+timer (on a Mac: taken the record job off), it says so: no record is taken until the next boot or login, or until
+setup is run again, and it prints that line. From a shell that cannot reach your account's own systemd (no user bus, as after
 `su` from another account) the step says to run it from a login of your own, such as ssh or a terminal at the
 screen. An account for which no systemd user manager runs, and a Mac account that is not logged in at the screen,
 have nothing running to turn off: uninstall says that and goes to its end. A boot service that an uninstall of
-0.1.10.1 or older left on systemd's list as failed is taken off that list by the next uninstall; by hand,
+0.1.10.1 or older left on systemd's list as failed is taken off that list by the next uninstall, which reads
+systemd again after it and says "cleared" only on that read; by hand,
 `systemctl --user reset-failed windstorm-tardigrade-revive.service` does the same, and that is the only hand
 command for it. On a Mac, a setup run again while its own job is running reads the job from before gone before it
 loads it again; a job that does not go stops setup with what was read.
@@ -516,7 +522,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 200 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 201 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

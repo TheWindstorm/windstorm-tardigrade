@@ -4409,7 +4409,7 @@ def setup():
                 f.write(plist(label, py, script + arg, verb, extra))
             wrote.append(p)
             # G5.27 (T107), family rule 30: the job from before is told off and READ gone before this one is loaded
-            state, why = job_off(label)
+            state, why, _ = job_off(label)
             if state == "gone":
                 rc, _, err = run_err(["launchctl", "bootstrap", f"gui/{uid}", p])
                 if rc == 0:
@@ -4540,8 +4540,10 @@ BOOT_DONE = ("its work for this boot is done (systemd says: active, exited); uni
 
 
 def own_line(verb):
-    """this tool's own command line for one verb, whole: a step a person can take while this file is there"""
-    return f"python3 -I {shlex.quote(os.path.abspath(__file__))} {verb}"
+    """this tool's own command line for one verb, whole: a step a person can take while this file is there. It names
+    the python that is running this file, never the bare word python3: where a person ran another python because
+    their python3 is older than the floor, a step with python3 in it would stop at the floor check."""
+    return f"{shlex.quote(sys.executable or 'python3')} -I {shlex.quote(os.path.abspath(__file__))} {verb}"
 
 
 def job_read(label):
@@ -4563,21 +4565,24 @@ def no_screen_login():
 
 
 def job_off(label):
-    """G5.27 (T107), family rule 30: tell a launchd job off and READ it gone -> ("gone" | "there" | "unread", why).
+    """G5.27 (T107), family rule 30: tell a launchd job off and READ it gone -> ("gone" | "there" | "unread", why,
+    held): held is True where launchd held the job before this run told it off, False where it did not, None where
+    that first read gave no answer. That read is for the words alone: the bootout is sent whatever it says.
     `launchctl bootout` returns before a job whose process is still ending is gone (seen on a Mac: such a job was
     still named by the first read after bootout and gone 0.2 s later), and a `bootstrap` over a job that is still
     there answers code 5 and leaves nothing loaded. So nothing loads a job again, and nothing says "off", before
     this has read it gone. An account with no login at the screen has no job to tell off: gone, said as that."""
     if no_screen_login():
-        return "gone", NO_SCREEN
+        return "gone", NO_SCREEN, False
+    held = {"there": True, "gone": False}.get(job_read(label)[0])
     run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"])
     t0 = time.time()
     while True:
         state, why = job_read(label)
         if state != "there":
-            return state, why
+            return state, why, held
         if time.time() - t0 >= OFF_WAIT_S:
-            return "there", f"launchd still holds it, {int(OFF_WAIT_S)} s after it was told to let it go"
+            return "there", f"launchd still holds it, {int(OFF_WAIT_S)} s after it was told to let it go", held
         time.sleep(0.1)
 
 
@@ -4587,8 +4592,8 @@ def unit_read(unit, what, env):
     SubState both there; a missing field, a bus that cannot be reached or no answer in time is no read. The fields
     are read from standard output alone; fields["failed"] is systemctl's exit code where it failed, and
     fields["no bus"] is set where its own words on standard error say it could not connect."""
-    rc, out, err = run_err(["systemctl", "--user", "show", unit, "-p", "LoadState", "-p", "ActiveState", "-p",
-                            "SubState", "-p", "KillMode"], timeout=10, env=env)
+    rc, out, err = run_err(["systemctl", "--user", "show", unit, "-p", "ActiveState", "-p", "SubState"],
+                           timeout=10, env=env)
     f = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
     active, sub = f.get("ActiveState", "").strip(), f.get("SubState", "").strip()
     if rc != 0:
@@ -4613,7 +4618,8 @@ def manager_runs():
 
 def units_off(stop=True):
     """G5.27 (T107), family rule 30, Linux: every unit of ours read off -> [(unit, what, state, why, told)], state
-    as unit_read's; told is False for a unit that is on and was NOT told to stop. stop=False: read only.
+    as unit_read's; told is "stop" where this run sent the unit a stop, "never" for a boot service that is on (it is
+    never told), "" where nothing was sent: the unit is as it was found. stop=False: read only.
     THE BOOT SERVICE IS NEVER TOLD TO STOP, in any state. It starts the person's tmux server, and that server lives
     in the service's control group. Seen on a throwaway unit of the same shape: with its unit file gone a stop ended
     the tmux server every time, and with the file in place (KillMode=process) a stop ended it in six tries of
@@ -4630,13 +4636,14 @@ def units_off(stop=True):
     env, res, manager = user_env(), [], None
     for unit, what in OUR_UNITS:
         state, why, f = unit_read(unit, what, env)
-        told = True
+        told = ""
         if state == "there" and stop:
             if unit == BOOT_UNITS[0]:
-                told = False
+                told = "never"
                 why += "; uninstall never stops the boot service: the tmux server it starts lives in its group"
             else:
                 run(["systemctl", "--user", "stop", unit], timeout=OFF_WAIT_S + 5, env=env)     # the ONE stop
+                told = "stop"
                 t0 = time.time()
                 while True:
                     state, why, f = unit_read(unit, what, env)
@@ -4645,10 +4652,12 @@ def units_off(stop=True):
                     time.sleep(0.2)
                 if state == "there":
                     why += f", {int(OFF_WAIT_S)} s after it was told to stop"
+                elif state == "unread":
+                    why += ", after this run told it to stop"
         if state == "unread" and f.get("failed"):
             manager = manager or manager_runs()     # asked once
             if manager == "no":
-                state, why = "gone", NO_MANAGER
+                state, why, told = "gone", NO_MANAGER, ""
             elif manager == "yes" and f.get("no bus"):
                 why += "; " + NO_BUS_HERE
             elif manager == "unread":
@@ -4666,31 +4675,61 @@ def boot_on_its_way():
 def not_off(offs, boot_on=False):
     """G5.27 (T107), family rule 30: uninstall's stop when a job or unit of ours was not read off. Nothing has been
     removed, so the step is a line that still works: this file's own, and never a systemctl line for the person.
-    boot_on: the boot service is on its way (it is never told to stop). -> the exit code: 1 when one is still on, 3
-    when the only trouble is a read that gave no answer."""
-    print("Tardigrade is NOT off this computer, and nothing was removed: uninstall takes nothing away before it has "
-          f"read every {'job' if MAC else 'unit'} of Tardigrade's off. What it read of each:")
-    for name, state, why in offs:
+    offs: (name, state, why, stopped): stopped is True where this run stopped the unit (or took the job off), False
+    where it was off already, None where what it was before could not be read. boot_on: the boot service is on its
+    way (it is never told to stop). -> the exit code: 1 when one was read still on, 3 when the only trouble is a
+    read that gave no answer. The first line says which: "NOT off" only where one was read still on, because where
+    nothing was read it is not known that anything of Tardigrade's is here at all."""
+    kind = "job" if MAC else "unit"
+    on = any(state == "there" for _, state, _, _ in offs)
+    print(("Tardigrade is NOT off this computer, and nothing was removed: uninstall" if on else
+           "Uninstall could not read whether everything of Tardigrade's is off, and removed nothing: it")
+          + f" takes nothing away before it has read every {kind} of Tardigrade's off. What it read of each:")
+    for name, state, why, stopped in offs:
         if state == "gone":
-            print(f"  {name}: off" + (f" ({why})" if why else ""))
+            print(f"  {name}: " + (("off, taken off by this run" if MAC else "off, stopped by this run") if stopped
+                                   else "off already" if stopped is False else
+                                   "off now; whether launchd held it before this run could not be read")
+                  + (f" ({why})" if why else ""))
         elif state == "there":
             print(f"  {name}: STILL ON ({why})")
         else:
             print(f"  {name}: could not be read ({why})")
-    print(("What is off stays installed, and macOS loads it again at your next login at this Mac's screen" if MAC else
-           "What is off stays installed and enabled, and starts again at the next boot or login")
-          + ", until uninstall has run to its end.")
+    print("Whatever of Tardigrade's is installed here stays as it is, and "
+          + ("macOS loads it again at your next login at this Mac's screen" if MAC else
+             "what is enabled starts again at the next boot or login") + ", until uninstall has run to its end.")
+    starter = BOOT_JOBS[1] if MAC else BOOT_UNITS[1]        # what has a record taken every five minutes
+    if any(name == starter and state == "gone" and stopped for name, state, _, stopped in offs):
+        # the person may walk away here with Tardigrade installed: what this run switched off is said, with the way back
+        print(("The record job was taken off by this run: no record is taken until your next login at this Mac's screen"
+               if MAC else
+               "The record timer was stopped by this run: no record is taken until the next boot or login")
+              + ", and a restart before that brings sessions back from the record as it is now. To have records taken "
+              f"again now, run setup again: {own_line('setup')}")
     print("Running sessions were not touched.")
-    line = own_line("uninstall")
-    if any(state == "there" for _, state, _ in offs):
-        print("Next step: " + ("the boot service ends by itself when its wait (boot_wait_s, "
-                               f"{int(float(CFG['boot_wait_s']))} s) and its run are over; after that, run: "
-                               if boot_on else "run: ") + line)
+    # family rule 7: "run it again" comes with what a second run can find different, and with what has to change
+    # where it does not. The tool cannot tell a manager that is busy from one that will never answer, so it says both
+    line, mgr = own_line("uninstall"), "launchd" if MAC else "systemd"
+    if on:
+        if boot_on:
+            print("Next step: the boot service ends by itself when its wait (boot_wait_s, "
+                  f"{int(float(CFG['boot_wait_s']))} s) and its run are over; after that, run: {line}")
+        else:
+            print("What a second run can find different: "
+                  + ("a job whose process was still ending has gone, and the job is told off" if MAC else
+                     "a record run that was going has ended by itself, and the stop is sent")
+                  + f" again with another {int(OFF_WAIT_S)} s to take hold. If these same lines come back then, "
+                  "running it again changes nothing: what is STILL ON has to go off first, and that is "
+                  f"{mgr}'s to do (a restart of this computer gives your account a new {mgr}).")
+            print(f"Next step: run: {line}")
         return 1
-    if any(NO_BUS_HERE in why for _, _, why in offs):
+    if any(NO_BUS_HERE in why for _, _, why, _ in offs):
         print("Next step: this shell cannot reach your account's own systemd (it has no user bus), so run uninstall "
               f"again from a login of your own to this computer, such as ssh or a terminal at the screen: {line}")
     else:
+        print(f"What a second run can find different: {mgr} answering. One that was busy or still starting answers a "
+              "little later. If these same lines come back then, running it again changes nothing: what stands in "
+              "the brackets above has to be put right first.")
         print(f"Next step: run uninstall again: {line}")
     return 3
 
@@ -5301,9 +5340,9 @@ def uninstall():
     # under a job that may still run, and the step it prints is a line that still works.
     read, cleared = ([] if MAC else units_off()), []
     offs = ([(label,) + job_off(label) for label in BOOT_JOBS] if MAC else
-            [(unit, state, why) for unit, _, state, why, _ in read])
-    if any(state != "gone" for _, state, _ in offs):
-        return not_off(offs, any(state == "there" and not told for _, _, state, _, told in read))
+            [(unit, state, why, told == "stop") for unit, _, state, why, told in read])
+    if any(state != "gone" for _, state, _, _ in offs):
+        return not_off(offs, any(state == "there" and told == "never" for _, _, state, _, told in read))
     kept, failed, gone = [], [], []
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
     places = our_places(script)
@@ -5325,9 +5364,12 @@ def uninstall():
         remove_ours(p, kind, kept, failed, gone)
     if not MAC:
         run(["systemctl", "--user", "daemon-reload"], env=env)
-        # a boot service stopped inside its wait is left "failed" by systemd (seen); its unit is gone, so that goes too
-        cleared = [(what, run(["systemctl", "--user", "reset-failed", unit], env=env)[0])
-                   for unit, what, _, why, _ in read if why == "systemd says: failed"]
+        # a boot service stopped inside its wait is left "failed" by systemd (seen); its unit is gone, so that goes
+        # too. What "cleared" stands on is a read after it, not reset-failed's exit code
+        for unit, what, _, why, _ in read:
+            if why == "systemd says: failed":
+                rc = run(["systemctl", "--user", "reset-failed", unit], env=env)[0]
+                cleared.append((what, rc) + unit_read(unit, what, env)[:2])
     remove_ours(script, "copy", kept, failed, gone)
     cache = os.path.join(INSTALL_DIR, "__pycache__")
     try:
@@ -5404,13 +5446,17 @@ def uninstall():
         print(f"Automatic revive is switched off in your settings now (auto_revive false in {cfgf}). That line stays: "
               "with it, a record made by hand does not wait for a boot revive that no longer runs.")
     print("Running sessions were not touched.")
-    for said in dict.fromkeys(why for _, _, why in offs if why in (NO_SCREEN, NO_MANAGER)):
+    for said in dict.fromkeys(why for _, _, why, _ in offs if why in (NO_SCREEN, NO_MANAGER)):
         # G5.27: where nothing could be asked, how "off" is known is said, never passed over
         print(("Not asked of launchd: " if MAC else "Not asked of systemd: ") + said + ".")
-    for what, rc in cleared:
-        print(f"systemd listed {what} as failed from before" + ("; that entry is cleared now." if rc == 0 else
-              f", and clearing that entry gave exit {rc}. A failed entry starts nothing."))
-    if any(why == BOOT_DONE for _, _, why in offs):
+    for what, rc, state, why in cleared:
+        if state == "gone" and why != "systemd says: failed":
+            print(f"systemd listed {what} as failed from before; that entry is cleared now.")
+        else:
+            print(f"systemd listed {what} as failed from before. Clearing that entry gave exit {rc}, and the read "
+                  "after it " + ("says it is still listed as failed" if state == "gone" else f"gave this: {why}")
+                  + ". A failed entry starts nothing.")
+    if any(why == BOOT_DONE for _, _, why, _ in offs):
         # family rule 8: what stays is named. Seen: with its unit file gone, a stop of this service ends its whole group
         print("systemd still lists the boot service as ended (active, exited), for as long as your account's systemd "
               "runs. It does nothing more. Uninstall did not stop it, and you should not: the tmux server it started "
