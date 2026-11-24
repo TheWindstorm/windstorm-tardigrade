@@ -213,6 +213,11 @@ class Base(unittest.TestCase):
         with open(FAKE) as f, open(os.path.join(self.bin, "claude"), "w") as g:
             g.write(f"#!{sys.executable}\n" + f.read().split("\n", 1)[1])
         os.chmod(os.path.join(self.bin, "claude"), 0o755)
+        # G3.33 (T93): census and setup now ask systemctl about the boot service; a test that plants no answer gets
+        # this stand-in's "no answer", never this machine's own systemctl --user (family rule 17)
+        with open(os.path.join(self.bin, "systemctl"), "w") as f:
+            f.write('#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\nexit 1\n')
+        os.chmod(os.path.join(self.bin, "systemctl"), 0o755)
         self.path = f"{self.bin}:/usr/local/bin:/usr/bin:/bin"
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",
                     "USER": os.environ.get("USER", "u"), "LANG": "C.UTF-8", "TERM": "xterm-256color",
@@ -437,6 +442,26 @@ class Base(unittest.TestCase):
             f.write(text)
         os.chmod(p, 0o755)
         return p
+
+    def boot_answers(self, enabled, active, copy):
+        """plant systemctl's answers (None: it answers nothing and exits 1) and the installed copy, or no copy"""
+        sc = ['#!/bin/sh', 'echo "$@" >> "$HOME/systemctl.log"', 'case "$*" in']
+        for verb, word in (("is-enabled", enabled), ("is-active", active)):
+            if word is None:
+                sc.append(f'  *{verb}*) exit 1;;')
+            else:
+                sc.append(f'  *{verb}*) echo {word}; [ {word} = {"enabled" if verb == "is-enabled" else "active"} ] '
+                          f'&& exit 0; exit 1;;')
+        sc += ['esac', 'exit 0', '']
+        self.script("systemctl", "\n".join(sc))
+        self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+        share = os.path.join(self.home, ".local", "share", "windstorm-tardigrade")
+        target = os.path.join(share, "tardigrade.py")
+        if copy:
+            os.makedirs(share, exist_ok=True)
+            shutil.copyfile(SCRIPT, target)
+        elif os.path.exists(target):
+            os.remove(target)
 
     def start_loose(self, name):
         """a session that runs outside tmux, as in a plain terminal window"""
@@ -2280,6 +2305,7 @@ class Census(Base):
         self.assertIn("DOWN: on the record, not running now", text)
         self.assertIn("NO (run setup)", text)
         self.cfg({"auto_revive": True})
+        self.boot_answers("enabled", "active", copy=True)          # G3.33: the yes is read from the things themselves
         self.assertIn("Comes back after a reboot: yes, by itself", self.tg("census", TARDIGRADE_FAKE_LINGER="yes")[1])
         self.assertIn("yes, after you log in (lingering is off)", self.tg("census", TARDIGRADE_FAKE_LINGER="no")[1])
 
@@ -2526,6 +2552,73 @@ class Setup(Base):
         self.assertIn("vanished together", out)
 
     # ----- G3.28 (T79): only what we wrote; a person's file never stops the leave (family rules 8 and 23) -----
+    # ----- G3.33 (T93): a reboot's "yes" is read from the boot service, the timer and the copy, never the setting -----
+    def test_G3_33_census_says_a_reboot_brings_sessions_back_only_from_what_is_there_now(self):
+        # seen 2026-11-24 on 0.1.10: an uninstall cut part way left the setting on with the boot service off or its
+        # units gone, and in a home holding only the setting census said "Comes back after a reboot: yes, by itself"
+        self.cfg({"auto_revive": True})
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+
+        def said(**env):
+            out = self.tg("census", TARDIGRADE_FAKE_LINGER="yes", **env)[1]
+            line = [x for x in out.splitlines() if x.startswith("Comes back after a reboot:")]
+            self.assertEqual(len(line), 1, out)
+            return line[0]
+        self.boot_answers(None, None, copy=False)                   # only the setting: the case seen
+        line = said()
+        self.assertIn("NO: the installed copy " + copy + " is not there", line)
+        self.assertNotIn("yes", line)
+        self.boot_answers("disabled", "inactive", copy=True)        # the cut at 0.15 s: service off, units there
+        self.assertIn("NO: the boot service is disabled; the record timer is inactive (run setup)", said())
+        self.boot_answers("not-found", "inactive", copy=True)       # the cut at 0.2 s: units gone, copy there
+        self.assertIn("NO: the boot service is not-found; the record timer is inactive (run setup)", said())
+        self.boot_answers(None, None, copy=True)                    # systemctl gives no answer: never yes, never NO
+        line = said()
+        self.assertIn("could not be read: systemctl gave no answer about the boot service (exit 1); systemctl gave "
+                      "no answer about the record timer (exit 1)", line)
+        self.assertNotIn("NO", line)
+        self.assertNotIn("yes", line)
+        self.boot_answers("enabled", None, copy=True)               # one part there, one unread: not yes
+        self.assertIn("could not be read: systemctl gave no answer about the record timer", said())
+        self.boot_answers("enabled", "active", copy=True)           # all there: yes
+        self.assertIn("Comes back after a reboot: yes, by itself", said())
+        d = json.loads(self.tg("census", "--json", TARDIGRADE_FAKE_LINGER="yes")[1])
+        self.assertEqual(d["comes_back"], "yes, by itself")
+        # the setting off still says so first, without asking anything
+        os.remove(os.path.join(self.home, "systemctl.log"))
+        self.cfg({"auto_revive": False})
+        self.assertIn("Comes back after a reboot: NO (run setup)", said())
+        self.assertFalse(os.path.exists(os.path.join(self.home, "systemctl.log")))
+        # the report does not say it, so it asks nothing
+        self.cfg({"auto_revive": True})
+        self.tg("report")
+        self.assertFalse(os.path.exists(os.path.join(self.home, "systemctl.log")))
+
+    def test_G3_33_setup_says_set_up_only_when_the_same_read_passes(self):
+        def setup():
+            rc, out = self.tg("setup")
+            return rc, out
+        self.boot_answers("enabled", "active", copy=False)
+        rc, out = setup()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("boot service: enabled   record timer: active", out)
+        self.assertIn("Windstorm Tardigrade is set up.", out)
+        self.assertNotIn("NOT set up", out)
+        self.boot_answers("disabled", "active", copy=True)          # systemd did not take the boot service
+        rc, out = setup()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT set up: the boot service is disabled.", out)
+        self.assertNotIn("is set up.", out)
+        self.boot_answers(None, None, copy=True)                    # no answer: neither "set up" nor "NOT set up"
+        rc, out = setup()
+        self.assertEqual(rc, 3, out)
+        self.assertIn("Setup could not read whether it is set up: systemctl gave no answer about the boot service "
+                      "(exit 1); systemctl gave no answer about the record timer (exit 1). So it does not say it is.", out)
+        self.assertIn("Log out and in", out)
+        self.assertNotIn("NOT set up", out)
+        self.assertNotIn("is set up.", out)
+        self.assertIn("boot service: no answer   record timer: no answer", out)
+
     def stand_in_services(self):
         self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
                     'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')

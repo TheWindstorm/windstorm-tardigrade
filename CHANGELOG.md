@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.10.1 (2026-11-24)
+
+- **Census no longer says "comes back after a reboot: yes" when nothing would.** Up to 0.1.10 the answer was read from
+  the setting and lingering alone, never from the boot service: with the boot service off, its units gone or the
+  installed copy missing (an uninstall cut part way, a service switched off by hand, a home copied without its units)
+  census still said "yes, by itself" (seen on 0.1.10 in a scratch home holding only the setting). It now reads the
+  installed copy, the boot service (enabled) and the record timer (active), on a Mac both launchd jobs (loaded), at
+  that moment: NO names what is missing and says to run setup; "could not be read" when systemctl or launchctl gives
+  no answer, never yes. Setup's "is set up" is the same read, made as its last act: exit 0 only when it passes, 1
+  with what is missing, 3 when it could not be read (T93).
+
 ## 0.1.10 (2026-11-24)
 
 - **Set up under a wide-open umask? Run setup again.** Up to 0.1.9, setup started with umask 000 (as some job runners

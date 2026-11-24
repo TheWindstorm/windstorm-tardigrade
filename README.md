@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.10, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.10.1, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
 > that version found faults, which is what they were for; after the fixes every session came back every time, all
 > 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
@@ -36,7 +36,7 @@ changed, as it has in 0.1.9), then set up again: setup is what refreshes the cop
 Without the plugin system, it is one file:
 
 ```bash
-git clone --depth 1 --branch v0.1.10 https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.10.1 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
@@ -102,6 +102,8 @@ WITH A WINDOW
 DOWN: on the record, not running now
   Data Import                        last seen 2 h ago   /home/you/import
 ```
+
+"Comes back after a reboot" is read at that moment from the things themselves: the installed copy, and the boot service enabled and the record timer active (on a Mac, both launchd jobs loaded). When one is not there it says NO and names it; when systemctl or launchctl gives no answer it says "could not be read", never yes. Up to 0.1.10 it was read from the setting alone, and could say yes with the boot service off.
 
 "Quiet" is the time since the session last did anything. A hidden session that has been quiet for nine days is
 usually one you forgot.

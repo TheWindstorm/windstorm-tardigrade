@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.10"
+VERSION = "0.1.10.1"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -2966,7 +2966,7 @@ def census_data():
         "left_alone": LEFT_ALONE[0],
         "waiting": len([r for r in mine if r["status"] in ("waiting", "trust?")]),
         "trust": len([r for r in mine if r["status"] == "trust?"]),
-        "lost": len([r for r in down if r.get("lost_since") and not r.get("ended")]), "comes_back": comes_back(),
+        "lost": len([r for r in down if r.get("lost_since") and not r.get("ended")]),
         "record_not_written": record_not_written(),
         "ended": len([r for r in down if r.get("ended")]),
         "auto_revive": bool(CFG["auto_revive"]), "recorded_at": table.get("recorded_at", 0),
@@ -3040,6 +3040,7 @@ def cannot_tell_text(why):
 
 def census():
     d = census_data()
+    d["comes_back"] = comes_back()      # read here, not in census_data: the report does not say it, so asks nothing
     folders = open_folder_lines()
     d["open_folders"] = folders[1:]
     if d.get("cannot_tell"):
@@ -3391,13 +3392,6 @@ def setup():
         run(["systemctl", "--user", "daemon-reload"], env=env)
         run(["systemctl", "--user", "enable", "windstorm-tardigrade-revive.service"], env=env)
         run(["systemctl", "--user", "enable", "--now", "windstorm-tardigrade-record.timer"], env=env)
-        svc = run(["systemctl", "--user", "is-enabled", "windstorm-tardigrade-revive.service"], env=env)[1].strip()
-        tim = run(["systemctl", "--user", "is-active", "windstorm-tardigrade-record.timer"], env=env)[1].strip()
-        print(f"boot service: {svc or 'no answer'}   record timer: {tim or 'no answer'}")
-        if svc != "enabled" or tim != "active":
-            print("NOT set up: systemd's user services did not take the units. The files are written in "
-                  "~/.config/systemd/user/. Log out and in, then run setup again. Nothing comes back by itself yet.")
-            return 1
     # an earlier setup under a wide-open umask left these writable by others: close what is ours (G3.29)
     for p, kind in [(INSTALL_DIR, "")] + our_places(script):
         try:
@@ -3415,6 +3409,18 @@ def setup():
     # so installing or upgrading on a machine whose sessions are down forgets none of them
     HERDR_WAIT["s"] = 120          # setup's first record: give a loaded machine's Herdr time to answer
     record()
+    # G3.33 (T93), family rule 8 (b): setup's last act is the read the census makes, from the things themselves
+    missing, unread, seen = boot_read()
+    print(seen)
+    if missing:
+        print("NOT set up: " + "; ".join(missing) + "." + ("" if MAC else " The units are written in "
+              "~/.config/systemd/user/. Log out and in, then run setup again.") + " Nothing comes back by itself yet.")
+        return 1
+    if unread:
+        print("Setup could not read whether it is set up: " + "; ".join(unread) + ". So it does not say it is. "
+              + ("Log in at this Mac's screen as this user, then run setup again." if MAC else
+                 "Log out and in (this login has no systemd user manager to ask), then run setup again."))
+        return 3
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")
     for line in who_logs_in():
         print(line)
@@ -3455,10 +3461,56 @@ def mac_facts():
     return fv, (auto[1].strip() if auto[0] == 0 else ""), os.environ.get("USER") or os.path.basename(HOME)
 
 
+BOOT_UNITS = ("windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.timer")
+BOOT_JOBS = ("ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record")
+
+
+def boot_read():
+    """G3.33 (T93), family rules 6 and 24: what a boot revive needs, read from the things themselves now, never from
+    the auto_revive setting or the record: the installed copy, and the boot service enabled and the record timer
+    active (on a Mac: both launchd jobs loaded). Returns (missing, unread, seen): what is not there, what could not be
+    read (the program gave no answer), and one line of what was read."""
+    missing, unread, seen = [], [], []
+    script = os.path.join(INSTALL_DIR, "tardigrade.py")
+    if not is_ours(script, "copy"):
+        missing.append(f"the installed copy {script} is not there")
+    if MAC:
+        uid = str(os.getuid())
+        for label in BOOT_JOBS:
+            rc, _ = run(["launchctl", "print", f"gui/{uid}/{label}"], timeout=10)
+            if rc == 0:
+                seen.append(f"{label}: loaded")
+            elif rc == 113:             # launchctl's own answer for a service it does not have
+                seen.append(f"{label}: not loaded")
+                missing.append(f"launchd has not loaded {label}")
+            else:
+                seen.append(f"{label}: no answer (exit {rc})")
+                unread.append(f"launchctl gave no answer about {label} (exit {rc})")
+    else:
+        env = user_env()
+        for unit, verb, good, what in ((BOOT_UNITS[0], "is-enabled", "enabled", "boot service"),
+                                       (BOOT_UNITS[1], "is-active", "active", "record timer")):
+            rc, out = run(["systemctl", "--user", verb, unit], timeout=10, env=env)
+            word = (out.strip().splitlines() or [""])[0].strip()
+            seen.append(f"{what}: {word or 'no answer'}")
+            if word == good:
+                continue
+            if word:
+                missing.append(f"the {what} is {word}")
+            else:
+                unread.append(f"systemctl gave no answer about the {what} (exit {rc})")
+    return missing, unread, "   ".join(seen)
+
+
 def comes_back():
     """the census's short answer to: after a reboot, do the sessions come back?"""
     if not CFG["auto_revive"]:
         return "NO (run setup)"
+    missing, unread, _ = boot_read()
+    if missing:
+        return "NO: " + "; ".join(missing) + " (run setup)"
+    if unread:
+        return "could not be read: " + "; ".join(unread)
     if MAC:
         return mac_story(*mac_facts())[0]
     return "yes, by itself" if linger_on() else "yes, after you log in (lingering is off)"
