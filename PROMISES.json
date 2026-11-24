@@ -1073,6 +1073,20 @@
    "issue": 82,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T79",
+   "seen": "2026-11-23, run for real on 0.1.9 in a scratch home whose Tardigrade folders already held a person's files (a stand-in systemctl, nothing else changed). Where the folders are cannot be moved by any setting or argument: they follow HOME only (no XDG_* is read), under fixed names. But inside them the tool treats every name as its own: setup overwrote the person's own file named tardigrade.py; uninstall then removed it, and removed the person's folder named __pycache__ with the file in it, as a whole; a revive took the person's folder named lock, once it was older than the boot, for a lock left by a cut-off run and removed it with the file in it, and removed the person's file in the launch folder because no session on the record had that name. The person's other files there (notes, a diary, a settings file, their own systemd unit) and the folders themselves were kept; nothing the tool prints or the README says gives a recursive delete.",
+   "promise": "the tool overwrites or removes only what it wrote itself. Setup does not write over a file named tardigrade.py that is not a Tardigrade script (it stops, names the file, and has changed nothing); uninstall removes the installed copy only when it is a Tardigrade script, and from __pycache__ only Python's cache of that script, then the folder only when it is empty; the revive lock is a folder that holds only the tool's own owner file, and a folder by that name holding anything else is not taken or removed (the run says so and does nothing); the launch folder's clean-up removes only start files the tool wrote, known by their own first line. No shutil.rmtree of a folder that may hold anything but the tool's own files. A test runs setup, revive and uninstall in a scratch home with a person's stand-in files in each of these places and lists the whole home before and after.",
+   "codon": "G3.28",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 83,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
