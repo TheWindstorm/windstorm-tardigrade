@@ -1517,7 +1517,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G7_12_a_run_that_ends_early_or_writes_its_own_summary_is_not_green",
    "proven": "",
    "issue": 116,
    "moved_why": "",

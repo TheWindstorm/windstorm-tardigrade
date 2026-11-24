@@ -32,7 +32,8 @@ jobs:
             3.8
             ${{ matrix.python }}
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      - run: python tests/test_tardigrade.py -v
+      # G7.12: green is decided outside the test process (a run that ends early with exit 0 is not green)
+      - run: python tests/run_whole.py
   skill-spec:
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-24.04

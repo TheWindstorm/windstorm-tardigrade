@@ -7157,6 +7157,105 @@ class Tests(unittest.TestCase):
         self.assertEqual(os.listdir(parent), [], "something of the stopped run wrote in its folder afterwards")
 
 
+    def test_G7_12_a_run_that_ends_early_or_writes_its_own_summary_is_not_green(self):
+        """T108. Seen in a throwaway copy: a test that calls os._exit(0) ends the whole run with exit 0, before the
+        runner's summary and before the gate, which runs in the same process; the CI step was that one command. So
+        green is decided by tests/run_whole.py, outside the test process, and this test plants runs it must refuse.
+        How the count is taken: the number of tests is read from the file's syntax (every test method of every
+        TestCase class, inherited ones too) and held against the runner's "Ran N tests", which counts a skipped test
+        as run; a run with a filter is not a deciding run, and run_whole takes none."""
+        d = tempfile.mkdtemp(prefix="tgwhole")
+        self.addCleanup(shutil.rmtree, d, True)
+        run_whole = os.path.join(ROOT, "tests", "run_whole.py")
+        sys.path.insert(0, os.path.dirname(run_whole))
+        self.addCleanup(sys.path.remove, os.path.dirname(run_whole))
+        import run_whole as rw
+
+        def planted(body, more="", main="unittest.main(exit=False, verbosity=2)"):
+            """a test file of three tests whose second does `body`, ending as this file ends: the gate's line last,
+            then its own result"""
+            f = os.path.join(d, f"planted_{len(os.listdir(d))}.py")
+            with open(f, "w") as fh:
+                fh.write("import json\nimport os\nimport sys\nimport unittest\n\n\n"
+                         "class A(unittest.TestCase):\n    def test_1(self):\n        pass\n\n"
+                         f"    def test_2(self):\n        {body}\n\n    def test_3(self):\n        pass\n{more}\n\n"
+                         'if __name__ == "__main__":\n    res = os.environ.pop("TARDIGRADE_RUN_RESULT", None)\n'
+                         f"    prog = {main}\n"
+                         '    print("gate: 0 named test(s) passed in this run")\n    if res:\n'
+                         '        with open(res, "w") as f:\n'
+                         '            json.dump({"ran": prog.result.testsRun, "ok": prog.result.wasSuccessful()}, f)\n'
+                         "    sys.exit(0 if prog.result.wasSuccessful() else 1)\n")
+            return f
+
+        def whole(*a):
+            r = subprocess.run([sys.executable, "-I", "-B", run_whole, *a], capture_output=True, text=True, timeout=120)
+            return r.returncode, (r.stdout + r.stderr).strip().splitlines()[-1], r.stdout + r.stderr
+        green = ("run_whole: GREEN: {0} tests defined and {0} run, exit 0, the summary, the gate's line and the run's "
+                 "own result are there.")
+        # the control: a run that passes is green; a test skipped on a condition of the machine counts as run
+        self.assertEqual(whole(planted("pass"))[:2], (0, green.format(3)))
+        self.assertEqual(whole(planted('self.skipTest("a real program is not here")'))[:2], (0, green.format(3)))
+        self.assertEqual(whole(planted("pass", "\n\nclass B(A):\n    def test_4(self):\n        pass\n"))[:2],
+                         (0, green.format(7)))                  # B runs A's three as well: counted as unittest does
+        # a run that ends early with exit 0: no summary, no gate line, no result
+        rc, last, out = whole(planted("os._exit(0)"))
+        self.assertEqual((rc, last), (1, 'run_whole: NOT GREEN: the runner\'s summary line ("Ran N tests in ...") is not '
+                                         'there; the runner\'s "OK" is not there; the gate\'s own line is not the last '
+                                         "line of the run; the finished run wrote no result: it ended before its own "
+                                         "end."), out)
+        # the same run, having printed the summary, the OK and the gate's line itself: still no result of its own
+        forged = ('sys.stderr.write("\\n" + "-" * 70 + "\\nRan 3 tests in 0.001s\\n\\nOK\\ngate: 0 named test(s) passed '
+                  'in this run\\n"); sys.stderr.flush(); os._exit(0)')
+        rc, last, out = whole(planted(forged))
+        self.assertEqual((rc, last), (1, "run_whole: NOT GREEN: the finished run wrote no result: it ended before its "
+                                         "own end."), out)
+        # fewer tests run than the file defines (a filter inside the run): not green though every line is there
+        rc, last, out = whole(planted("pass", main='unittest.main(exit=False, verbosity=2, argv=[sys.argv[0], "-k", '
+                                                   '"test_1"])'))
+        self.assertEqual((rc, last), (1, "run_whole: NOT GREEN: the runner says it ran 1 tests; the file defines 3; the "
+                                         "run's own result counts 1 tests run; the file defines 3."), out)
+        # a failing test, and a filter handed to run_whole itself
+        rc, last, out = whole(planted('self.fail("planted")'))
+        self.assertEqual(rc, 1, out)
+        self.assertTrue(last.startswith("run_whole: NOT GREEN: the run ended with exit 1; "), last)
+        self.assertEqual(whole(planted("pass"), "-k", "test_1")[:2],
+                         (2, "run_whole: it takes one test file at most and no other word: a filtered run decides "
+                             "nothing."))
+        # this file: its tests counted from its syntax are the tests unittest collects from it
+        here = os.path.abspath(__file__)
+        self.assertEqual(rw.defined(here), unittest.TestLoader().loadTestsFromModule(     # a loader with no filter
+            sys.modules[self.__class__.__module__]).countTestCases())
+        # this file's own end: the result is the last thing a finished whole run writes, after the gate's line
+        end = fread(here).rsplit('\nif __name__ == "__main__":\n', 1)[1]
+        self.assertRegex(end, r'(?s)print\(f"gate: \{len\(gate_named\(\) & PASSED\)\} named test\(s\) passed in this '
+                         r'run"\)\n    ok = prog\.result\.wasSuccessful\(\) and not bad\n    if res and whole:[^\n]*\n        with open\(res, "w"\) as f:\n'
+                         r'            json\.dump\(\{"ran": prog\.result\.testsRun, "ok": ok\}, f\)\n'
+                         r'    sys\.exit\(0 if ok else 1\)\n$')
+        # the step that decides in CI is run_whole, and no step runs the test file by itself
+        wf = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+        self.assertEqual(re.findall(r"(?m)^\s+- run: (python\S* .*)$", wf), ["python tests/run_whole.py"])
+        self.assertNotIn("tests/test_tardigrade.py", wf)
+
+    def test_G7_12_a_pass_that_a_test_prints_is_not_counted(self):
+        """T108. A test can write a line shaped like the runner's own report for a test that no file defines. The
+        gate counts outcomes from the runner's result class (addSuccess), never from report text: the printed name
+        is in the report and not among what passed, and a row that names it is refused."""
+        import io
+        stream = io.StringIO()
+        fake = "test_no_such_test (__main__.Nowhere.test_no_such_test) ... ok"
+
+        def real(case):
+            stream.write(fake + "\n")
+        planted = type("PlantedPrinter", (unittest.TestCase,), {"test_the_real_one": real})
+        result = unittest.TextTestRunner(stream=stream, resultclass=Kept, verbosity=2).run(
+            unittest.TestLoader().loadTestsFromTestCase(planted))
+        self.assertIn(fake, stream.getvalue())
+        self.assertTrue(result.wasSuccessful())
+        self.assertEqual((result.passed_names, result.skip_reasons), ({"test_the_real_one"}, {}))
+        bad, here = runner_problems({"test_no_such_test"}, result.passed_names, result.skip_reasons)
+        self.assertEqual((len(bad), here), (1, []), bad)
+        self.assertIn("test_no_such_test: did not pass in this run", bad[0])
+
     def test_G7_2_a_check_that_a_process_is_gone_waits_for_its_exit_and_still_catches_one_that_stays(self):
         mark = f"tg-g72-{uuid.uuid4().hex[:8]}"
         def mine():
@@ -7994,21 +8093,30 @@ def runner_problems(named, passed, skipped):
         f"{n} ({skipped[n]})" for n in named & set(skipped))
 
 
+class Kept(unittest.TextTestResult):
+    """G7.3, G7.12: the outcomes the gate counts, taken from the runner itself and never from the text of its report
+    (a test can write into that text)"""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.passed_names, self.skip_reasons = set(), {}
+
+    def addSuccess(self, test):
+        super().addSuccess(test)
+        self.passed_names.add(test.id().rsplit(".", 1)[-1])
+
+    def addSkip(self, test, reason):
+        super().addSkip(test, reason)
+        self.skip_reasons[test.id().rsplit(".", 1)[-1]] = reason
+
+
 if __name__ == "__main__":
+    # G7.12 (T108): tests/run_whole.py decides whether this run is green, from outside it. No test and no child of
+    # one sees where the result goes
+    res = os.environ.pop("TARDIGRADE_RUN_RESULT", None)
     # G7.3: the claims count only what this run really passed
-    PASSED, SKIPPED = set(), {}
-
-    class _Kept(unittest.TextTestResult):
-        def addSuccess(self, test):
-            super().addSuccess(test)
-            PASSED.add(test.id().rsplit(".", 1)[-1])
-
-        def addSkip(self, test, reason):
-            super().addSkip(test, reason)
-            SKIPPED[test.id().rsplit(".", 1)[-1]] = reason
-
-    prog = unittest.main(exit=False, testRunner=unittest.TextTestRunner(resultclass=_Kept, verbosity=2 if "-v" in sys.argv else 1))
-    whole = len(sys.argv) == 1 or all(a.startswith("-") for a in sys.argv[1:])
+    prog = unittest.main(exit=False, testRunner=unittest.TextTestRunner(resultclass=Kept, verbosity=2 if "-v" in sys.argv else 1))
+    PASSED, SKIPPED = prog.result.passed_names, prog.result.skip_reasons
+    whole = all(a == "-v" for a in sys.argv[1:])        # a run with a filter or a test's name is not the whole
     bad, here = runner_problems(gate_named(), PASSED, SKIPPED) if whole else ([], [])
     for line in bad:
         print("GATE:", line)
@@ -8016,4 +8124,8 @@ if __name__ == "__main__":
         print(f"gate: {len(here)} named test(s) not run here: " + "; ".join(here))
     if whole:
         print(f"gate: {len(gate_named() & PASSED)} named test(s) passed in this run")
-    sys.exit(0 if prog.result.wasSuccessful() and not bad else 1)
+    ok = prog.result.wasSuccessful() and not bad
+    if res and whole:           # the last thing a finished whole run does
+        with open(res, "w") as f:
+            json.dump({"ran": prog.result.testsRun, "ok": ok}, f)
+    sys.exit(0 if ok else 1)
