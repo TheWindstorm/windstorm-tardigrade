@@ -2069,7 +2069,7 @@ def new_session(sock, name, cwd, cmd, then=(), sid=""):
     # (destroy-unattached), this one session is asked to stay, in the call that makes it: a moment later it would be
     # gone. The server's own setting, and every session the person makes, stay as they are.
     argv += [";", "set-option", "-t", f"={name}:", "destroy-unattached", "off"]
-    if sid:     # G5.19: the next revive knows this place as its own while the session has not loaded
+    if sid:     # G5.19: a later revive knows this place as made for this session, for as long as it lives
         argv += [";", "set-option", "-t", f"={name}:", OURS_MARK, str(sid)]
     if then:
         argv += [";"] + list(then)
@@ -2188,7 +2188,7 @@ def in_way_text(r, ours):
                 "`tardigrade revive`.")
     holds = ("a pane whose program has ended" if cur is None else "a shell" if cur in SHELLS else f"`{cur}`")
     # "does not know it as one it made": it carries no mark of ours for this session. That is a tmux session the
-    # person made, and also one this tool made in which the session had loaded (the mark comes off then).
+    # person made, one this tool made for another session, or one a version before the mark made.
     return (f"a tmux session named {name} is in the way, and Tardigrade does not know it as one it made for this "
             "session (it "
             f"holds {holds}). Nothing in it was touched. Next step: give it another name with "
@@ -2683,11 +2683,9 @@ class Watch:
                 waiting += 1
                 continue
             if sid not in self.loaded:
-                # G5.19: it has loaded. Its place is a running session's from here: the mark comes off, so no later
-                # revive takes a shell left in it for a start that failed.
+                # G5.19: it has loaded. Its place keeps the mark that names it: if its Claude Code ends later and
+                # leaves the shell, a revive that brings the session back starts it there, in the place made for it.
                 self.loaded.add(sid)
-                if r.get("tmux_session"):
-                    tmux(r["tmux_socket"], "set-option", "-qu", "-t", f"={r['tmux_session']}:", OURS_MARK, timeout=6)
                 if self.on_loaded:
                     self.on_loaded(sid)
             final = (HELD_CONV, HELD_ACCOUNT)

@@ -1517,6 +1517,30 @@ class Revive(Base):
     def pane(self, what, session="alpha"):
         return self.tmux(self.sock, "display", "-p", "-t", f"={session}:", "#{" + what + "}")[1].strip()
 
+    def mark(self, session="alpha", mark="@tardigrade_session"):
+        """the tmux option of that name on a tmux session: the id of the session Tardigrade made it for"""
+        return self.tmux(self.sock, "show-options", "-qv", "-t", f"={session}:", mark)[1].strip()
+
+    def brought_back(self):
+        """A session that a revive brought back and saw loaded, in the tmux session that revive made, on a machine
+        whose other session runs. Its place keeps the mark that names it. -> (its id, the stand-in's launch row)"""
+        sid = self.one_up_one_down()
+        self.lived_in("set -g base-index 1\n", None)
+        self.other_up()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        new = self.wait_launches(n + 1)[-1]
+        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid, out)
+        self.assertIn("revive: 1 started, 1 already running, 0 failed, 0 need you\n", out)
+        self.assertIn("Running: 2 ", self.tg("census")[1])
+        self.assertEqual(self.mark(), sid, "the place keeps its mark after the session has loaded")
+        return sid, new
+
+    def ends_alone(self, row):
+        """its Claude Code ends by itself (no /exit), and the shell of its start file is kept in its place"""
+        self.kill(row["pid"])
+        self.until(lambda: self.pane("pane_current_command") == "bash", "the shell kept in its place")
+
     def record_pass(self, case):
         """a plain record pass, as the timer runs one every five minutes: a session that is not back stays on the
         list a revive reads (G1.20)"""
@@ -1552,7 +1576,8 @@ class Revive(Base):
     def back(self, sid, case, why="", sessions=("alpha",)):
         """The next step was taken as printed. With no restart in between, and after one more plain record pass,
         the same `tardigrade revive` brings the session back, once, in its own place; it says first what it is
-        trying again; the place loses our mark when the session has loaded; and the row is an ordinary one again."""
+        trying again; the place keeps the mark that names the session, and no waiting-screen mark; and the row is an
+        ordinary one again."""
         self.record_pass(case)
         n = len(self.launches())
         rc, out = self.tg("revive")
@@ -1568,8 +1593,7 @@ class Revive(Base):
         self.assertEqual(len(self.launches()), n + 1, f"{case}: started once")
         self.assertEqual(sorted(set(self.tmux(self.sock, "list-panes", "-a", "-F", "#{session_name}")[1].split())),
                          sorted(list(sessions) + (["beta"] if self.other else [])), case)
-        for mark in ("@tardigrade_waiting", "@tardigrade_session"):
-            self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", "=alpha:", mark)[1].strip(), "", mark)
+        self.assertEqual((self.mark(mark="@tardigrade_waiting"), self.mark()), ("", sid), case)
         census = self.tg("census")[1]
         self.assertIn(f"Running: {2 if self.other else 1} ", census, case)
         self.assertNotIn("A revive did not", census, case)
@@ -1933,24 +1957,190 @@ class Revive(Base):
         self.back(sid, "a stopped run")
         self.assertEqual((self.pane("session_id"), len(self.launches())), (place, n + 1), "started in that place")
 
-    def test_G5_19_a_session_that_loaded_while_its_mark_was_still_on_and_later_ends_alone_is_started_again_in_its_place(self):
-        """The mark comes off when the run that started a session sees it loaded. A run that ended before that
-        leaves the mark on a session that then loaded. If its Claude Code later ends by itself (not by /exit), the
-        shell kept in its place is a place of ours with nothing running: the next revive starts the session there."""
+    def test_G5_19_a_session_that_loaded_and_later_ends_alone_is_started_again_in_its_place(self):
+        """A session a revive brought back, whose Claude Code ends later by itself (not by /exit) and leaves the
+        shell: its tmux session is still the place made for it, with nothing running. A revive that brings the
+        session back starts it there; no rename is asked of the person. Before the next record pass the row is
+        still on the list a plain revive reads. After one, the record's own rule has moved a session that went
+        alone to the down list ("its pane holds the shell it left"): a plain revive leaves it and its place alone,
+        and `tardigrade revive --only NAME` starts it in its place."""
+        sid, new = self.brought_back()
+        place, own = self.pane("session_id"), self.pane("pane_pid")
+        self.ends_alone(new)
+        n = len(self.launches())
+        rc, out = self.tg("revive")                         # within the five minutes: no record pass yet
+        again = self.wait_launches(n + 1)[-1]
+        self.assertEqual(again["argv"][again["argv"].index("--resume") + 1], sid, out)
+        self.assertIn("revive: 1 started, 1 already running, 0 failed, 0 need you\n", out)
+        self.assertNotIn("not started", out)
+        time.sleep(1)
+        self.assertEqual((self.pane("session_id"), len(self.launches()), self.mark()), (place, n + 1, sid),
+                         "started once, in that place")
+        self.record_pass("ended alone, started again")
+        self.ends_alone(again)                              # once more, and this time the timer's record comes first
+        rc, out = self.tg("record")
+        self.assertEqual((self.names(), [(r["name"], r.get("ended")) for r in self.table()["down"]]),
+                         (["Beta Lane"], [("Alpha Lane", "shell")]), out)
+        self.assertIn("ended (its pane holds the shell it left)", self.tg("census")[1])
+        own, n = self.pane("pane_pid"), len(self.launches())
+        rc, out = self.tg("revive")
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you\n", out)
+        self.assertEqual((len(self.launches()), self.pane("pane_pid"), self.mark()), (n, own, sid),
+                         "a plain revive does not read the down list, and the place is as it was")
+        rc, out = self.tg("revive", "--only", "Alpha Lane")
+        self.assertEqual(rc, 0, out)
+        third = self.wait_launches(n + 1)[-1]
+        self.assertEqual(third["argv"][third["argv"].index("--resume") + 1], sid, out)
+        self.assertNotIn("not started", out)
+        time.sleep(1)
+        self.assertEqual((self.pane("session_id"), len(self.launches()), self.mark()), (place, n + 1, sid),
+                         "started once, in that place")
+        self.record_pass("ended alone, brought back by name")
+
+    def test_G5_19_sessions_that_were_brought_back_and_then_vanish_together_are_started_again_each_in_its_place(self):
+        """A crash that ends several sessions at once and leaves their shells (a memory kill does this): the record
+        keeps them as sessions to bring back, and the revive starts each in the tmux session made for it. None is
+        "not started", and no rename is asked for a place the tool made itself. A fourth session runs on: with
+        nothing running at all, the record keeps the record before it and says nothing of a crash."""
+        ids = [self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma")]
+        ids, last = ids, self.start_lane("delta", "Delta Lane")
+        self.tg("record", "--force")
+        self.reboot()
+        self.lived_in("set -g base-index 1\n", None)
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        new = [x for x in self.wait_launches(n + 4)[n:] if x["argv"][x["argv"].index("--resume") + 1] != last]
+        self.assertIn("revive: 4 started, 0 already running, 0 failed, 0 need you\n", out)
+        self.assertEqual(len(new), 3)
+        places = lambda: sorted(self.tmux(self.sock, "list-sessions", "-F", "#{session_name} #{session_id}")[1].split("\n"))
+        marks = lambda: [self.mark(x) for x in ("alpha", "beta", "gamma")]
+        before = places()
+        self.assertEqual(marks(), ids)
+        self.tg("record")
+        for row in new:                                     # all three at once, no /exit
+            self.kill(row["pid"])
+        for name in ("alpha", "beta", "gamma"):
+            self.until(lambda: self.pane("pane_current_command", name) == "bash", "the shell kept in its place")
+        rc, out = self.tg("record")
+        self.assertIn("3 of 4 recorded sessions vanished together", out)
+        self.assertEqual((self.names(), self.names("down")),
+                         (["Alpha Lane", "Beta Lane", "Delta Lane", "Gamma Lane"], []), out)
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        again = self.wait_launches(n + 3)[n:]
+        self.assertEqual(sorted(x["argv"][x["argv"].index("--resume") + 1] for x in again), sorted(ids), out)
+        self.assertIn("revive: 3 started, 1 already running, 0 failed, 0 need you\n", out)
+        self.assertNotIn("not started", out)
+        time.sleep(1)
+        self.assertEqual((places(), len(self.launches()), marks()), (before, n + 3, ids), "each once, each in its place")
+        self.assertIn("Running: 4 ", self.tg("census")[1])
+
+    def test_G5_19_a_tmux_session_whose_mark_names_another_session_is_not_this_sessions_place(self):
+        """The mark names the session it was made for, and the read compares it. A tmux session of the row's name
+        whose mark names another session (made for a conversation that is not the row's) is not started in: it is
+        not touched, the session is counted as not started, and the step is the printed rename, taken as printed."""
         sid = self.one_up_one_down()
         self.lived_in("set -g base-index 1\n", None)
         self.other_up()
-        n = len(self.launches())
-        rc, out = self.tg("revive", TARDIGRADE_FAKE_STOP_AT="claude_started:1")
-        self.assertEqual(rc, 137, f"the planted stop was not reached: {out}")
-        new = self.wait_launches(n + 1)[-1]
-        self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid)
+        other = str(uuid.uuid4())
+        self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", "alpha", "-c", self.work)[0], 0)
+        self.assertEqual(self.tmux(self.sock, "set-option", "-t", "=alpha:", "@tardigrade_session", other)[0], 0)
+        self.until(lambda: self.pane("pane_current_command") in ("bash", "sh", "dash", "zsh"), "its shell")
+        own, n = self.pane("pane_pid"), len(self.launches())
+        rc, out = self.tg("revive")
+        cmd = f"{TMUX} -S {self.sock} rename-session -t '=alpha' alpha-kept"
+        said = ("a tmux session named alpha is in the way, and Tardigrade does not know it as one it made for this "
+                f"session (it holds a shell). Nothing in it was touched. Next step: give it another name with `{cmd}`, "
+                "then run `tardigrade revive`.")
+        self.assertIn("skip  Alpha Lane: not started: " + said, out)
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", out)
+        self.assertEqual((len(self.launches()), self.pane("pane_pid"), self.mark()), (n, own, other))
+        self.record_pass("made for another session")
+        self.assertIn("      A revive did not start it: " + said, self.tg("census")[1])
+        done = subprocess.run(["sh", "-c", cmd], env=self.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual((done.returncode, done.stdout + done.stderr), (0, ""))
+        self.back(sid, "made for another session", sessions=("alpha", "alpha-kept"))
+        self.assertEqual((self.pane("pane_pid", "alpha-kept"), self.mark("alpha-kept")), (own, other),
+                         "the other place runs on under its new name, with its own mark")
+
+    def test_G5_19_a_program_started_in_the_place_of_a_session_that_loaded_and_ended_is_named_and_never_ended(self):
+        """With the mark on after the session loaded: its Claude Code ends alone, and the person starts a program in
+        the shell it left. "Holds only a shell" is read from the process list too, so the program is named, is not
+        ended, and the session is not started over it. The printed step is taken: once the program has ended, the
+        same `tardigrade revive` starts the session in that place."""
+        sid, new = self.brought_back()
         place = self.pane("session_id")
-        self.assertEqual(self.tmux(self.sock, "show-options", "-qv", "-t", "=alpha:", "@tardigrade_session")[1].strip(), sid)
-        self.kill(new["pid"])                               # it ends alone
-        self.until(lambda: self.pane("pane_current_command") == "bash", "the shell kept in its place")
-        self.back(sid, "ended alone, mark still on")
-        self.assertEqual((self.pane("session_id"), len(self.launches())), (place, n + 2), "started in that place")
+        self.ends_alone(new)
+        self.tmux(self.sock, "send-keys", "-t", "=alpha:", "-l", "sleep 300")       # the person, in their own window
+        self.tmux(self.sock, "send-keys", "-t", "=alpha:", "Enter")
+        own = self.pane("pane_pid")
+        kids = lambda: subprocess.run(["pgrep", "-x", "sleep", "-P", own], capture_output=True, text=True).stdout.split()
+        self.until(lambda: len(kids()) == 1, "the person's program to run under the shell")
+        pid = int(kids()[0])
+        n, began = len(self.launches()), start_time(pid)
+        rc, out = self.tg("revive")
+        look = f"`{TMUX} -S {self.sock} attach -t '=alpha'`"
+        self.assertIn("skip  Alpha Lane: not started: its tmux session alpha holds a running program (`sleep`), and "
+                      f"Tardigrade does not end it. Next step: end that program in its window ({look}), then run "
+                      "`tardigrade revive`.", out)
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", out)
+        self.assertEqual((len(self.launches()), self.pane("pane_pid"), start_time(pid), self.mark()),
+                         (n, own, began, sid), "the person's program is not touched")
+        self.record_pass("a program in its place")
+        self.kill(pid)                                      # the step: the person ends that program
+        self.until(lambda: not kids(), "the program to have ended")
+        self.back(sid, "a program in its place")
+        self.assertEqual((self.pane("session_id"), len(self.launches())), (place, n + 1), "started in that place")
+
+    def test_G5_19_a_session_its_owner_ended_is_not_started_again_in_its_place_though_the_place_keeps_its_mark(self):
+        """With the mark on after the session loaded: its owner ends it with /exit. The record's own rule holds: it
+        is over, a revive starts nothing, and the shell it left in the place made for it is not touched."""
+        sid, new = self.brought_back()
+        self.tg("record")
+        seen = [r for r in self.table()["lanes"] if r["session_id"] == sid][0]["last_seen"]
+        self.conversation(sid, seen + 2)                    # its owner typed /exit after the record saw it running
+        self.ends_alone(new)
+        time.sleep(2)
+        own, n = self.pane("pane_pid"), len(self.launches())
+        self.assertEqual(self.mark(), sid)
+        rc, out = self.tg("revive")                         # before the record has written it down as ended
+        self.assertIn("skip  Alpha Lane: its owner ended it with /exit", out)
+        rc, out = self.tg("record")
+        self.assertEqual((self.names(), [(r["name"], r.get("ended")) for r in self.table()["down"]]),
+                         (["Beta Lane"], [("Alpha Lane", "exit")]), out)
+        rc, out = self.tg("revive")                         # and after
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you\n", out)
+        time.sleep(1)
+        self.assertEqual((len(self.launches()), self.pane("pane_pid"), self.mark()), (n, own, sid),
+                         "nothing was started, and its place is as it was")
+
+    def test_G5_19_claude_code_under_another_id_in_the_place_of_a_session_that_loaded_gets_no_second_copy(self):
+        """With the mark on after the session loaded: its Claude Code ends alone, and the person starts Claude Code
+        new in the shell it left (another session id). Nothing is started beside it, no step is asked of the
+        person, and the next record follows the one that runs."""
+        sid, new = self.brought_back()
+        self.ends_alone(new)
+        other, n = str(uuid.uuid4()), len(self.launches())
+        self.tmux(self.sock, "send-keys", "-t", "=alpha:", "-l", f"FAKE_SID={other} FAKE_NAME='Alpha Lane' claude")
+        self.tmux(self.sock, "send-keys", "-t", "=alpha:", "Enter")
+        self.assertEqual(self.wait_launches(n + 1)[-1]["sid"], other)
+        self.assertEqual(self.mark(), sid, "the place still names the session it was made for")
+        rc, out = self.tg("revive")
+        self.assertIn("skip  Alpha Lane: not started: its tmux session alpha runs Claude Code under another session id "
+                      "(a conversation started new in the same place). Nothing was started beside it; the next record "
+                      "follows that one.", out)
+        self.assertIn("revive: 0 started, 1 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", out)
+        time.sleep(1)
+        self.assertEqual(len(self.launches()), n + 1, "no second copy")
+        rc, out = self.tg("record")
+        self.assertEqual(sorted(r["session_id"] for r in self.table()["lanes"]), sorted([other, self.other]), out)
+        self.assertIn("Running: 2 ", self.tg("census")[1])
+        rc, out = self.tg("revive")
+        self.assertIn("revive: 0 started, 2 already running, 0 failed, 0 need you\n", out)
+        self.assertEqual(len(self.launches()), n + 1, "and none after the record")
 
     def test_G5_19_the_line_names_the_start_files_of_the_shell_the_tool_starts_and_no_file_where_it_has_no_list(self):
         """The line that sends a person to a start file names the files of the shell the tool itself starts the
@@ -2709,14 +2899,12 @@ class Revive(Base):
         self.kill([x for x in self.launches()[n:] if x["sid"] == e][0]["pid"])
         time.sleep(1.5)
         rc, out = self.tg("revive")                # its pane holds the shell it left
-        # G5.19: the revive above made that tmux session, and its mark came off when the session loaded; it is not
-        # started in, not counted as running, and the words are true for it
-        self.assertIn("skip  Echo Lane: not started: a tmux session named echo is in the way, and Tardigrade does not "
-                      "know it as one it made for this session (it holds a shell). Nothing in it was touched. Next "
-                      f"step: give it another name with `{TMUX} -S {self.sock} rename-session -t '=echo' echo-kept`, "
-                      "then run `tardigrade revive`.", out)
-        self.assertIn("revive: 0 started, 3 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
-                      "that name is in the way\n", out)
+        # G5.19: the revive above made that tmux session for it, and the mark stays on: it is started again there
+        self.assertIn("revive: 1 started, 3 already running, 0 failed, 0 need you\n", out)
+        again = self.wait_launches(n + 5)[-1]
+        self.assertEqual(again["sid"], e)
+        self.kill(again["pid"])
+        time.sleep(1.5)
         self.tmux(self.sock, "kill-session", "-t", "=echo")     # and then its owner closed that too
         self.conversation(e, time.time() + 1)
         n = len(self.launches())
