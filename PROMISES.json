@@ -1129,6 +1129,48 @@
    "issue": 86,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T81",
+   "seen": "2026-11-24, on two Macs (macOS 13 and 27) in clean test accounts and on a stock Ubuntu 24.04 machine in a new account: setup --dry-run and census each made ~/.config/windstorm-tardigrade, ~/.local, ~/.local/state and ~/.local/state/windstorm-tardigrade (every command makes the tool's own settings and state folders first); a refused setup (a person's tardigrade.py at the copy's place) made ~/.config, the settings folder and the state folder. 0.1.10's refused-setup line names those folders instead of saying nothing was written; the cause stays.",
+   "promise": "a command that only reads (census, a dry run, a refused setup) makes no folder and no file. A test runs each in an empty scratch home and compares the whole-home listing before and after: no difference.",
+   "codon": "G3.30",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 88,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T82",
+   "seen": "2026-11-24, on two Macs in clean test accounts, uninstall exit 0 both times. macOS 13, after a setup launchd refused: left ~/.local, ~/.local/share, ~/.local/state, an empty state folder and the settings folder with config.json, and printed \"Kept: your record and log in <the state folder>\" over that empty folder. macOS 27, after a full setup: left the same three folders, the state folder with the log, the boot marker and launchd's empty revive.out, and the settings folder with config.json and lanes.json; its lines do not say that config.json now holds its switch-off setting (auto_revive false) or why it stays.",
+   "promise": "uninstall leaves the home as setup found it (family rule 8, A LEAVE LEAVES THE HOME AS IT FOUND IT): it names only what is there; it says in its own line that its switch-off setting stays, where, and why; by setup's record (T73) it removes the empty folders setup made, deepest first, rmdir only. The measure is the whole-home listing after uninstall against the listing before setup, every difference a line uninstall printed; a test holds it.",
+   "codon": "G3.31",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 89,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T83",
+   "seen": "2026-11-24, on a Mac (macOS 13) in a test account reached over ssh with no screen session: setup exit 1, \"NOT set up: launchd did not take ai.thewindstorm.tardigrade-revive. Nothing comes back by itself yet.\", after it had written the installed copy and the revive launch agent's file into ~/Library/LaunchAgents; census then said \"NO (run setup)\". The line names no next step and does not say those files are on disk. Whether launchd loads that file at the next screen login was not read.",
+   "promise": "first a read: the launch agent's file written and not loaded, the account logged out and in at its screen, census. Then: when launchd does not take a job, setup's stop line says what is on disk, what happens at the next login, and the one next step, and census says what is true in that state; a test holds both lines. If the read shows the file does not load at login, the row says so and keeps the on-disk and next-step part.",
+   "codon": "G5.17",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 90,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
