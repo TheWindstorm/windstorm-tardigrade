@@ -40,6 +40,9 @@ git clone --depth 1 --branch v0.1.10.1 https://github.com/TheWindstorm/windstorm
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
+Some versions of git print `warning: refs/tags/<the tag> ... is not a commit!` for that clone line (seen with git
+2.55, not with git 2.43). It is only a warning, and the clone is still right: it ends with exit 0 and the script is there.
+
 Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute timer for
 your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs no
 administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that

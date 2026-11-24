@@ -489,13 +489,20 @@ MARKERS_KEPT = 5            # G2.42, T38: only the newest few boot markers; an o
 
 
 def write_marker(text):
-    """this boot's marker, this user's only (0600); the markers of all but the newest few boots are removed"""
+    """this boot's marker, this user's only (0600); the markers of all but the newest few boots are removed, and
+    the ones kept are made this user's only too, whichever version wrote them (G2.52)"""
     write_private(marker(), text)
     try:
         old = sorted((p for p in glob.glob(os.path.join(STATE, "revived-*")) if p != marker() and is_ours(p, "marker")),
                      key=lambda p: os.path.getmtime(p), reverse=True)
     except OSError:
         return
+    for p in old[:MARKERS_KEPT - 1]:
+        try:
+            if os.stat(p).st_mode & 0o7777 != 0o600:
+                os.chmod(p, 0o600)
+        except OSError:
+            pass
     for p in old[MARKERS_KEPT - 1:]:
         try:
             os.remove(p)
@@ -751,8 +758,9 @@ def history_exits(base, sids):
     typed into a session there, slash commands too, with the session id; it does so even when it writes no
     /exit into the conversation itself (seen on real machines with 2.1.330). The file holds what people typed:
     a line of another session is skipped before it is read, of a line of these only the time and whether it is
-    exactly /exit or /quit are kept, and nothing of it is logged, recorded or shown. When the file is missing or
-    does not look as expected, no session is taken as ended by it, and the log says the check could not be made."""
+    exactly /exit or /quit are kept, and nothing of it is logged, recorded or shown. When the file is not there,
+    could not be read or does not look as expected, no session is taken as ended by it, and the log says which of
+    the three it was (G2.54): a file that is not there is never said as one that could not be read."""
     have = _HISTORY.get(base)
     if have is not None and set(sids) <= have[0]:
         return have[1]
@@ -763,8 +771,10 @@ def history_exits(base, sids):
             fh.seek(0, 2)
             fh.seek(max(0, fh.tell() - 4_000_000))
             tail = fh.read().decode(errors="replace").splitlines()
+    except FileNotFoundError:
+        tail, problem = [], "is not there (no history.jsonl in that folder)"
     except OSError as e:
-        tail, problem = [], f"it cannot be read ({e.__class__.__name__})"
+        tail, problem = [], f"could not be read ({e.__class__.__name__}: {e.strerror or 'no cause given'})"
     for line in tail:
         m = HISTORY_SID.search(line)
         if not m:
@@ -780,9 +790,9 @@ def history_exits(base, sids):
         if sid in want and isinstance(words, str) and t >= last.get(sid, (0, False))[0]:
             last[sid] = (t, words.strip() in ("/exit", "/quit"))
     if not problem and tail and not shaped:
-        problem = "it does not look as expected (no session ids in it)"
+        problem = "could not be used: it does not look as expected (no session ids in it)"
     if problem and have is None and HISTORY_SAY:
-        log(f"the prompt history in {base} could not be used: {problem}. A session ended with /exit is known only "
+        log(f"the prompt history in {base} {problem}. A session ended with /exit is known only "
             "from its conversation or its pane; one may be brought back that its owner ended.")
     out = {sid: t for sid, (t, ex) in last.items() if ex}
     _HISTORY[base] = (want, out)
@@ -2779,14 +2789,18 @@ def herdr_back():
 
 
 def herdr_wait_now():
-    """census (G4.10): {"tabs": N, "running": the restore still waits for it} while this boot's restore found Herdr
-    not running and it is still not, else {}"""
+    """census (G4.10): {"tabs": N, "running": the restore still waits for it, "asked": Herdr was asked just now}
+    while this boot's restore found Herdr not running and it is still not, else {}. G4.11 (T94): "is not running"
+    is said only from Herdr's own answer at this moment. With the Herdr settings off here nothing is asked, and
+    "asked" is False: the words then say what the restore read and when, not what is so now."""
     w = read_json(herdr_wait_path(), {})
     if not isinstance(w, dict) or w.get("boot") != boot_id() or not int(w.get("tabs") or 0):
         return {}
-    if CFG["herdr"] and CFG["herdr_tabs"] and herdr_up():
+    asked = bool(CFG["herdr"] and CFG["herdr_tabs"])
+    if asked and herdr_up():
         return {}
-    return {"tabs": int(w["tabs"]), "since": int(w.get("since") or 0), "running": alive(int(w.get("pid") or 0))}
+    return {"tabs": int(w["tabs"]), "since": int(w.get("since") or 0), "running": alive(int(w.get("pid") or 0)),
+            "asked": asked}
 
 
 MADE = {}      # workspace label -> what this run made again: {"ws", "tab", "pane", "used"}
@@ -3130,10 +3144,15 @@ def census():
         print(f"Down during the restore: {x['name']} (at {clock(x['at'])}): it started, then went down; it may have "
               "failed to load. `tardigrade report` has the restore's account.")
     hw = d["herdr_not_running"]
-    if hw:
+    if hw and hw["asked"]:
         print(f"Herdr is not running: {hw['tabs']} tab(s) not attached"
               + ("; the restore attaches them when Herdr appears (Tardigrade does not start it)." if hw["running"] else
                  ". Tardigrade does not start Herdr; start it, then `tardigrade revive --only NAME` attaches one."))
+    elif hw:                                # G4.11 (T94): not asked now, so what was read, and when
+        print(f"This boot's restore found Herdr not running at {clock(hw['since'])}: {hw['tabs']} tab(s) were not "
+              "attached then. This census did not ask Herdr (herdr_tabs is off in the settings, or it found no herdr program), "
+              "so it does not say whether Herdr is running now."
+              + (" The restore is still running." if hw["running"] else ""))
     lr = d["last_revive"]
     if lr:
         print(f"Last revive: {time.strftime('%Y-%m-%d %H:%M', time.localtime(lr.get('at', 0)))}: "

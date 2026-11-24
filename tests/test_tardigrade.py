@@ -1164,7 +1164,67 @@ class Revive(Base):
         os.remove(hp)
         self.reboot()
         rc, out = self.tg("revive")
-        self.assertIn("could not be used: it cannot be read", out)
+        self.assertIn("is not there (no history.jsonl in that folder)", out)       # G2.54: not there is not "unreadable"
+
+    def test_G2_54_a_prompt_history_that_is_not_there_is_never_said_as_one_that_could_not_be_read(self):
+        # T89: seen on a stock VM, in a new account with no ~/.claude folder: the boot run's log said the history
+        # "cannot be read (FileNotFoundError)". Three answers, three wordings, and the same decision under each word.
+        a, b, c = (self.start_lane(n, n.title() + " Lane") for n in ("alpha", "beta", "gamma"))
+        hp = os.path.join(self.home, ".claude", "history.jsonl")
+        tail = "A session ended with /exit is known only from its conversation or its pane"
+
+        def round_(expect):
+            """a record, a reboot and a revive: (what the revive printed, the ids it started)"""
+            self.tg("record", "--force")
+            seen = max(r["last_seen"] for r in self.table()["lanes"])
+            yield seen
+            self.reboot()
+            n = len(self.launches())
+            rc, out = self.tg("revive")
+            self.wait_launches(n + expect)
+            time.sleep(2)
+            yield out, sorted(x["sid"] for x in self.launches()[n:])
+
+        # 1. not there: said as not there; nobody is taken as ended by it, and the conversation's last turn still counts
+        self.assertFalse(os.path.lexists(hp))
+        r = round_(2)
+        self.conversation(c, next(r) + 2)                   # Gamma's owner typed /exit: its conversation says so
+        out, started = next(r)
+        self.assertEqual(started, sorted([a, b]), out)
+        self.assertIn(f"the prompt history in {os.path.dirname(hp)} is not there (no history.jsonl in that folder). {tail}", out)
+        self.assertNotIn("could not be read", out)
+        self.assertNotIn("cannot be read", out)
+        self.assertIn("skip  Gamma Lane: its owner ended it with /exit", out)
+        # 2. there, and it cannot be opened as a file: said as could not be read, with the cause; the same decision
+        os.mkdir(hp)
+        r = round_(2)
+        next(r)
+        out, started = next(r)
+        self.assertEqual(started, sorted([a, b]), out)
+        self.assertIn(f"the prompt history in {os.path.dirname(hp)} could not be read (IsADirectoryError: Is a directory). {tail}", out)
+        self.assertNotIn("is not there", out)
+        os.rmdir(hp)
+        if os.geteuid() != 0:                               # a permission error is the same answer (root reads anything)
+            with open(hp, "w") as f:
+                f.write(json.dumps({"display": "/exit", "timestamp": int((time.time() + 60) * 1000), "sessionId": a}) + "\n")
+            os.chmod(hp, 0)
+            r = round_(2)
+            next(r)
+            out, started = next(r)
+            os.chmod(hp, 0o600)
+            self.assertEqual(started, sorted([a, b]), out)
+            self.assertIn("could not be read (PermissionError: Permission denied)", out)
+            self.assertNotIn("is not there", out)
+            os.remove(hp)
+        # 3. there and readable: no word about it, and Alpha, whose last typed prompt is /exit, stays ended
+        r = round_(1)
+        seen = next(r)
+        with open(hp, "w") as f:
+            f.write(json.dumps({"display": "/exit", "timestamp": int((seen + 2) * 1000), "sessionId": a}) + "\n")
+        out, started = next(r)
+        self.assertEqual(started, [b], out)
+        self.assertIn("skip  Alpha Lane: its owner ended it with /exit", out)
+        self.assertNotIn("the prompt history in", out)
 
     def conversation(self, sid, last_command_at):
         """a conversation whose last entry is /exit, then what Claude Code writes after it"""
@@ -1603,7 +1663,7 @@ class Revive(Base):
         # systemctl --user of whoever runs the tests
         src = fread(SCRIPT)
         u = src[src.index("def uninstall():"):src.index("def trust_cmd():")]
-        self.assertIn('remove_ours(os.path.join(cache, f), "cache", kept, failed)', u)     # G3.28: our cache only
+        self.assertIn('remove_ours(os.path.join(cache, f), "cache", kept, failed, gone)', u)     # G3.28: our cache only
 
     def test_G2_42_only_the_newest_few_boot_markers_are_kept_and_they_are_private(self):
         # T38: seen on a Linux machine, 14 markers in two days, at mode 664, the old ones never read again
@@ -3242,6 +3302,36 @@ sys.exit(rc)
                   os.path.join(self.home, ".local", "state", "windstorm-tardigrade")):
             self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
 
+    def test_G2_52_setup_and_each_boot_run_make_every_marker_they_keep_private(self):
+        # T69: seen on a real Mac upgraded to 0.1.9 and restarted: the markers it wrote were 0600, the three it kept
+        # from earlier versions stayed readable by others (0644)
+        self.stand_in_services()
+        os.makedirs(self.state(""), exist_ok=True)
+
+        def plant(names, mode):
+            for i, n in enumerate(names):
+                with open(self.state(n), "w") as f:
+                    f.write("x\n")
+                os.chmod(self.state(n), mode)
+                os.utime(self.state(n), (time.time() - 3600 + i * 60,) * 2)
+
+        def modes():
+            return {f: os.stat(self.state(f)).st_mode & 0o7777 for f in os.listdir(self.state("")) if f.startswith("revived-")}
+
+        plant(["revived-old-a", "revived-old-b", "revived-old-c"], 0o644)
+        plant(["revived-notes.txt"], 0o644)             # not a marker by its name: the person's own file
+        rc, out = self.tg("setup", TARDIGRADE_FAKE_BOOT_ID="boot-one")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(modes(), {"revived-old-a": 0o600, "revived-old-b": 0o600, "revived-old-c": 0o600,
+                                   "revived-boot-one": 0o600, "revived-notes.txt": 0o644}, out)
+        # and a boot run does the same for what it keeps: widened again, and one that only the group could read
+        for n, m in (("revived-old-a", 0o664), ("revived-old-b", 0o640), ("revived-boot-one", 0o644)):
+            os.chmod(self.state(n), m)
+        self.reboot()
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-two")
+        self.assertEqual(modes(), {"revived-old-a": 0o600, "revived-old-b": 0o600, "revived-old-c": 0o600,
+                                   "revived-boot-one": 0o600, "revived-boot-two": 0o600, "revived-notes.txt": 0o644}, out)
+
     def empty_home(self):
         """this test's home with no settings file of the suite's, and its listing less the one file the suite's
         stand-in systemctl writes about itself"""
@@ -4048,6 +4138,52 @@ class Windows(Base):
         os.remove(self.state("herdr-wait.json"))
         self.assertNotIn("Herdr is not running", self.tg("census")[1])
 
+    def test_G4_11_census_says_herdr_is_not_running_only_from_herdrs_own_answer_at_that_moment(self):
+        # T94: with the Herdr settings off, census took "Herdr is not running" from the file this boot's restore
+        # wrote, and went on saying it after Herdr had started
+        run, log = self.herdr_missing_run(0.05)
+        try:
+            run.wait(timeout=WAIT * 2)
+        finally:
+            if run.poll() is None:
+                run.kill()
+        since = jload(self.state("herdr-wait.json"))["since"]
+        at = time.strftime("%H:%M", time.localtime(since))
+        # asked, and Herdr answers nothing: its own answer now
+        text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=300)[1]
+        self.assertIn("Herdr is not running: 3 tab(s) not attached. Tardigrade does not start Herdr", text)
+        self.assertTrue(json.loads(self.tg("census", "--json")[1])["herdr_not_running"]["asked"])
+        # Herdr's server starts after the restore wrote its file
+        with open(os.path.join(self.home, ".config", "herdr", "herdr.sock"), "w") as f:
+            f.write("")
+        prog = os.path.join(self.bin, "herdr")
+        # the tool also looks for herdr in four system folders: on a machine that has one there, "no herdr program"
+        # cannot be staged, and that case is left to the machines that have none (CI's have none)
+        own = [d for d in ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin") if os.access(os.path.join(d, "herdr"), os.X_OK)]
+        cases = [{"herdr_tabs": False}] + ([] if own else [{"herdr_tabs": True, "herdr": None}])
+        for off in cases:                               # the setting off: nothing is asked
+            self.cfg(off)
+            if off["herdr_tabs"]:
+                os.rename(prog, prog + ".away")         # and no herdr program to be found: the same
+            calls = os.path.join(self.home, "herdr-calls.jsonl")
+            before = fread(calls) if os.path.exists(calls) else ""
+            text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=300)[1]
+            self.assertNotIn("Herdr is not running", text, off)
+            self.assertIn(f"This boot's restore found Herdr not running at {at}: 3 tab(s) were not attached then. "
+                          "This census did not ask Herdr", text, off)
+            self.assertIn("so it does not say whether Herdr is running now.", text)
+            self.assertEqual(fread(calls) if os.path.exists(calls) else "", before, "census asked Herdr with the setting off")
+            d = json.loads(self.tg("census", "--json")[1])["herdr_not_running"]
+            self.assertEqual((d["tabs"], d["since"], d["asked"]), (3, since, False))
+        # asked again, and Herdr answers: no line at all
+        if not own:
+            os.rename(prog + ".away", prog)
+        self.cfg({"herdr_tabs": True, "herdr": prog})
+        text = self.tg("census", TARDIGRADE_FAKE_UPTIME_S=300)[1]
+        self.assertNotIn("Herdr is not running", text)
+        self.assertNotIn("found Herdr not running", text)
+        self.assertEqual(json.loads(self.tg("census", "--json")[1])["herdr_not_running"], {})
+
     def lost_workspaces(self, places, extra_state):
         """sessions whose Herdr workspaces are gone after a reboot; returns (what herdr was asked, revive's log)"""
         herdr = self.script("herdr", fread(FAKE_HERDR))
@@ -4589,6 +4725,17 @@ class Strand(unittest.TestCase):
         self.assertEqual(clone_tags("git clone https://example/x\n  git clone --branch main https://example/x\n"
                                     "git clone --depth 1 --branch v0.1.8 https://example/x\n"),
                          ["(no --branch: the default branch)", "main", "v0.1.8"])
+
+    def test_G5_20_the_readme_says_beside_every_clone_line_that_gits_not_a_commit_warning_is_only_a_warning(self):
+        # T90: seen on a Mac with git 2.55: the README's own clone line printed "warning: refs/tags/... is not a
+        # commit!" and the clone was right (exit 0). Read cold, by a person or an agent, that looks like a failed clone.
+        lines = fread(os.path.join(ROOT, "README.md")).splitlines()
+        clones = [i for i, ln in enumerate(lines) if "git clone" in ln]
+        self.assertTrue(clones, "the README has a clone line")
+        for i in clones:
+            near = " ".join(lines[i:i + 8])
+            for words in ("is not a commit!", "the clone is still right", "exit 0"):
+                self.assertIn(words, near, f"beside the clone line {lines[i]!r}")
 
     def test_G5_16_no_shown_text_removes_the_plugin_catalog(self):
         """T77: Claude Code's `plugin marketplace remove` also uninstalls every plugin from that catalog and deletes
