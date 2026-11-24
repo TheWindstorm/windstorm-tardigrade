@@ -1325,6 +1325,20 @@
    "issue": 101,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T95",
+   "seen": "2026-11-24 12:12Z, on a stock Ubuntu 24.04.5 VM, on 0.1.10.1's candidate (script sha256 46adbae596a43709), in an account with lingering off that had never logged in, setup started with sudo -u: `systemctl --user is-enabled <unit>` answered exit 1, stdout empty, stderr \"Failed to connect to bus: No medium found\" (this login has no user manager to hand a unit to); setup had copied itself in and written its units before it said \"Setup could not read whether it is set up: ... Log out and in (this login has no systemd user manager to ask), then run setup again.\" (exit 3), and the census after it was answered by the installed copy it left behind.",
+   "promise": "on Linux, before its first write, setup asks the user manager; on stdout empty with \"Failed to connect to bus\" it stops having made nothing: the line says what systemd answered, that nothing was installed, and the one next step (log out and in, then run setup again); any other answer goes on as today, so no install that works today is refused by the new read (family rule 11, what will refuse is asked before the first write; the Linux half of T83). A test holds the stop: nothing written.",
+   "codon": "G5.22",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 102,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

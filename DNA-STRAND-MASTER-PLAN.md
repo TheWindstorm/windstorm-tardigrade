@@ -300,6 +300,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G5.19 | Due in 0.1.11 (T88). What the tool starts as its own gets an environment it built; the person's settings cannot move what it runs without the tool saying so; one lived-in round before the tag, after the stock one. | Not built yet. |
 | G5.20 | Due in 0.1.11 (T90). The README says, next to its clone line, that some git versions print "is not a commit!" for it and that the clone is still right; a test reads that sentence beside every clone line. | Not built yet. |
 | G5.21 | Due in 0.1.11 (T91). Setup decides by what is there now, never by a kept record alone, and ends by reading back what a boot revive needs; one test walks setup, uninstall, setup again and a revive, and once more from an uninstall cut half way. | Not built yet. |
+| G5.22 | Due in 0.1.11 (T95). On Linux, before its first write, setup asks the user manager; with no user manager (stdout empty, "Failed to connect to bus") it stops having made nothing, naming what systemd answered and the one next step; any other answer goes on as before. | Not built yet. |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
 ### G7 Tests
