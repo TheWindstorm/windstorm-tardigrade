@@ -144,6 +144,7 @@ CFG = {
     "start_command": "",      # your own whole start line, in place of the three above; see the README for {placeholders}
     "env_file": "",           # NAME=value lines (or NUL-separated) added to a revived session's environment
     "tmux_conf": "",          # a tmux config file for a tmux server that Tardigrade has to start
+    "python": "",             # the python the boot service and the record timer run with; default: setup chooses (G5.26)
     "server_command": "",     # your own command that starts the tmux server, run when none is up; {socket}
     "server_socket": "",      # the tmux socket name server_command is for; "" = any
     "carry_env": ["CLAUDE_CODE_AUTO_COMPACT_WINDOW"],   # settings variables a session keeps across a revive
@@ -3809,6 +3810,7 @@ def cannot_tell_text(why):
 def census():
     d = census_data()
     d["comes_back"] = comes_back()      # read here, not in census_data: the report does not say it, so asks nothing
+    d["stored_programs"] = stored_programs()
     folders = open_folder_lines()
     d["open_folders"] = folders[1:]
     places = setup_places()
@@ -4190,14 +4192,134 @@ def will_refuse():
             f"answered \"{said[0][:200]}\" (exit {rc}).")
 
 
+SYSTEM_PY = "/usr/bin/python3"
+APPLE_OWNED = ("Xcode's folder", "the folder of Apple's command line tools")
+
+
+def updater_owned(path):
+    """G5.26 (T101), family rule 29 (f): the updater whose folder a program's path lies in, or "". Such a folder goes
+    when that thing is updated or removed, and a stored command that names it then stops without a word."""
+    for mark, what in ((".app/Contents/Developer/", APPLE_OWNED[0]), ("/CommandLineTools/", APPLE_OWNED[1]),
+                       ("/Cellar/", "Homebrew's Cellar")):
+        if mark in path:
+            return what
+    for shape, what in ((r"/versions/[^/]+/bin/[^/]+$", "a pyenv version folder"),
+                        (r"/installs/[^/]+/[^/]+/bin/[^/]+$", "a mise or asdf version folder"),
+                        (r"/pkgs/[^/]+/bin/[^/]+$", "a conda package folder")):
+        if re.search(shape, path):
+            return what
+    return ""
+
+
+def meets_floor(py):
+    """does this program answer as a Python at the floor or above? Asked by running it."""
+    rc, out = run([py, "-I", "-c", "import sys; print(sys.version_info[0], sys.version_info[1])"], timeout=20)
+    try:
+        return rc == 0 and tuple(int(x) for x in out.split()[:2]) >= FLOOR
+    except ValueError:
+        return False
+
+
+def stored_python():
+    """G5.26 (T101): the python that setup writes into the units and the launchd files. -> (the python that runs
+    this setup, the one to write, a line to say when they differ, a stop). The path as the person ran it, not
+    resolved further, unless it lies in a folder an updater owns: Apple's python is written as /usr/bin/python3
+    (the name that stays when Xcode moves), a Homebrew python by its opt or bin folder, never by its Cellar; for a
+    version folder (pyenv, mise, asdf, a conda package folder) the system's python3 where that meets the floor.
+    Where there is no such python, setup stops before its first write; the `python` setting is the person's word."""
+    ran = sys.executable or shutil.which("python3") or SYSTEM_PY
+    floor = "%d.%d" % FLOOR
+    cfgf = os.path.join(CFG_DIR, "config.json")
+    want = os.path.expanduser(str(CFG.get("python") or ""))
+    if want:
+        if meets_floor(want):
+            return ran, want, "", ""
+        return ran, "", "", (f"NOT set up: the `python` setting names {want}, and that did not answer as a Python "
+                             f"{floor} or newer. {NOTHING_MADE} Next step: correct `python` in {cfgf} or take it out, "
+                             "then run setup again.")
+    own = updater_owned(ran) or (updater_owned(os.path.realpath(ran)) if MAC else "")
+    if MAC and not own:
+        rc, out = run(["xcode-select", "-p"], timeout=10)
+        dev = out.strip()
+        if rc == 0 and dev.startswith("/") and (os.path.realpath(ran) + "/").startswith(os.path.realpath(dev) + "/"):
+            own = APPLE_OWNED[0]
+    if not own:
+        return ran, ran, "", ""
+    pick = ""
+    if MAC and own in APPLE_OWNED:
+        pick = SYSTEM_PY        # Apple's own name for the python that runs this setup; it is not run again to ask
+    else:
+        m = re.match(r"(.*)/Cellar/([^/]+)/[^/]+/bin/([^/]+)$", ran)
+        cands = [f"{m.group(1)}/opt/{m.group(2)}/bin/{m.group(3)}", f"{m.group(1)}/bin/{m.group(3)}"] if m else []
+        cands = [c for c in cands if os.path.isfile(c) and os.path.realpath(c) == os.path.realpath(ran)]
+        system = (TESTING and os.environ.get("TARDIGRADE_FAKE_SYSTEM_PYTHON")) or SYSTEM_PY
+        # on a Mac without Apple's developer tools, /usr/bin/python3 opens their install window: it is not run there
+        if not MAC or run(["xcode-select", "-p"], timeout=10)[0] == 0:
+            cands.append(system)
+        for c in cands:
+            if not updater_owned(c) and meets_floor(c):
+                pick = c
+                break
+    if pick:
+        return ran, pick, (f"The python written into the boot service and the record timer is {pick}, not {ran} that "
+                           f"runs this setup: that one is in {own}, which goes when it is updated or removed."), ""
+    return ran, "", "", (f"NOT set up: the python that runs this setup, {ran}, is in {own}, which goes when it is "
+                         "updated or removed; the boot service would then stop without a word. Tardigrade found no "
+                         f"other Python {floor} or newer to name ({SYSTEM_PY} is not there or is older). {NOTHING_MADE} "
+                         f"Next step: put {{\"python\": \"/whole/path/to/python3\"}} into {cfgf} (make the file if it "
+                         f"is not there), naming a Python {floor} or newer that stays where it is, then run setup "
+                         "again.")
+
+
+def program_state(path):
+    """G5.26: is a stored program still there? -> ("there" | "gone" | "not a program" | "unread", why)"""
+    try:
+        st = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return "gone", ""
+    except OSError as e:
+        return "unread", e.strerror or type(e).__name__
+    if not stat.S_ISREG(st.st_mode) or not os.access(path, os.X_OK):
+        return "not a program", ""
+    return "there", ""
+
+
+def stored_programs():
+    """G5.26 (T101), family rule 29 (f) (ii): the python each unit or launchd file of ours names, read from the file
+    itself, and whether it is still there. No path lasts for ever, and a job whose program is gone cannot say so."""
+    out = []
+    for p, kind in our_places(os.path.join(INSTALL_DIR, "tardigrade.py")):
+        if kind not in ("unit", "plist") or p.endswith(".timer") or not os.path.lexists(p) or not is_ours(p, kind):
+            continue
+        what = ("the boot service" if "revive" in os.path.basename(p) else "the record service") if kind == "unit" \
+            else os.path.basename(p)[:-len(".plist")]
+        row = {"file": p, "what": what, "program": "", "state": "unread", "why": ""}
+        try:
+            with open(p) as f:
+                text = f.read()
+        except OSError as e:
+            row["why"] = e.strerror or type(e).__name__
+            out.append(row)
+            continue
+        m = re.search(r"^ExecStart=(.+?) -I ", text, re.M) if kind == "unit" else \
+            re.search(r"<string>(?:sleep \d+; )?exec (.+?) -I ", text)
+        if not m:
+            row["why"] = "its program line was not found"
+        else:
+            row["program"] = m.group(1)
+            row["state"], row["why"] = program_state(m.group(1))
+        out.append(row)
+    return out
+
+
 def setup():
-    py = sys.executable or shutil.which("python3") or "/usr/bin/python3"
+    ran, py, py_note, py_stop = stored_python()
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
     if sys.platform.startswith("win"):
         print("Windows is not supported yet. Under WSL, run setup inside the Linux system.")
         return 1
     if "--print-units" in ARGS:
-        for name, text in units(py, script).items():
+        for name, text in units(py or ran, script).items():
             print(f"### {name}\n{text}")
         return 0
     if not CFG["tmux"]:
@@ -4221,6 +4343,9 @@ def setup():
         step = unread_step()
         print(refused + " " + NOTHING_MADE + " " + step[0].upper() + step[1:] + ".")
         return 1
+    if py_stop:         # G5.26: no python to name that stays; said before the first write, and by a dry run too
+        print(py_stop)
+        return 1
     # G5.10 (T51): a script older than the installed copy stops here, having changed nothing
     had = os.path.lexists(script)
     was = version_of(script) if had else ""
@@ -4236,6 +4361,8 @@ def setup():
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")
         print(f"this script is version {VERSION}; installed now: {before}")
+        if py_note:
+            print(py_note)
         if not MAC:
             print("would have `systemctl --user enable` make its two links: "
                   + " and ".join(link for link, _ in wants_links()))
@@ -4321,11 +4448,13 @@ def setup():
               "~/.config/systemd/user/. Log out and in, then run setup again.") + " Nothing comes back by itself yet.")
         return 1
     if unread:
-        step = unread_step()
+        step = unread_step(unread)
         print("Setup could not read whether it is set up: " + "; ".join(unread) + ". So it does not say it is. "
               + step[0].upper() + step[1:] + ".")
         return 3
     print(f"Installed copy: version {VERSION} now; before this setup: {before}.")
+    if py_note:
+        print(py_note)
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")
     for line in who_logs_in():
         print(line)
@@ -4404,11 +4533,25 @@ def boot_read():
                 missing.append(f"the {what} is {word}")
             else:
                 unread.append(f"systemctl gave no answer about the {what} (exit {rc})")
+    # G5.26 (T101): the python each unit or launchd file names, read from the file: still there?
+    by = {}
+    for row in stored_programs():
+        by.setdefault((row["state"], row["program"] or row["file"], row["why"]), []).append(row["what"])
+    for (state, prog, why), whats in sorted(by.items()):
+        who = "the python " + " and ".join(whats) + (" run with" if len(whats) > 1 else " runs with")
+        if state == "gone":
+            missing.append(f"{who} is gone: {prog}")
+        elif state == "not a program":
+            missing.append(f"{who} is not a program this user can run: {prog}")
+        elif state == "unread":
+            unread.append(f"{who}, {prog} ({why})")
     return missing, unread, "   ".join(seen)
 
 
-def unread_step():
+def unread_step(unread=()):
     """the one next step when boot_read() got no answer; setup and the census both say it"""
+    if unread and all(u.startswith("the python ") for u in unread):
+        return "run setup again: it writes the python it is run with"
     return ("log in at this Mac's screen as this user, then run setup again" if MAC else
             "log out and in (this login has no systemd user manager to ask), then run setup again")
 
@@ -4421,7 +4564,7 @@ def comes_back():
     if missing:
         return "NO: " + "; ".join(missing) + " (run setup)"
     if unread:
-        return "could not be read: " + "; ".join(unread) + ". Next: " + unread_step()
+        return "could not be read: " + "; ".join(unread) + ". Next: " + unread_step(unread)
     if MAC:
         return mac_story(*mac_facts())[0]
     return "yes, by itself" if linger_on() else "yes, after you log in (lingering is off)"

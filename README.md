@@ -86,6 +86,16 @@ deepest first. It keeps your settings, record and log, says what a setup after i
 no list: uninstall then removes no folder above its own, and says so. A census, a report, a dry run and a setup that
 stops before its first write make no file and no folder; a dry run's lines go to the screen only, not to the log.
 
+The boot service and the record timer run with the python that ran setup, by the path you ran it with. Where that
+path lies in a folder that goes when something else is updated or removed, setup writes another and says so:
+Apple's python (inside Xcode or the command line tools) is written as `/usr/bin/python3`; a Homebrew python is
+written by its `opt` or `bin` folder, never by its Cellar; for a python in a pyenv, mise or asdf version folder or
+a conda package folder, `/usr/bin/python3` is written where that is Python 3.9 or newer, and where it is not, setup
+stops before its first write and names the `python` setting. No path lasts for ever, so the census reads from each
+unit the python it names: when that is gone, "Comes back after a reboot" says NO, names the path and the step (run
+setup). Not seen by us on a real machine with pyenv, mise, asdf or conda, nor on a Mac with a Homebrew python:
+those are read by the shape of the path, with stand-ins.
+
 What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
 first, then the other folders of the `PATH` of whoever runs the restore: at boot, the boot service's (which on
@@ -402,6 +412,7 @@ line says that it cannot tell. Not seen by us: a read of a session's environment
 | `start_command` | | Your own whole start line, in place of the three above. Placeholders: `{session_id}` `{cwd}` `{name}` `{model}` `{effort}` `{mode}` `{account}` `{tmux_session}` and `{flags}` (the session's exact flags). Each is quoted for the shell. |
 | `env_file` | | A file of `NAME=value` lines (or NUL-separated, as `env -0` writes) added to each revived session's environment. For a desktop's display and session bus, which a boot service does not have. Names that look like a secret's are left out, and so are the variables that belong to the starting shell (its folder, user id, terminal). |
 | `tmux_conf` | | A tmux config file for a tmux server that Tardigrade has to start. |
+| `python` | | The whole path of the python (3.9 or newer) the boot service and the record timer run with. Empty: setup chooses, see "Install". Run setup again after changing it. |
 | `server_command` | | Your own command that starts the tmux server, run once when none is up, for a machine that starts its server a special way. `{socket}` is the socket path. `server_socket` names the one socket it is for. |
 | `carry_env` | `["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]` | Settings variables a session keeps: the value it had is recorded and set again. |
 | `loose_socket` | `"tardigrade"` | The tmux socket name where sessions that were not in tmux come back. |
@@ -470,7 +481,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 190 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 193 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

@@ -5743,6 +5743,7 @@ sys.exit(rc)
             self.assertTrue(os.path.isfile(os.path.join(ud, unit)), unit)       # what is read below is all there
         self.assertTrue(os.path.isfile(copy) and os.path.isfile(notes))
         self.assertEqual(self.below_cache(cache), [], "setup wrote a path below the plugin cache folder")
+        self.assertEqual(self.updater_paths(), [], "setup wrote a path inside a folder another updater owns (G5.26)")
         self.assertEqual(jload(notes)["from"], cache)
         # the plugin line answers from the short value as it did from the whole path
         self.assertEqual(answer(), "same")
@@ -5799,8 +5800,198 @@ sys.exit(rc)
             self.assertTrue(os.path.isfile(f), f"{f}: {out.getvalue()}")      # what is read below is all there
         self.assertEqual(rc, 0, out.getvalue())
         self.assertEqual(self.below_cache(cache), [], "setup wrote a path below the plugin cache folder")
+        self.assertEqual(self.updater_paths(), [], "setup wrote a path inside a folder another updater owns (G5.26)")
         self.assertEqual(jload(notes)["from"], cache)
         self.assertEqual(tg.plugin_facts()["answer"], "same")
+
+    UPDATER_OWNED = re.compile(rb"Xcode[^/\s]*\.app/Contents/Developer|CommandLineTools/usr/bin|/Cellar/|/versions/[^/\s]+/bin/"
+                               rb"|/installs/[^/\s]+/[^/\s]+/bin/|/pkgs/[^/\s]+/bin/")
+
+    def updater_paths(self):
+        """G5.26: in the folders setup writes into (its copy's, its state, its settings, the units, the launchd files),
+        every file and link that names a path inside a folder an updater owns: Xcode, Apple's command line tools,
+        Homebrew's Cellar, a pyenv, mise or asdf version folder, a conda package folder. -> [(path, what was found)]"""
+        found = []
+        with open(SCRIPT, "rb") as fh:
+            tool = fh.read()
+        for top in (os.path.join(self.home, ".local", "share", "windstorm-tardigrade"),
+                    os.path.join(self.home, ".local", "state", "windstorm-tardigrade"),
+                    os.path.join(self.home, ".config", "windstorm-tardigrade"),
+                    os.path.join(self.home, ".config", "systemd"), os.path.join(self.home, "Library")):
+            for d, dirs, files in os.walk(top):
+                for n in sorted(dirs + files):
+                    f = os.path.join(d, n)
+                    if os.path.islink(f):
+                        data = os.fsencode(os.readlink(f))
+                    elif os.path.isfile(f):
+                        with open(f, "rb") as fh:
+                            data = fh.read()
+                    else:
+                        continue
+                    if data == tool:                # the tool's own copy: its code names the marks it reads by
+                        continue
+                    m = self.UPDATER_OWNED.search(data)
+                    if m:
+                        found.append((os.path.relpath(f, self.home), m.group(0).decode()))
+        return found
+
+    def python_at(self, *parts):
+        """a python3 at a made-up path under this test's folder: a link to the python that runs the suite"""
+        d = os.path.join(self.tmp, *parts)
+        os.makedirs(d, exist_ok=True)
+        link = os.path.join(d, "python3")
+        if not os.path.lexists(link):
+            os.symlink(os.path.realpath(sys.executable), link)
+        return link
+
+    def setup_with(self, py, **env):
+        r = subprocess.run([py, "-I", SCRIPT, "setup"], capture_output=True, text=True, env=dict(self.env, **env),
+                           timeout=240)
+        return r.returncode, r.stdout + r.stderr
+
+    def unit_pythons(self):
+        ud = os.path.join(self.home, ".config", "systemd", "user")
+        return [re.search(r"^ExecStart=(.+?) -I ", fread(os.path.join(ud, u)), re.M).group(1)
+                for u in ("windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service")]
+
+    def test_G5_26_the_units_name_the_python_as_it_was_run_and_the_census_reads_whether_it_is_still_there(self):
+        """T101. The units name the python as the person ran it, not resolved further. No path lasts for ever, and a
+        job whose program is gone cannot say so: the census reads from each unit the python it names, with three
+        answers (there, gone, could not be read), and names the one step, which is taken as printed."""
+        self.stand_in_services()
+        self.start_lane("alpha", "Alpha Lane")
+        link = self.python_at("tools", "bin")
+        self.assertNotEqual(link, os.path.realpath(link))
+        rc, out = self.setup_with(link)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("is set up", out)
+        self.assertEqual(self.unit_pythons(), [link, link], "as it was run, not resolved")
+        self.assertNotIn("The python written into", out)
+
+        def programs():
+            return [(os.path.basename(x["file"]), x["what"], x["program"], x["state"])
+                    for x in json.loads(self.tg("census", "--json")[1])["stored_programs"]]
+
+        def comes_back():
+            return re.search(r"^Comes back after a reboot: (.*?)   Last record: ", self.tg("census")[1], re.M).group(1)
+
+        there = [("windstorm-tardigrade-revive.service", "the boot service", link, "there"),
+                 ("windstorm-tardigrade-record.service", "the record service", link, "there")]
+        self.assertEqual((programs(), comes_back().split(",")[0]), (there, "yes"))
+        os.remove(link)                                     # the folder it was in went with an update
+        self.assertEqual(programs(), [x[:3] + ("gone",) for x in there])
+        self.assertEqual(comes_back(), "NO: the python the boot service and the record service run with is gone: "
+                         f"{link} (run setup)")
+        again = self.python_at("tools-new", "bin")
+        rc, out = self.setup_with(again)                    # the step, taken
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((self.unit_pythons(), comes_back().split(",")[0]), ([again] * 2, "yes"))
+        if os.geteuid() != 0:                               # root reads through a closed folder
+            closed = self.python_at("closed", "bin")
+            rc, out = self.setup_with(closed)
+            self.assertEqual((rc, self.unit_pythons()), (0, [closed, closed]), out)
+            os.chmod(os.path.dirname(closed), 0)
+            self.addCleanup(os.chmod, os.path.dirname(closed), 0o700)
+            self.assertEqual([x[3] for x in programs()], ["unread", "unread"])
+            self.assertEqual(comes_back(), "could not be read: the python the boot service and the record service run "
+                             f"with, {closed} (Permission denied). Next: run setup again: it writes the python it is "
+                             "run with")
+            rc, out = self.setup_with(again)                # the step, taken
+            self.assertEqual(rc, 0, out)
+            self.assertEqual((self.unit_pythons(), comes_back().split(",")[0]), ([again] * 2, "yes"))
+        self.assertEqual(self.updater_paths(), [])
+
+    def test_G5_26_a_python_in_a_version_folder_is_not_written_and_setup_stops_where_it_has_no_other(self):
+        """T101. Setup run by a python inside a pyenv, mise or asdf version folder or a conda package folder (an
+        update of that tool takes the folder away) writes the system's python3 instead, where that is Python 3.9 or
+        newer, and says so. Where there is none it stops before its first write, in a dry run too, and its step
+        (the `python` setting, the person's own word) is taken as printed."""
+        self.stand_in_services()
+        system = self.python_at("usr", "bin")
+        gone = os.path.join(self.tmp, "no-such", "python3")
+        cfgf = os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json")
+        shapes = ((("h", ".pyenv", "versions", "3.12.1", "bin"), "a pyenv version folder"),
+                  (("h", ".local", "share", "mise", "installs", "python", "3.12.1", "bin"), "a mise or asdf version folder"),
+                  (("h", "miniconda3", "pkgs", "python-3.12.1-h0", "bin"), "a conda package folder"))
+        py = self.python_at(*shapes[0][0])
+        for dry in (True, False):                           # no other python: the stop, and nothing made
+            r = subprocess.run([py, "-I", SCRIPT, "setup"] + (["--dry-run"] if dry else []), capture_output=True,
+                               text=True, env=dict(self.env, TARDIGRADE_FAKE_SYSTEM_PYTHON=gone), timeout=240)
+            self.assertEqual((r.returncode, r.stdout + r.stderr), (1, (
+                f"NOT set up: the python that runs this setup, {py}, is in a pyenv version folder, which goes when it "
+                "is updated or removed; the boot service would then stop without a word. Tardigrade found no other "
+                "Python 3.9 or newer to name (/usr/bin/python3 is not there or is older). Nothing was installed, and "
+                "no file or folder was made. Next step: put {\"python\": \"/whole/path/to/python3\"} into "
+                f"{cfgf} (make the file if it is not there), naming a Python 3.9 or newer that stays where it is, then "
+                "run setup again.\n")), dry)
+            for d in (os.path.join(".local", "share", "windstorm-tardigrade"), os.path.join(".config", "systemd")):
+                self.assertFalse(os.path.lexists(os.path.join(self.home, d)), f"nothing was made: {d}")
+        stays = self.python_at("opt", "python", "bin")
+        self.cfg({"python": stays})                         # the step, taken: the person's own word
+        rc, out = self.setup_with(py, TARDIGRADE_FAKE_SYSTEM_PYTHON=gone)
+        self.assertEqual((rc, self.unit_pythons()), (0, [stays, stays]), out)
+        self.cfg({"python": gone})                          # a word that names no python stops too, with its step
+        rc, out = self.setup_with(py, TARDIGRADE_FAKE_SYSTEM_PYTHON=system)
+        self.assertEqual((rc, self.unit_pythons()), (1, [stays, stays]), out)
+        self.assertIn(f"NOT set up: the `python` setting names {gone}, and that did not answer as a Python 3.9 or "
+                      f"newer. Nothing was installed, and no file or folder was made. Next step: correct `python` in "
+                      f"{cfgf} or take it out, then run setup again.", out)
+        self.cfg({"python": ""})                            # that step, taken
+        for parts, what in shapes:                          # with a system python: that one is written, and said
+            py = self.python_at(*parts)
+            rc, out = self.setup_with(py, TARDIGRADE_FAKE_SYSTEM_PYTHON=system)
+            self.assertEqual((rc, self.unit_pythons()), (0, [system, system]), out)
+            self.assertIn(f"The python written into the boot service and the record timer is {system}, not {py} that "
+                          f"runs this setup: that one is in {what}, which goes when it is updated or removed.", out)
+            self.assertEqual(self.updater_paths(), [], what)
+            self.assertIn("Comes back after a reboot: yes", self.tg("census")[1])
+        unit = os.path.join(self.home, ".config", "systemd", "user", "windstorm-tardigrade-revive.service")
+        text = fread(unit)                                  # the reader is not blind: a unit pointed there is found
+        with open(unit, "w") as f:
+            f.write(text.replace(system, py))
+        self.assertEqual(self.updater_paths(), [(os.path.relpath(unit, self.home), "/pkgs/python-3.12.1-h0/bin/")])
+
+    def test_G5_26_with_the_mac_stand_in_apples_python_is_written_as_usr_bin_python3_and_homebrews_by_its_opt_folder(self):
+        """T101 on a Mac, with launchd's stand-in. Python names the real program behind Apple's /usr/bin/python3,
+        inside Xcode or Apple's command line tools: a launchd file that names that path stops without a word when
+        Xcode is moved. What is written is /usr/bin/python3. A Homebrew python run by its Cellar path is written by
+        its opt folder."""
+        import contextlib
+        import io
+        from unittest import mock
+        tg = self.load_tool()
+        for p in (mock.patch.dict(os.environ, PATH=self.path),):    # the tool's children find this test's stand-ins
+            p.start()
+            self.addCleanup(p.stop)
+        tg.MAC, tg.ARGS, tg.DRY = True, [], False
+        tg.CFG["tmux"] = TMUX
+        self.script("launchctl", "#!/bin/sh\nexit 0\n")
+        moved = os.path.join(self.tmp, "Developer-moved")
+        self.script("xcode-select", f"#!/bin/sh\n[ \"$1\" = -p ] && echo {shlex.quote(moved)}\n")
+        brew = os.path.join(self.tmp, "brew")
+        cellar = self.python_at("brew", "Cellar", "python@3.12", "3.12.1", "bin")
+        os.makedirs(os.path.join(brew, "opt", "python@3.12", "bin"))
+        opt = os.path.join(brew, "opt", "python@3.12", "bin", "python3")
+        os.symlink(cellar, opt)
+        la = os.path.join(self.home, "Library", "LaunchAgents")
+        stays = self.python_at("opt", "python", "bin")      # a python outside every such folder: written as run
+        for ran, want in (("/Applications/Xcode.app/Contents/Developer/usr/bin/python3", "/usr/bin/python3"),
+                          ("/Applications/Xcode-16.app/Contents/Developer/usr/bin/python3", "/usr/bin/python3"),
+                          ("/Library/Developer/CommandLineTools/usr/bin/python3", "/usr/bin/python3"),
+                          (os.path.join(moved, "usr", "bin", "python3"), "/usr/bin/python3"),
+                          (cellar, opt), (stays, stays)):
+            out = io.StringIO()
+            with mock.patch.object(sys, "executable", ran), contextlib.redirect_stdout(out):
+                rc = tg.setup()
+            self.assertEqual(rc, 0, out.getvalue())
+            got = [re.search(r"<string>(?:sleep \d+; )?exec (.+?) -I ", fread(os.path.join(
+                la, f"ai.thewindstorm.tardigrade-{x}.plist"))).group(1) for x in ("revive", "record")]
+            self.assertEqual(got, [want, want], ran)
+            self.assertEqual(("The python written into the boot service and the record timer is "
+                              f"{want}, not {ran} that runs this setup: " in out.getvalue()), ran != want, out.getvalue())
+            self.assertEqual(self.updater_paths(), [], ran)
+            self.assertEqual([(x["program"], x["state"]) for x in tg.stored_programs()],
+                             [(want, "there" if os.path.exists(want) else "gone")] * 2, ran)
 
     def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))
