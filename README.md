@@ -43,7 +43,9 @@ python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute
 timer for your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs
 no administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
-copy: run it again after you update the plugin.
+copy: run it again after you update the plugin. Nothing setup makes is writable by another account, whatever umask it
+was started with. If you ran setup with a wide-open umask (umask 000, as some job runners start every job), run setup
+again with 0.1.10 or later: it closes the copy, the units and the install folder an earlier run left writable by others.
 
 Taking the plugin off with Claude Code's own `claude plugin uninstall` does not take off what setup installed. The
 boot service still brings your sessions back after a restart, and the 5-minute record timer still runs, both from
