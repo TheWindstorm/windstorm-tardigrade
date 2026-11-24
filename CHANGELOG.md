@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.1.10 (2026-11-24)
+
+- **Set up under a wide-open umask? Run setup again.** Up to 0.1.9, setup started with umask 000 (as some job runners
+  start every job) made the installed copy and the three units at mode 666 and the folders it created at 777
+  (`~/.local/share/windstorm-tardigrade`, `~/.config/systemd/user` and the folders above them it had to make). The boot
+  service runs that copy as you, so another account that could reach those folders could have changed what runs at
+  your next boot (seen in a scratch home on 0.1.9; no separate notice for 0.1.9, since it takes that umask AND a home
+  another account can enter). From 0.1.10 the tool adds 022 to whatever umask it is given, and setup takes group and
+  other write off its own copy, units and install folder when an earlier run left them open (T80).
+- **The folders above are named, not changed.** A file is only as closed as the folders above it. Setup, the boot run
+  and census walk every folder from your home down to each thing of Tardigrade's that runs. A folder it cannot know it
+  made, whose mode bits and group members let another account reach it and write it, is named in a numbered line with
+  the one command that closes it (`chmod go-w <folder>`); census repeats it until it is closed. A folder of your own
+  private group with nobody else in it is not named. A folder another account owns is named with its owner and no
+  command. What is read is the mode bits and the groups' members; access lists are not read. Seen on a stock Linux
+  machine; not yet on a Mac (T80).
+- **Only what Tardigrade wrote.** Setup, revive and uninstall overwrite or remove only files Tardigrade wrote, known by
+  their own marks (seen on 0.1.9 in a scratch home: setup wrote over a person's own `tardigrade.py`, uninstall removed
+  it and a person's `__pycache__` folder whole, a revive removed a person's folder named `lock` and a person's file in
+  the start-file folder). Setup now stops, names the file and writes nothing; a folder named `lock` holding something
+  else stops a revive, which says so; nothing deletes a folder whole any more (T79).
+- **Uninstall goes to its end.** A file of yours in one of Tardigrade's folders no longer makes it a failure: everything
+  of Tardigrade's goes, what stayed is named as yours with why each folder stayed, the exit code is success, and the
+  last line says Tardigrade is off this computer. 0.1.9's README said, for the settings, record and log, "to remove them
+  as well, delete `~/.config/windstorm-tardigrade` and `~/.local/state/windstorm-tardigrade` afterwards". That would
+  take a file of yours in them too, so from 0.1.10 what stayed is yours, to keep or delete after you look inside, and
+  no folder is offered for deleting whole (T79).
+- **`TARDIGRADE_TESTING` alone changes nothing.** The test behaviour (shorter waits, stand-in facts) now takes the
+  setting AND a marker file the test suite writes in the scratch home it made. With the setting alone, a run says on
+  its first line that it found the setting and ignored it. The repository's `environment.json` lists every environment
+  setting the tool reads, as a person's, a fact from the host, or a test setting; a test holds the list to the code (T78).
+- The README's clone line names the release tag, and a test reads every clone line (T76). Nothing Tardigrade shows or
+  runs removes the plugin catalog, which would uninstall every plugin from it (T77). The test suite runs under the
+  skill family's clock shift at 0, 1, 7 and 30 days ahead before each tag; the tool has no clock offset of its own (T75).
+- Moved to 0.1.11, to cut 0.1.10 small for T80: T12, T14, T19, T27, T30, T32, T47, T51, T54, T56, T57, T58, T59, T60,
+  T61, T62, T63, T64, T69, T70, T71, T72, T73 and T74. The known edges of 0.1.9 for T47, T54, T56, T57 and T70 hold
+  until 0.1.11.
+
 ## 0.1.9 (2026-11-23)
 
 - **If you installed through the plugin system** (`claude plugin install`) at 0.1.8 or 0.1.8.1, you may still be
