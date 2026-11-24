@@ -1111,7 +1111,7 @@
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.10",
    "test": "test_G5_16_no_shown_text_removes_the_plugin_catalog",
-   "proven": "",
+   "proven": "2026-11-24, on the tag's commit 3fdb74e (v0.1.10), by the runner: CI run 45353704838 (run 215, the push to main) and run 45353719644 (run 216, the push of the tag v0.1.10), every job success; the log of one test job of each (test (3.10) of run 215, test (3.13) of run 216) names test_G5_16_no_shown_text_removes_the_plugin_catalog \"ok\", Ran 130, OK. The texts at the tag, read once by hand: no `claude plugin marketplace remove` in the README, SKILL.md, the CHANGELOG or the script (the script names no marketplace at all); the CHANGELOG says nothing Tardigrade shows or runs removes the plugin catalog; the README's way back from the plugin is Claude Code's own `claude plugin uninstall`, then the tool's own uninstall for what setup installed.",
    "issue": 85,
    "moved_why": "",
    "moved_by_person": ""
