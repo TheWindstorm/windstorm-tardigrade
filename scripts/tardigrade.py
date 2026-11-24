@@ -2306,6 +2306,9 @@ def _revive(boot):
         log(f"boot run began {int(uptime_s())} s after boot: "
             + (f"this user's services came up {int(up_s)} s after boot, then " if up_s is not None else "")
             + f"this service's own wait of {int(float(CFG['boot_wait_s']))} s (boot_wait_s)")
+        plug = plugin_facts()               # G3.19 (T60), G5.10 (T51): said in the log at each boot; the starts go ahead
+        if plug["line"]:
+            log(plug["line"])
     ids = [r["session_id"] for r in rows]
     twice = sorted({i for i in ids if ids.count(i) > 1})
     for i in twice:
@@ -3067,6 +3070,8 @@ def census():
     d["open_folders"] = folders[1:]
     places = setup_places()
     d["setup_places"] = {"links": places[0], "folders_made": places[1]}
+    plug = plugin_facts()
+    d["plugin"] = {k: plug[k] for k in ("answer", "installed", "plugin")}
     if d.get("cannot_tell"):
         if "--json" in ARGS:
             print(json.dumps(d, indent=1, sort_keys=True))
@@ -3103,6 +3108,8 @@ def census():
               + ". Uninstall takes the links away, and each folder when it is empty.")
     for line in after_uninstall_lines():    # G3.32 (T92)
         print(line)
+    if plug["line"]:                        # G3.19 (T60), G5.10 (T51)
+        print(plug["line"])
     if os.environ.get("TMUX_TMPDIR") and not CFG.get("tmux_tmpdir"):     # G5.15: a person's setting that chose
         print(f"tmux sockets are looked for in {tmux_dir()} (from TMUX_TMPDIR; the boot service does not have it: "
               "set tmux_tmpdir in config.json to the same folder).")
@@ -3208,6 +3215,9 @@ def report_cmd():
 
     began, ups = rep["began"], rep.get("uptime_at_start") or 0
     booted = began - ups
+    plug = plugin_facts()["line"]           # G3.19 (T60), G5.10 (T51): read now, said first
+    if plug:
+        print(plug)
     print(f"Windstorm Tardigrade: the last restore ({'after a boot' if rep.get('boot_run') else 'by hand'}), "
           f"times are this machine's ({time.strftime('%Z')})")
     if rep.get("boot_run"):
@@ -3421,9 +3431,21 @@ def setup():
         step = unread_step()
         print(refused + " " + NOTHING_MADE + " " + step[0].upper() + step[1:] + ".")
         return 1
+    # G5.10 (T51): a script older than the installed copy stops here, having changed nothing
+    had = os.path.lexists(script)
+    was = version_of(script) if had else ""
+    if was and vkey(was) > vkey(VERSION) and "--downgrade" not in ARGS:
+        print(f"NOT set up: the installed copy is version {was}, and this script is the older version {VERSION}. Setup "
+              f"from it would move this computer back, so it stopped. {NOTHING_MADE} To go on with {was}, run setup from "
+              f"version {was} or newer. To move back to {VERSION} on purpose: setup --downgrade. That word is the "
+              "person's choice: an agent does not give it for them unasked.")
+        return 1
+    before = (f"version {was}" + (" (the same)" if was == VERSION else "")) if was else (
+        "a copy whose version could not be read" if had else "none")
     new, older = not_there_yet(), read_made()       # G3.26 (T73): read before the first write
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")
+        print(f"this script is version {VERSION}; installed now: {before}")
         if not MAC:
             print("would have `systemctl --user enable` make its two links: "
                   + " and ".join(link for link, _ in wants_links()))
@@ -3441,7 +3463,8 @@ def setup():
         os.makedirs(os.path.join(HOME, "Library", "LaunchAgents"), exist_ok=True)
     else:
         os.makedirs(os.path.join(HOME, ".config", "systemd", "user"), exist_ok=True)
-    write_made(new, older)      # kept from the first folder on, so a setup that stops later has left its list
+    source = setup_from() if os.path.abspath(__file__) == script else os.path.abspath(__file__)
+    write_made(new, older, source)      # kept from the first folder on: a setup that stops later has left its list
     if MAC:
         la = os.path.join(HOME, "Library", "LaunchAgents")
         os.makedirs(la, exist_ok=True)
@@ -3482,7 +3505,7 @@ def setup():
         run(["systemctl", "--user", "daemon-reload"], env=env)
         run(["systemctl", "--user", "enable", "windstorm-tardigrade-revive.service"], env=env)
         run(["systemctl", "--user", "enable", "--now", "windstorm-tardigrade-record.timer"], env=env)
-        write_made(new, older)  # again: the two .wants folders are there only now, when systemd made them
+        write_made(new, older, source)  # again: the two .wants folders are there only now, when systemd made them
     # an earlier setup under a wide-open umask left these writable by others: close what is ours (G3.29)
     for p, kind in [(INSTALL_DIR, "")] + our_places(script):
         try:
@@ -3512,6 +3535,7 @@ def setup():
         print("Setup could not read whether it is set up: " + "; ".join(unread) + ". So it does not say it is. "
               + step[0].upper() + step[1:] + ".")
         return 3
+    print(f"Installed copy: version {VERSION} now; before this setup: {before}.")
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")
     for line in who_logs_in():
         print(line)
@@ -3698,12 +3722,100 @@ def read_made():
     return out
 
 
-def write_made(new, older):
-    """keep the list: what an earlier setup made and what this one made, each only while it is a real folder"""
+def write_made(new, older, source):
+    """keep setup's own notes: the folders an earlier setup made and this one made, each only while it is a real
+    folder, and the script setup ran from (G3.19: only a copy set up from the plugin's folder can say the plugin
+    is gone)"""
     made = sorted({os.path.relpath(p, HOME) for p in (older or []) + new
                    if os.path.isdir(p) and not os.path.islink(p)})
-    text = json.dumps({"written_by": "Windstorm Tardigrade setup", "made": made}, indent=1)
+    text = json.dumps({"written_by": "Windstorm Tardigrade setup", "made": made, "from": source}, indent=1)
     write_private(made_list(), text + "\n")
+
+
+def setup_from():
+    """the script setup ran from, as setup wrote it down, or "" when that cannot be read"""
+    if not is_ours(made_list(), "made"):
+        return ""
+    d = read_json(made_list(), None)
+    src = d.get("from") if isinstance(d, dict) else ""
+    return src if isinstance(src, str) else ""
+
+
+def version_of(path):
+    """the version a Tardigrade script says it is, or "" when that cannot be read"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            m = re.search(r'^VERSION = "([0-9]+(?:\.[0-9]+)*)"', f.read(40000), re.M)
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
+def vkey(v):
+    return tuple(int(x) for x in v.split("."))
+
+
+PLUGIN = "windstorm-tardigrade"
+UNINSTALL_LINE = "python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall"
+
+
+def plugin_registry(base):
+    """Claude Code's own list of installed plugins under its folder base. Three answers (family rule 24):
+    ("row", version) when it has a row for this plugin, ("no-row", "") when it reads fine and has none (an emptied
+    row counts as none), ("unread", why) when the file is not there, cannot be read or is not the shape known."""
+    p = os.path.join(base, "plugins", "installed_plugins.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+    except OSError as e:
+        return "unread", f"{p}: {e.strerror or e.__class__.__name__}"
+    except ValueError:
+        return "unread", f"{p} is not JSON"
+    plugins = d.get("plugins") if isinstance(d, dict) else None
+    if not isinstance(plugins, dict):
+        return "unread", f"{p} does not look as expected"
+    for key, rows in plugins.items():
+        if isinstance(key, str) and key.split("@")[0] == PLUGIN and isinstance(rows, list) and rows:
+            v = rows[0].get("version") if isinstance(rows[0], dict) else None
+            return "row", (v if isinstance(v, str) else "")
+    return "no-row", ""
+
+
+def plugin_facts():
+    """G3.19 (T60) and G5.10 (T51): what Claude Code's registry says of the plugin, beside the installed copy.
+    {"answer": ..., "line": the one line for the person or "", and both versions}. Answers:
+    "no copy"; "removed" (the copy was set up from the plugin's folder, the registry reads fine and has no row);
+    "same"; "differs"; "unread" (the registry or a version could not be read); "none" (no plugin to speak of)."""
+    script = os.path.join(INSTALL_DIR, "tardigrade.py")
+    out = {"answer": "none", "line": "", "installed": "", "plugin": ""}
+    if not is_ours(script, "copy"):
+        return dict(out, answer="no copy")
+    out["installed"] = version_of(script)
+    m = re.fullmatch(r"(.+)/plugins/cache/.+", setup_from())
+    base = m.group(1) if m else os.path.join(HOME, ".claude")
+    ans, x = plugin_registry(base)
+    if ans == "unread":
+        if not m and not os.path.lexists(os.path.join(base, "plugins", "installed_plugins.json")):
+            return out          # set up from a clone, and Claude Code keeps no list here: no plugin to speak of
+        why = f"Claude Code's list of plugins could not be read ({x})"
+        return dict(out, answer="unread", line=why + ", so whether its Tardigrade plugin is there, and at which "
+                    "version, is not known. Nothing changes: sessions are brought back as before.")
+    if ans == "no-row":
+        if not m:
+            return out          # a copy set up from a clone never had a row: a missing row says nothing
+        return dict(out, answer="removed", line="Claude Code removed the Tardigrade plugin. What setup installed is "
+                    "still here: sessions are still brought back after a restart. To take it off: " + UNINSTALL_LINE)
+    out["plugin"] = x
+    if not x or not out["installed"]:
+        return dict(out, answer="unread", line="The version of the Claude Code plugin or of the installed copy could "
+                    "not be read, so whether they match is not known.")
+    if x == out["installed"]:
+        return dict(out, answer="same")
+    newer = vkey(x) > vkey(out["installed"])
+    return dict(out, answer="differs", line=f"The Claude Code plugin is version {x}; the copy that runs at boot is "
+                f"version {out['installed']}. " + ("Run setup again from the plugin to bring the copy up to it." if newer
+                                                 else "Setup run from that plugin stops, so that it does not move this "
+                                                 "computer back: update the plugin in Claude Code."))
 
 
 def group_accounts(gid):

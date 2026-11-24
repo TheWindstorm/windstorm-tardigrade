@@ -46,6 +46,11 @@ If neither file exists, this skill was installed without its plugin. Get the scr
 
 After the plugin is updated, run `setup` again so the installed copy matches.
 
+If setup says the installed copy is a newer version than this script, it has stopped and changed nothing. Show its
+words. **Never add `--downgrade` yourself**: moving a machine back is the person's choice, in their own words. Census
+says when the plugin's version differs from the installed copy's, and when Claude Code removed the plugin while what
+setup installed still runs: show that line too.
+
 ## Census
 
 Run `census` and show the table as it is. Then say, in one or two lines, what stands out: sessions that are hidden

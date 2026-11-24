@@ -3576,6 +3576,186 @@ sys.exit(rc)
                       self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-b", TARDIGRADE_FAKE_LINGER="yes")[1])
         comes_back("boot-c")
 
+    def registry(self, rows, base=None):
+        """write Claude Code's list of installed plugins as it keeps it; rows None writes a file that is not JSON"""
+        d = os.path.join(base or os.path.join(self.home, ".claude"), "plugins")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "installed_plugins.json"), "w") as f:
+            f.write("{ not json" if rows is None else json.dumps({"version": 2, "plugins": rows}))
+
+    def test_G5_10_setup_from_an_older_script_stops_and_census_names_a_plugin_of_another_version(self):
+        """T51: setup from a script older than the installed copy stops with both versions named and nothing
+        changed, and goes on only with --downgrade; from the same or a newer script it says what was installed and
+        what is now; census and the report name a plugin whose version differs, or could not be read"""
+        import re
+        self.stand_in_services()
+        ver = re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1)
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"Installed copy: version {ver} now; before this setup: none.", out)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"Installed copy: version {ver} now; before this setup: version {ver} (the same).", out)
+
+        def installed_says(v):
+            text = fread(SCRIPT).replace(f'VERSION = "{ver}"', f'VERSION = "{v}"', 1)
+            with open(copy, "w") as f:
+                f.write(text)
+
+        installed_says("99.0.1")                    # the machine holds a newer copy than this script
+        before = self.whole_home()
+        for a in (["setup"], ["setup", "--dry-run"]):
+            rc, out = self.tg(*a)
+            self.assertEqual(rc, 1, out)
+            self.assertIn(f"NOT set up: the installed copy is version 99.0.1, and this script is the older version {ver}.", out)
+            self.assertIn("Nothing was installed, and no file or folder was made.", out)
+            self.assertIn("setup --downgrade. That word is the person's choice: an agent does not give it for them "
+                          "unasked.", out)
+            self.assertEqual({k: v for k, v in self.whole_home().items() if k != "systemctl.log"},
+                             {k: v for k, v in before.items() if k != "systemctl.log"}, out)
+        rc, out = self.tg("setup", "--downgrade")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"Installed copy: version {ver} now; before this setup: version 99.0.1.", out)
+        self.assertEqual(fread(copy), fread(SCRIPT))
+        installed_says("0.0.1")                     # an older copy: a newer script goes on and says both
+        rc, out = self.tg("setup", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"this script is version {ver}; installed now: version 0.0.1", out)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"Installed copy: version {ver} now; before this setup: version 0.0.1.", out)
+        # the plugin Claude Code holds, beside the copy that runs at boot: the same, differs, could not be read
+        key = "windstorm-tardigrade@some-marketplace"
+
+        def census():
+            rc, out = self.tg("census")
+            return out, json.loads(self.tg("census", "--json")[1])["plugin"]
+
+        out, j = census()                           # Claude Code keeps no list here: no plugin to speak of
+        self.assertEqual(j["answer"], "none")
+        self.assertNotIn("plugin", out)
+        self.registry({key: [{"scope": "user", "version": ver}]})
+        out, j = census()
+        self.assertEqual((j["answer"], j["installed"], j["plugin"]), ("same", ver, ver))
+        self.assertNotIn("plugin", out)
+        self.registry({key: [{"scope": "user", "version": "0.0.9"}]})
+        out, j = census()
+        self.assertEqual((j["answer"], j["installed"], j["plugin"]), ("differs", ver, "0.0.9"))
+        line = (f"The Claude Code plugin is version 0.0.9; the copy that runs at boot is version {ver}. Setup run from "
+                "that plugin stops, so that it does not move this computer back: update the plugin in Claude Code.")
+        self.assertIn(line, out)
+        self.registry({key: [{"scope": "user", "version": "99.0.1"}]})
+        out, j = census()
+        self.assertEqual(j["answer"], "differs")
+        self.assertIn(f"The Claude Code plugin is version 99.0.1; the copy that runs at boot is version {ver}. Run setup "
+                      "again from the plugin to bring the copy up to it.", out)
+        self.registry(None)
+        out, j = census()
+        self.assertEqual(j["answer"], "unread")
+        self.assertIn("Claude Code's list of plugins could not be read (", out)
+        self.assertIn("is not known. Nothing changes", out)
+        self.registry({key: [{"scope": "user"}]})   # a row that names no version
+        out, j = census()
+        self.assertEqual(j["answer"], "unread")
+        self.assertIn("could not be read, so whether they match is not known.", out)
+
+    def test_G3_19_a_copy_set_up_from_the_plugin_says_when_claude_code_removed_the_plugin_and_goes_on(self):
+        """T60: the boot service and the timer go on until this tool's own uninstall. A copy set up from the
+        plugin's folder says in one line, in the census, the report and the log at each boot, that Claude Code
+        removed the plugin, that sessions still come back, and the command that takes it off; and the start goes
+        ahead. No line with the row there, for a copy set up from a clone, or when the origin or the registry cannot
+        be read"""
+        import re
+        self.stand_in_services()
+        ver = re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1)
+        base = os.path.join(self.home, ".claude")
+        plug = os.path.join(base, "plugins", "cache", "some-marketplace", "windstorm-tardigrade", ver, "scripts")
+        os.makedirs(plug)
+        shutil.copyfile(SCRIPT, os.path.join(plug, "tardigrade.py"))
+        key = "windstorm-tardigrade@some-marketplace"
+        notes = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "folders-made.json")
+        said = ("Claude Code removed the Tardigrade plugin. What setup installed is still here: sessions are still "
+                "brought back after a restart. To take it off: "
+                "python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall")
+
+        def from_plugin(*a, **over):
+            r = subprocess.run([sys.executable, "-I", os.path.join(plug, "tardigrade.py"), *a], capture_output=True,
+                               text=True, env=dict(self.env, **{k: str(v) for k, v in over.items()}), timeout=240)
+            return r.returncode, r.stdout + r.stderr
+
+        sid = self.start_lane("alpha", "Alpha Lane")
+        self.registry({key: [{"scope": "user", "version": ver}]})
+        rc, out = from_plugin("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(jload(notes)["from"], os.path.join(plug, "tardigrade.py"))
+        rc, out = self.tg("census")                                 # the row is there: no line
+        self.assertNotIn("removed the Tardigrade plugin", out)
+        self.assertEqual(json.loads(self.tg("census", "--json")[1])["plugin"]["answer"], "same")
+        # Claude Code's own uninstall: the row emptied, or gone; the folder may stay
+        for rows in ({key: []}, {}):
+            self.registry(rows)
+            rc, out = self.tg("census")
+            self.assertIn(said, out)
+            self.assertEqual(json.loads(self.tg("census", "--json")[1])["plugin"]["answer"], "removed")
+            self.assertIn("Comes back after a reboot: yes", out)    # and it still does
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertEqual(rc, 0, out)
+        a = self.wait_launches(n + 1)[-1]["argv"]                   # the start goes ahead
+        self.assertEqual(a[a.index("--resume") + 1], sid)
+        self.assertIn(said, fread(self.state("tardigrade.log")))
+        rc, out = self.tg("report", TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertIn(said, out)
+        # the registry cannot be read, or is not there: never "removed", nothing changes, and it is said
+        log_before = fread(self.state("tardigrade.log"))
+        for make in (lambda: self.registry(None),
+                     lambda: os.remove(os.path.join(base, "plugins", "installed_plugins.json"))):
+            make()
+            rc, out = self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-b")
+            self.assertNotIn("removed the Tardigrade plugin", out)
+            self.assertIn("Claude Code's list of plugins could not be read (", out)
+            self.assertIn("Comes back after a reboot: yes", out)
+            self.assertEqual(json.loads(self.tg("census", "--json", TARDIGRADE_FAKE_BOOT_ID="boot-b")[1])["plugin"]["answer"],
+                             "unread")
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-c")
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 1)
+        new_log = fread(self.state("tardigrade.log"))[len(log_before):]
+        self.assertIn("Claude Code's list of plugins could not be read (", new_log)
+        self.assertNotIn("removed the Tardigrade plugin", new_log)
+        # where setup ran from cannot be read: with no row, no line
+        self.registry({})
+        text = fread(notes)
+        with open(notes, "w") as f:
+            f.write('{"written_by": "Windstorm Tardigrade setup", "made": [], "from": 7}\n')
+        rc, out = self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-c")
+        self.assertNotIn("removed the Tardigrade plugin", out)
+        os.remove(notes)
+        self.assertNotIn("removed the Tardigrade plugin", self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-c")[1])
+        with open(notes, "w") as f:
+            f.write(text)
+        self.assertIn(said, self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-c")[1])
+        # a copy set up from a clone never had a row: a list with no row says nothing
+        rc, out = self.tg("setup", TARDIGRADE_FAKE_BOOT_ID="boot-c")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(jload(notes)["from"], SCRIPT)
+        rc, out = self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-c")
+        self.assertNotIn("removed the Tardigrade plugin", out)
+        self.assertEqual(json.loads(self.tg("census", "--json", TARDIGRADE_FAKE_BOOT_ID="boot-c")[1])["plugin"]["answer"],
+                         "none")
+        # and setup run from the installed copy itself keeps what an earlier setup wrote down
+        rc, out = from_plugin("setup", TARDIGRADE_FAKE_BOOT_ID="boot-c")
+        self.assertEqual(rc, 0, out)
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        r = subprocess.run([sys.executable, "-I", copy, "setup"], capture_output=True, text=True,
+                           env=dict(self.env, TARDIGRADE_FAKE_BOOT_ID="boot-c"), timeout=240)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(jload(notes)["from"], os.path.join(plug, "tardigrade.py"))
+
     def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))
         for n in ("alpha", "beta", "gamma"):

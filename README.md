@@ -55,6 +55,15 @@ Taking the plugin off with Claude Code's own `claude plugin uninstall` does not 
 boot service still brings your sessions back after a restart, and the 5-minute record timer still runs, both from
 the copy in `~/.local/share/windstorm-tardigrade/`. To take them off, run
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall`. Your settings, record and log stay.
+When the copy was set up from the plugin's folder and Claude Code's own list of plugins no longer has the plugin,
+census, `report` and the log at each boot say so in one line, with that command; sessions are brought back as before.
+If Claude Code's list cannot be read, that is said instead, and nothing changes.
+
+Setup never moves a computer back by itself. Run from a script older than the installed copy (an old clone, a plugin
+that was not updated), it stops, names both versions and has changed nothing; `setup --downgrade` is the word that
+moves it back, and it is yours to give: an agent does not give it for you unasked. From the same or a newer script,
+setup says which version was installed before and which is now. Census says when the Claude Code plugin's version
+differs from the copy that runs at boot, with both versions, or that it could not be read.
 
 What setup puts where: the copy, and its own list `folders-made.json`, in `~/.local/share/windstorm-tardigrade/`. On
 Linux three unit files in `~/.config/systemd/user/`, and `systemctl --user enable` makes two links for them in that
