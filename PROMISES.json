@@ -1309,7 +1309,7 @@
    "test": "",
    "proven": "",
    "issue": 100,
-   "moved_why": "a false yes on the one question the tool exists to answer, carried by every release a person has (0.1.7, 0.1.9 and 0.1.10 hold the same lines); 0.1.11 has 43 rows without a test and cannot be tagged within a week, so this row goes out alone as 0.1.10.1: comes_back() and its test, no other code, a stock VM first. Decided by the maintainer with the skill family's coordinator, 2026-11-24.",
+   "moved_why": "a false yes on the one question the tool exists to answer, carried by every release a person has (0.1.7, 0.1.9 and 0.1.10 hold the same lines); 0.1.11 has 43 rows without a test and cannot be tagged within a week, so this row goes out alone as 0.1.10.1: comes_back() and setup's own line on the same read, their tests, no other code, a stock VM first. Ruled by the skill family's coordinator, 2026-11-24.",
    "moved_by_person": ""
   }
  ],
