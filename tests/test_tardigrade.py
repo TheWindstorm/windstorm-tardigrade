@@ -2622,8 +2622,54 @@ class Setup(Base):
         self.assertIn("boot service: no answer   record timer: no answer", out)
 
     def stand_in_services(self):
-        self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
-                    'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
+        """a stand-in `systemctl --user` that keeps state as systemd does: enable makes the link under <target>.wants
+        (and that folder), disable removes it (and the folder when empty), --now starts or stops, and is-enabled and
+        is-active answer from that state: "not-found" for a unit whose file is not there"""
+        self.script("systemctl", f"#!{sys.executable}\n" + r'''
+import json, os, sys
+home, a = os.environ["HOME"], [x for x in sys.argv[1:] if x != "--user"]
+with open(os.path.join(home, "systemctl.log"), "a") as f:
+    f.write(" ".join(a) + "\n")
+S = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "systemd-active.json")
+try:
+    active = json.load(open(S))
+except (OSError, ValueError):
+    active = []
+ud = os.path.join(home, ".config", "systemd", "user")
+verb, now, units, rc = (a or [""])[0], "--now" in a, [x for x in a[1:] if not x.startswith("-")], 0
+for u in units:
+    link = os.path.join(ud, "timers.target.wants" if u.endswith(".timer") else "default.target.wants", u)
+    there = os.path.isfile(os.path.join(ud, u))
+    if verb == "enable":
+        if not there:
+            print(f"Failed to enable unit: Unit file {u} does not exist.", file=sys.stderr)
+            rc = 1
+            continue
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        if not os.path.lexists(link):
+            os.symlink(os.path.join(ud, u), link)
+        if now and u not in active:
+            active.append(u)
+    elif verb in ("disable", "stop"):
+        if verb == "disable" and os.path.islink(link):
+            os.remove(link)
+            try:
+                os.rmdir(os.path.dirname(link))
+            except OSError:
+                pass
+        if (now or verb == "stop") and u in active:
+            active.remove(u)
+    elif verb == "is-enabled":
+        word = "enabled" if there and os.path.islink(link) else "disabled" if there else "not-found"
+        print(word)
+        rc = 0 if word == "enabled" else 4 if word == "not-found" else 1
+    elif verb == "is-active":
+        print("active" if u in active else "inactive")
+        rc = 0 if u in active else 3
+with open(S, "w") as f:
+    json.dump(active, f)
+sys.exit(rc)
+'''.lstrip())
         self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
 
     def whole_home(self):
@@ -2665,7 +2711,7 @@ class Setup(Base):
         self.assertIn("NOT set up", out)
         self.assertIn(os.path.join(self.home, share, "tardigrade.py"), out)
         self.assertEqual(self.whole_home(), before, out)              # setup stopped before any write
-        self.assertIn("Nothing was installed and no file was written", out)
+        self.assertIn("Nothing was installed, and no file or folder was made.", out)
         os.rename(os.path.join(self.home, share, "tardigrade.py"), os.path.join(self.home, "my-script.py"))
         rc, out = self.tg("setup")
         self.assertEqual(rc, 0, out)
@@ -3064,7 +3110,7 @@ class Setup(Base):
             self.assertIn("NOT set up: this account is not logged in at this Mac's screen", out)
             self.assertIn(f'`launchctl print gui/{uid}` answered exit 125 ("Could not print domain: 125: Domain does '
                           'not support specified action").', out)
-            self.assertIn("Nothing was installed and no file was written", out)
+            self.assertIn("Nothing was installed, and no file or folder was made.", out)
             self.assertTrue(out.rstrip().endswith("Log in at this Mac's screen as this user, then run setup again."), out)
             self.assertNotIn("would copy", out)
             self.assertEqual(self.whole_home(), before)
@@ -3115,7 +3161,7 @@ class Setup(Base):
             self.assertEqual(rc, 1, out)
             self.assertIn("NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl "
                           '--user` answered "Failed to connect to bus: No medium found" (exit 1).', out)
-            self.assertIn("Nothing was installed and no file was written", out)
+            self.assertIn("Nothing was installed, and no file or folder was made.", out)
             self.assertTrue(out.rstrip().endswith("Log out and in (this login has no systemd user manager to ask), "
                                                   "then run setup again."), out)
             self.assertNotIn("would copy", out)
@@ -3154,6 +3200,381 @@ class Setup(Base):
         self.assertEqual(rc, 0, out)
         self.assertEqual(json.loads(fread(p)), hand)
         self.assertNotEqual(fread(p), laid)
+
+    def test_G3_30_a_command_that_only_reads_makes_no_folder_and_no_file(self):
+        """T81: a census, a report, a dry run and a refused setup leave a home exactly as they found it: the whole
+        home is listed before and after each (every file, folder and link, with what each holds)"""
+        shutil.rmtree(os.path.join(self.home, ".config"))      # the suite's own settings file: this home has none
+
+        def listing():      # the whole home, less the one file the suite's stand-in systemctl writes about itself
+            return {k: v for k, v in self.whole_home().items() if k != "systemctl.log"}
+        before = listing()
+        self.assertNotIn(".config", before)
+        self.assertNotIn(".local", before)
+        for a in (["census"], ["status"], ["census", "--json"], ["report"], ["trust"], ["setup", "--dry-run"],
+                  ["revive", "--dry-run"], ["record", "--dry-run"], ["uninstall", "--dry-run"]):
+            rc, out = self.tg(*a)
+            self.assertEqual(listing(), before, f"`{' '.join(a)}` (exit {rc}) changed the home:\n{out}")
+        # setup refused because no user manager answers (G5.22): the stop line no longer has folders to excuse
+        self.script("systemctl", '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n')
+        for a in (["setup"], ["setup", "--dry-run"]):
+            rc, out = self.tg(*a)
+            self.assertEqual(rc, 1, out)
+            self.assertIn("Nothing was installed, and no file or folder was made.", out)
+            self.assertNotIn("state folders", out)
+            self.assertEqual(listing(), before, f"a refused `{' '.join(a)}` changed the home:\n{out}")
+        # setup refused because a person's file is where the copy goes (G3.28): only their file is there after
+        self.boot_answers("enabled", "active", copy=False)
+        share = os.path.join(self.home, ".local", "share", "windstorm-tardigrade")
+        os.makedirs(share)
+        with open(os.path.join(share, "tardigrade.py"), "w") as f:
+            f.write("# a person's own file of that name\n")
+        theirs = listing()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Nothing was installed, and no file or folder was made.", out)
+        self.assertEqual(listing(), theirs, out)
+        # and the first command that does write makes the two folders, closed to others
+        os.remove(os.path.join(share, "tardigrade.py"))
+        rc, out = self.tg("record")
+        self.assertEqual(rc, 0, out)
+        for d in (os.path.join(self.home, ".config", "windstorm-tardigrade"),
+                  os.path.join(self.home, ".local", "state", "windstorm-tardigrade")):
+            self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
+
+    def empty_home(self):
+        """this test's home with no settings file of the suite's, and its listing less the one file the suite's
+        stand-in systemctl writes about itself"""
+        shutil.rmtree(os.path.join(self.home, ".config"))
+        self.stand_in_services()
+        return lambda: {k: v for k, v in self.whole_home().items() if k != "systemctl.log"}
+
+    def test_G3_26_setup_keeps_the_list_of_folders_it_made_and_uninstall_takes_the_empty_ones_away(self):
+        """T73: the folders setup (and `systemctl --user enable` for it) made are on a list in setup's own folder; the
+        dry run and the census name them and systemd's two links; uninstall takes each away when it is empty, and
+        none at all when the list cannot be read"""
+        listing = self.empty_home()
+        before = listing()
+        ud = os.path.join(self.home, ".config", "systemd", "user")
+        links = [os.path.join(ud, "default.target.wants", "windstorm-tardigrade-revive.service"),
+                 os.path.join(ud, "timers.target.wants", "windstorm-tardigrade-record.timer")]
+        made = [".config", ".config/systemd", ".config/systemd/user", ".config/systemd/user/default.target.wants",
+                ".config/systemd/user/timers.target.wants", ".config/windstorm-tardigrade", ".local", ".local/share",
+                ".local/share/windstorm-tardigrade", ".local/state", ".local/state/windstorm-tardigrade"]
+        rc, out = self.tg("setup", "--dry-run")
+        self.assertEqual(rc, 0, out)
+        for x in links + [os.path.join(self.home, m) for m in made]:
+            self.assertIn(x, out)
+        self.assertEqual(listing(), before, out)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        lst = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "folders-made.json")
+        self.assertEqual(jload(lst)["made"], made)
+        self.assertEqual(os.stat(lst).st_mode & 0o777, 0o600)
+        for x in links:
+            self.assertTrue(os.path.islink(x), x)
+        rc, out = self.tg("census")
+        line = [ln for ln in out.splitlines() if ln.startswith("Setup also put here: ")]
+        self.assertEqual(len(line), 1, out)
+        for x in links + [os.path.join(self.home, m) for m in made]:
+            self.assertIn(x, line[0])
+        self.assertEqual(self.tg("census", "--json")[0], 0)
+        places = json.loads(self.tg("census", "--json")[1])["setup_places"]
+        self.assertEqual((places["links"], places["folders_made"]), (links, [os.path.join(self.home, m) for m in made]))
+        # a second setup (an upgrade) keeps the list: nothing is new to it, and nothing is forgotten
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(jload(lst)["made"], made)
+        # a folder with something of the person's in it stays; the empty ones go, deepest first
+        with open(os.path.join(ud, "my-own.service"), "w") as f:
+            f.write("[Unit]\nDescription=my own\n")
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        after = listing()
+        for gone in (".local/share", ".local/share/windstorm-tardigrade", ".config/systemd/user/default.target.wants",
+                     ".config/systemd/user/timers.target.wants"):
+            self.assertNotIn(gone, after, out)
+        for stays in (".config/systemd/user/my-own.service", ".config/systemd/user", ".config/systemd", ".config",
+                      ".config/windstorm-tardigrade", ".local/state/windstorm-tardigrade", ".local"):
+            self.assertIn(stays, after, out)
+        self.assertIn("Removed, being empty now, these folders that setup had made:", out)
+        self.assertIn("  " + os.path.join(self.home, ".local", "share"), out)
+        stay = [ln for ln in out.splitlines() if ln.startswith("Folders setup had made that stay, because they are not empty: ")]
+        self.assertEqual(len(stay), 1, out)
+        self.assertIn(ud, stay[0])
+        # the list cannot be read: no folder is removed, and uninstall says so
+        os.remove(os.path.join(ud, "my-own.service"))
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        with open(lst, "w") as f:
+            f.write('{"written_by": "Windstorm Tardigrade setup", "made": ["../outside", ".local/share"]}\n')
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("No folder above them was removed: the list of the folders setup made", out)
+        after = listing()
+        self.assertNotIn(".local/share/windstorm-tardigrade", after, out)     # setup's own folder, known by its name
+        for stays in (".local/share", ".config/systemd/user"):
+            self.assertIn(stays, after, out)
+        # a person's file of that name is not a list of ours: setup stops before it writes
+        os.makedirs(os.path.dirname(lst))
+        with open(lst, "w") as f:
+            f.write('{"my": "own notes"}\n')
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 1, out)
+        self.assertIn(lst, out)
+        self.assertEqual(fread(lst), '{"my": "own notes"}\n')
+
+    def test_G3_31_uninstall_leaves_the_home_as_setup_found_it_and_names_every_difference(self):
+        """T82: the whole home is listed before setup and after uninstall; every difference is a path uninstall
+        printed; it names only what is there, and says that its switch-off setting stays, where and why"""
+        listing = self.empty_home()
+        before = listing()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        after = listing()
+        self.assertEqual({k: v for k, v in after.items() if k in before}, before, out)
+        cfgd = os.path.join(self.home, ".config", "windstorm-tardigrade")
+        for rel in sorted(set(after) - set(before)):
+            full = os.path.join(self.home, rel)
+            named = full in out or (os.path.dirname(full) in (cfgd, self.state("").rstrip("/"))
+                                    and any(ln.startswith(f"  also in {os.path.dirname(full)}: ")
+                                            and os.path.basename(full) in ln for ln in out.splitlines()))
+            self.assertTrue(named, f"{rel} is in the home after the uninstall and no line of it says so:\n{out}")
+        for rel in (".local/share", ".config/systemd"):
+            self.assertNotIn(rel, after, out)
+        cfgf = os.path.join(cfgd, "config.json")
+        self.assertEqual(jload(cfgf), {"auto_revive": False})
+        self.assertIn(f"Automatic revive is switched off in your settings now (auto_revive false in {cfgf}). That line "
+                      "stays: with it, a record made by hand does not wait for a boot revive that no longer runs.", out)
+        # only what is there is named: with the record and the log gone, a run from a clone names neither
+        os.remove(os.path.join(cfgd, "lanes.json"))
+        os.remove(self.state("tardigrade.log"))
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Tardigrade is already off this computer", out)
+        self.assertIn(cfgf, out)
+        for word in ("lanes.json", "tardigrade.log", "your record", "the log"):
+            self.assertNotIn(word, out)
+        self.assertEqual(listing(), {k: v for k, v in after.items()
+                                     if k not in (".config/windstorm-tardigrade/lanes.json",
+                                                  ".local/state/windstorm-tardigrade/tardigrade.log")}, out)
+        # and in a home that never had it, an uninstall makes nothing and names nothing kept
+        shutil.rmtree(os.path.join(self.home, ".config"))
+        shutil.rmtree(os.path.join(self.home, ".local"))
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Tardigrade is already off this computer", out)
+        self.assertNotIn("Kept", out)
+        self.assertEqual(listing(), before, out)
+
+    def test_G5_12_uninstall_reads_each_answer_waits_for_a_revive_and_ends_with_what_is_gone_and_kept(self):
+        """T59: gone is said only of what was read gone; what could not be removed or still runs is said with the
+        step to take; a running revive is waited for; the installed copy alone runs it to its end, and a second
+        run says it is already off"""
+        self.stand_in_services()
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        ud = os.path.join(self.home, ".config", "systemd", "user")
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        # (a) a revive holds the lock: uninstall waits, says what holds it, and has removed nothing meanwhile
+        holder = subprocess.Popen(["sleep", "60"])
+        self.pids.append(holder.pid)
+        os.makedirs(self.state("lock"))
+        with open(self.state("lock/owner"), "w") as f:
+            f.write(f"boot-a {holder.pid}\n")
+        un = subprocess.Popen([sys.executable, "-I", SCRIPT, "uninstall"], stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, text=True, env=self.env)
+        self.pids.append(un.pid)
+        time.sleep(2)
+        self.assertIsNone(un.poll())
+        self.assertTrue(os.path.exists(copy))
+        self.assertTrue(os.path.exists(os.path.join(ud, "windstorm-tardigrade-revive.service")))
+        os.remove(self.state("lock/owner"))
+        os.rmdir(self.state("lock"))
+        out = un.communicate(timeout=60)[0]
+        self.assertEqual(un.returncode, 0, out)
+        self.assertIn(f"Waiting: a revive is starting sessions right now (process {holder.pid})", out)
+        self.assertIn("Nothing has been removed yet.", out)
+        self.assertFalse(os.path.exists(copy), out)
+        # its last lines: what is gone, then what is kept, with where
+        self.assertIn("Removed:\n", out)
+        for x in (copy, os.path.join(ud, "windstorm-tardigrade-revive.service"),
+                  os.path.join(ud, "windstorm-tardigrade-record.timer")):
+            self.assertIn("  " + x, out)
+        for x in ("your settings: " + os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json"),
+                  "your record: " + os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"),
+                  "the log: " + self.state("tardigrade.log")):
+            self.assertIn(x, out)
+        self.assertLess(out.index("Removed:"), out.index("Kept, and what a setup after this does with each:"))
+        # (b) a file of ours that cannot be removed: named with why, exit 1, and never "is off this computer"
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        if os.geteuid() != 0:
+            os.chmod(ud, 0o500)
+            self.addCleanup(lambda: os.path.isdir(ud) and os.chmod(ud, 0o700))
+            rc, out = self.tg("uninstall")
+            os.chmod(ud, 0o700)
+            self.assertEqual(rc, 1, out)
+            self.assertIn("These are Tardigrade's, but they could not be removed:", out)
+            self.assertIn(os.path.join(ud, "windstorm-tardigrade-revive.service") + ": ", out)
+            self.assertIn("Tardigrade is not all off this computer yet", out)
+            self.assertNotIn("Tardigrade is off this computer", out)
+            self.assertNotIn("  " + os.path.join(ud, "windstorm-tardigrade-revive.service") + "\n",
+                             out[out.index("Removed:"):out.index("Kept")] if "Removed:" in out else "")
+            rc, out = self.tg("setup")
+            self.assertEqual(rc, 0, out)
+        # (c) systemd says the timer still runs after the steps: said with the command that stops it, exit 1
+        self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
+                    'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("Still on: the record timer still runs (systemd says: active). To stop it: "
+                      "systemctl --user stop windstorm-tardigrade-record.timer", out)
+        self.assertNotIn("Tardigrade is off this computer", out)
+        self.assertNotIn("timer and boot service are off", out)
+        # (d) systemd gives no answer: not said to be off, exit 3, with the next step
+        self.stand_in_services()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.script("systemctl", '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n')
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 3, out)
+        self.assertIn("Could not be read, so it is not said to be off: systemctl gave no answer about the record timer "
+                      "(exit 1).", out)
+        self.assertIn("systemctl --user stop windstorm-tardigrade-record.timer", out)
+        self.assertNotIn("Tardigrade is off this computer", out)
+        self.assertFalse(os.path.exists(copy), out)
+        for name in ("default.target.wants/windstorm-tardigrade-revive.service",
+                     "timers.target.wants/windstorm-tardigrade-record.timer"):
+            self.assertFalse(os.path.lexists(os.path.join(ud, name)), out)     # systemd's links to our units: by our hand
+        # (e) the installed copy alone, with the plugin and every clone gone: to its end; then the same line again
+        self.stand_in_services()
+        os.remove(os.path.join(self.bin, "systemd-active.json"))
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        line = [sys.executable, "-I", copy, "uninstall"]
+        r = subprocess.run(line, capture_output=True, text=True, env=self.env, timeout=120, cwd=self.home)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        # the numbered line for the person is the last thing before the stop (family rule 7), after the off line
+        self.assertEqual(r.stdout.strip().splitlines()[-2:],
+                         ["Tardigrade is off this computer: nothing comes back by itself any more. What stayed is "
+                          "named above.",
+                          "1. The line that ran this named the installed copy, and that copy is gone with the rest. If "
+                          "the same line is run again, Python answers that it cannot open the file: that answer means "
+                          "Tardigrade is off."])
+        r = subprocess.run(line, capture_output=True, text=True, env=self.env, timeout=120, cwd=self.home)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("can't open file", r.stderr)
+        # run twice from a script that is still there: safe, and it says so in its own words
+        listing = self.whole_home()
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Tardigrade is already off this computer: its boot service, its record timer and its installed "
+                      "copy are not here, and nothing of it runs.", out)
+        self.assertNotIn("Removed", out)
+        self.assertEqual({k: v for k, v in self.whole_home().items() if k != "systemctl.log"},
+                         {k: v for k, v in listing.items() if k != "systemctl.log"}, out)
+
+    def test_G3_32_what_uninstall_and_the_census_say_of_the_kept_things_is_what_setup_then_does(self):
+        """T92: after an uninstall its last lines and the census say what a setup does with the settings, the record
+        and the log; the test then runs that setup and holds each sentence to it"""
+        self.stand_in_services()
+        self.start_lane("alpha", "Alpha Lane")
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        cfgf = os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json")
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        settings, log = jload(cfgf), fread(self.state("tardigrade.log"))
+        self.assertTrue(settings["auto_revive"])
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        said = [f"  your settings: {cfgf}. A setup after this uses them as they are and switches automatic revive on again.",
+                f"  your record: {table} (1 session(s)). A setup after this keeps it: the sessions still running then "
+                "stay on it and are brought back after the next restart.",
+                f"  the log: {self.state('tardigrade.log')}. A setup after this goes on writing it."]
+        for x in said:
+            self.assertIn(x, out)
+        self.assertEqual(jload(cfgf), dict(settings, auto_revive=False))
+        rc, out = self.tg("census")
+        self.assertIn("Comes back after a reboot: NO (run setup)", out)
+        self.assertIn("Tardigrade was taken off this computer (uninstall). Kept, and what a setup does with each:", out)
+        for x in said:
+            self.assertIn(x, out)
+        self.assertEqual(json.loads(self.tg("census", "--json")[1])["comes_back"], "NO (run setup)")
+        # the setup those lines speak of
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(jload(cfgf), settings)                                 # as they were, automatic revive on again
+        self.assertEqual([r["name"] for r in self.table()["lanes"]], ["Alpha Lane"])
+        self.assertTrue(fread(self.state("tardigrade.log")).startswith(log))    # the same log, gone on
+        self.assertNotIn("Tardigrade was taken off this computer", self.tg("census")[1])
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertEqual(rc, 0, out)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertIn("--resume", new["argv"])
+        self.assertEqual(jload(self.state("last-revive.json"))["started"], ["Alpha Lane"], out)
+
+    def test_G5_21_setup_after_an_uninstall_whole_or_cut_half_way_puts_everything_back_and_a_revive_works(self):
+        """T91: setup decides by what is there now, never by what the kept settings or record remember: the circle
+        setup, uninstall, setup, then a revive of a session that is down; and once more from an uninstall cut half
+        way (the timer and the boot service off, the units gone, the copy and the setting still there)"""
+        self.stand_in_services()
+        sid = self.start_lane("alpha", "Alpha Lane")
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        ud = os.path.join(self.home, ".config", "systemd", "user")
+        cfgf = os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json")
+        units = ("windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service",
+                 "windstorm-tardigrade-record.timer")
+
+        def whole():
+            rc, out = self.tg("setup")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("boot service: enabled   record timer: active", out)
+            self.assertIn("Windstorm Tardigrade is set up.", out)
+            self.assertEqual(fread(copy), fread(SCRIPT))
+            for u in units:
+                self.assertTrue(os.path.isfile(os.path.join(ud, u)), u)
+            self.assertTrue(jload(cfgf)["auto_revive"])
+            self.assertIn("Comes back after a reboot: yes, by itself", self.tg("census", TARDIGRADE_FAKE_LINGER="yes")[1])
+            self.assertEqual([r["session_id"] for r in self.table()["lanes"]], [sid])
+
+        def comes_back(boot):
+            self.reboot()
+            n = len(self.launches())
+            rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID=boot)
+            self.assertEqual(rc, 0, out)
+            a = self.wait_launches(n + 1)[-1]["argv"]
+            self.assertEqual(a[a.index("--resume") + 1], sid)
+            self.assertEqual(jload(self.state("last-revive.json"))["started"], ["Alpha Lane"], out)
+
+        whole()
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Comes back after a reboot: NO (run setup)", self.tg("census")[1])
+        whole()                         # the kept settings and record did not decide it: what is there now did
+        comes_back("boot-b")
+        # an uninstall cut half way: its first steps done, then nothing more; the setting still says "on"
+        env = dict(self.env, TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        for a in (["disable", "--now", units[2]], ["disable", units[0]]):
+            subprocess.run([os.path.join(self.bin, "systemctl"), "--user", *a], env=env, check=True)
+        for u in units:
+            os.remove(os.path.join(ud, u))
+        self.assertTrue(jload(cfgf)["auto_revive"])
+        self.assertTrue(os.path.exists(copy))
+        rc, out = self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertIn("Comes back after a reboot: NO: ", out)
+        rc, out = self.tg("setup", TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("boot service: enabled   record timer: active", out)
+        for u in units:
+            self.assertTrue(os.path.isfile(os.path.join(ud, u)), u)
+        self.assertIn("Comes back after a reboot: yes, by itself",
+                      self.tg("census", TARDIGRADE_FAKE_BOOT_ID="boot-b", TARDIGRADE_FAKE_LINGER="yes")[1])
+        comes_back("boot-c")
 
     def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))

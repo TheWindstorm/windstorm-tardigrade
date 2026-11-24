@@ -154,21 +154,28 @@ SHELLS = ("bash", "zsh", "sh", "-bash", "-zsh", "fish", "dash")
 
 
 # ---------- small tools ----------
+READS = [False]     # this run only reads (a census, a report, a dry run, a setup before its first write): G3.30
+
+
 def private_dirs():
     """Tardigrade's own two folders are this user's only (0700): the record, the log, the start files and the
     boot agent's output hold start flags word for word, and a home folder is not always closed (a Mac's is 755)."""
     for d in (STATE, CFG_DIR):
         try:
-            os.makedirs(d, mode=0o700, exist_ok=True)
-            os.chmod(d, 0o700)
+            if not READS[0]:        # G3.30 (T81): a command that only reads makes no folder
+                os.makedirs(d, mode=0o700, exist_ok=True)
+            if os.path.isdir(d) and not os.path.islink(d) and os.stat(d).st_mode & 0o7777 != 0o700:
+                os.chmod(d, 0o700)
         except OSError:
             pass
 
 
 def log(msg):
-    os.makedirs(STATE, exist_ok=True)
     line = f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {msg}"
     print(line, flush=True)
+    if READS[0]:        # G3.30 (T81): a run that only reads says its lines on the screen and writes no log
+        return
+    os.makedirs(STATE, exist_ok=True)
     fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     os.fchmod(fd, 0o600)
     with os.fdopen(fd, "a", encoding="utf-8") as f:
@@ -454,6 +461,7 @@ MARKS = {
     "plist": "<string>ai.thewindstorm.tardigrade-",
     "start": "# Windstorm Tardigrade start file.",
     "marker": "",          # a boot marker: known by its name alone (revived-<boot id>), see is_ours
+    "made": '"written_by": "Windstorm Tardigrade setup"',      # the list of folders setup made (G3.26)
 }
 OUR_CACHE = re.compile(r"tardigrade\.[A-Za-z0-9_.-]+\.pyc")
 
@@ -2182,7 +2190,6 @@ class Watch:
 
 
 def revive():
-    os.makedirs(STATE, exist_ok=True)
     boot = "--boot" in ARGS
     if boot and not DRY:
         if not in_boot_window():
@@ -2193,6 +2200,9 @@ def revive():
             return 0
     lock = os.path.join(STATE, "lock")
     owner = os.path.join(lock, "owner")
+    if DRY and not os.path.lexists(lock):
+        return _revive(boot)        # G3.30 (T81): a dry run with no lock in its way takes none: it only reads
+    os.makedirs(STATE, exist_ok=True)
     try:
         os.mkdir(lock)
     except FileExistsError:
@@ -3055,6 +3065,8 @@ def census():
     d["comes_back"] = comes_back()      # read here, not in census_data: the report does not say it, so asks nothing
     folders = open_folder_lines()
     d["open_folders"] = folders[1:]
+    places = setup_places()
+    d["setup_places"] = {"links": places[0], "folders_made": places[1]}
     if d.get("cannot_tell"):
         if "--json" in ARGS:
             print(json.dumps(d, indent=1, sort_keys=True))
@@ -3082,6 +3094,14 @@ def census():
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
     for line in folders:
+        print(line)
+    if places[0] or places[1]:      # G3.26 (T73): what setup put here besides its copy and units
+        print("Setup also put here: "
+              + ("; ".join(x for x in (
+                  ("systemd's two links for it, " + " and ".join(places[0])) if places[0] else "",
+                  ("these folders, which were not there before, " + ", ".join(places[1])) if places[1] else "") if x))
+              + ". Uninstall takes the links away, and each folder when it is empty.")
+    for line in after_uninstall_lines():    # G3.32 (T92)
         print(line)
     if os.environ.get("TMUX_TMPDIR") and not CFG.get("tmux_tmpdir"):     # G5.15: a person's setting that chose
         print(f"tmux sockets are looked for in {tmux_dir()} (from TMUX_TMPDIR; the boot service does not have it: "
@@ -3344,8 +3364,7 @@ def user_env():
                 DBUS_SESSION_BUS_ADDRESS=os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path={rt}/bus")
 
 
-NOTHING_MADE = ("Nothing was installed and no file was written (only Tardigrade's own settings and state folders, "
-                "which every command makes, empty if they were not there).")
+NOTHING_MADE = "Nothing was installed, and no file or folder was made."
 
 
 def will_refuse():
@@ -3402,13 +3421,27 @@ def setup():
         step = unread_step()
         print(refused + " " + NOTHING_MADE + " " + step[0].upper() + step[1:] + ".")
         return 1
+    new, older = not_there_yet(), read_made()       # G3.26 (T73): read before the first write
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")
+        if not MAC:
+            print("would have `systemctl --user enable` make its two links: "
+                  + " and ".join(link for link, _ in wants_links()))
+        if new:
+            print("would make these folders, which are not there now (uninstall takes them away again when they "
+                  "are empty): " + ", ".join(new))
         return 0
+    READS[0] = False        # from here setup writes: its two own folders first, closed to others (G3.30)
+    private_dirs()
     os.makedirs(INSTALL_DIR, exist_ok=True)
     os.makedirs(STATE, exist_ok=True)
     if os.path.abspath(__file__) != script:
         shutil.copyfile(os.path.abspath(__file__), script)
+    if MAC:
+        os.makedirs(os.path.join(HOME, "Library", "LaunchAgents"), exist_ok=True)
+    else:
+        os.makedirs(os.path.join(HOME, ".config", "systemd", "user"), exist_ok=True)
+    write_made(new, older)      # kept from the first folder on, so a setup that stops later has left its list
     if MAC:
         la = os.path.join(HOME, "Library", "LaunchAgents")
         os.makedirs(la, exist_ok=True)
@@ -3449,6 +3482,7 @@ def setup():
         run(["systemctl", "--user", "daemon-reload"], env=env)
         run(["systemctl", "--user", "enable", "windstorm-tardigrade-revive.service"], env=env)
         run(["systemctl", "--user", "enable", "--now", "windstorm-tardigrade-record.timer"], env=env)
+        write_made(new, older)  # again: the two .wants folders are there only now, when systemd made them
     # an earlier setup under a wide-open umask left these writable by others: close what is ours (G3.29)
     for p, kind in [(INSTALL_DIR, "")] + our_places(script):
         try:
@@ -3604,7 +3638,72 @@ def our_places(script):
     else:
         ud = os.path.join(HOME, ".config", "systemd", "user")
         units_at = [(os.path.join(ud, name), "unit") for name in units("", "")]
-    return [(script, "copy")] + units_at
+    return [(script, "copy")] + units_at + [(made_list(), "made")]
+
+
+def wants_links():
+    """Linux: the two links `systemctl --user enable` makes for our units, each with the unit it points at"""
+    ud = os.path.join(HOME, ".config", "systemd", "user")
+    return [(os.path.join(ud, "default.target.wants", BOOT_UNITS[0]), os.path.join(ud, BOOT_UNITS[0])),
+            (os.path.join(ud, "timers.target.wants", BOOT_UNITS[1]), os.path.join(ud, BOOT_UNITS[1]))]
+
+
+def our_link(link, unit):
+    """True when link is a link to our unit: the one `systemctl --user enable` made when setup asked for it"""
+    try:
+        return os.path.islink(link) and os.path.normpath(
+            os.path.join(os.path.dirname(link), os.readlink(link))) == unit
+    except OSError:
+        return False
+
+
+def made_list():
+    return os.path.join(INSTALL_DIR, "folders-made.json")
+
+
+def not_there_yet():
+    """G3.26 (T73): the folders setup, or `systemctl --user enable` for it, makes because they are not there:
+    read before setup's first write, from the home down"""
+    if MAC:
+        tops = [INSTALL_DIR, STATE, CFG_DIR, os.path.join(HOME, "Library", "LaunchAgents")]
+    else:
+        tops = [INSTALL_DIR, STATE, CFG_DIR] + [os.path.dirname(link) for link, _ in wants_links()]
+    out = []
+    for top in tops:
+        chain, d = [], top
+        while d.startswith(HOME + os.sep):
+            chain.append(d)
+            d = os.path.dirname(d)
+        for d in reversed(chain):
+            if d not in out and not os.path.lexists(d):
+                out.append(d)
+    return out
+
+
+def read_made():
+    """the folders an earlier setup made, as whole paths, or None when the list is not there or cannot be read. A
+    path that is not inside this home makes the whole list unreadable: nothing is removed on its word."""
+    if not is_ours(made_list(), "made"):
+        return None
+    d = read_json(made_list(), None)
+    made = d.get("made") if isinstance(d, dict) else None
+    if not isinstance(made, list) or not all(isinstance(x, str) and x for x in made):
+        return None
+    out = []
+    for rel in made:
+        p = os.path.normpath(os.path.join(HOME, rel))
+        if os.path.isabs(rel) or ".." in rel.split("/") or not p.startswith(HOME + os.sep):
+            return None
+        out.append(p)
+    return out
+
+
+def write_made(new, older):
+    """keep the list: what an earlier setup made and what this one made, each only while it is a real folder"""
+    made = sorted({os.path.relpath(p, HOME) for p in (older or []) + new
+                   if os.path.isdir(p) and not os.path.islink(p)})
+    text = json.dumps({"written_by": "Windstorm Tardigrade setup", "made": made}, indent=1)
+    write_private(made_list(), text + "\n")
 
 
 def group_accounts(gid):
@@ -3735,8 +3834,9 @@ def open_folder_lines():
     return lines
 
 
-def remove_ours(path, kind, kept, failed):
-    """remove path when it is ours; a person's file there is kept and named (G3.28)"""
+def remove_ours(path, kind, kept, failed, gone=None):
+    """remove path when it is ours; a person's file there is kept and named (G3.28). What went is read back from
+    the disk, never taken from the call (G5.12)."""
     if not os.path.lexists(path):
         return
     if not is_ours(path, kind):
@@ -3746,66 +3846,243 @@ def remove_ours(path, kind, kept, failed):
         os.remove(path)
     except OSError as e:
         failed.append(f"{path}: {e.strerror}")
+        return
+    if os.path.lexists(path):
+        failed.append(f"{path}: it is still there")
+    elif gone is not None:
+        gone.append(path)
+
+
+def revive_holding():
+    """the process number of a revive that holds the lock now (this boot's, its process alive), else 0"""
+    lock = os.path.join(STATE, "lock")
+    if not os.path.isdir(lock) or lock_not_ours(lock):
+        return 0
+    try:
+        with open(os.path.join(lock, "owner")) as f:
+            o_boot, o_pid = f.read().split()
+        return int(o_pid) if o_boot == boot_id() and alive(int(o_pid)) else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def still_on():
+    """G5.12 (T59): after an uninstall's steps, asked of systemd or launchd itself: (what of ours still runs, each
+    with the one command that stops it; what could not be read)"""
+    on, unread = [], []
+    if MAC:
+        uid = str(os.getuid())
+        if run(["launchctl", "print", f"gui/{uid}"], timeout=10)[0] == 125:
+            return on, unread       # not logged in at the screen: launchd holds no job for this account now
+        for label in BOOT_JOBS:
+            rc = run(["launchctl", "print", f"gui/{uid}/{label}"], timeout=10)[0]
+            if rc == 0:
+                on.append(f"launchd still holds {label}. To make it let go: launchctl bootout gui/{uid}/{label}")
+            elif rc != 113:
+                unread.append(f"launchctl gave no answer about {label} (exit {rc})")
+    else:
+        rc, out = run(["systemctl", "--user", "is-active", BOOT_UNITS[1]], timeout=10, env=user_env())
+        word = (out.strip().splitlines() or [""])[0].strip()
+        if word in ("active", "activating"):
+            on.append(f"the record timer still runs (systemd says: {word}). To stop it: "
+                      f"systemctl --user stop {BOOT_UNITS[1]}")
+        elif not word:
+            unread.append(f"systemctl gave no answer about the record timer (exit {rc})")
+    return on, unread
+
+
+def in_folder(d):
+    """the names in folder d, a folder marked with / and how many things it holds; [] when it is not there"""
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        q = os.path.join(d, n)
+        if os.path.isdir(q) and not os.path.islink(q):
+            try:
+                out.append(f"{n}/ ({len(os.listdir(q))} inside)")
+            except OSError:
+                out.append(f"{n}/")
+        else:
+            out.append(n)
+    return out
+
+
+def setup_places():
+    """G3.26 (T73): (the links `systemctl --user enable` made for our units that are there now, the folders on
+    setup's own list that are there now)"""
+    links = [] if MAC else [link for link, unit in wants_links() if our_link(link, unit)]
+    return links, [d for d in (read_made() or []) if os.path.isdir(d)]
+
+
+def after_uninstall_lines():
+    """G3.32 (T92): for the census after an uninstall (the settings file says auto_revive false in so many words and
+    no copy is installed): what is kept, and what a setup does with each"""
+    raw = read_json(os.path.join(CFG_DIR, "config.json"), None)
+    if not isinstance(raw, dict) or raw.get("auto_revive") is not False \
+            or os.path.lexists(os.path.join(INSTALL_DIR, "tardigrade.py")):
+        return []
+    return ["Tardigrade was taken off this computer (uninstall). Kept, and what a setup does with each:"] + kept_lines()
+
+
+def kept_lines():
+    """G3.31, G3.32 (T82, T92): what is in Tardigrade's settings and state folders now, each with what a setup
+    after this does with it. Only what is there is named."""
+    lines, named = [], set()
+    cfgf = os.path.join(CFG_DIR, "config.json")
+    if os.path.isfile(cfgf):
+        named.add(cfgf)
+        lines.append(f"  your settings: {cfgf}. A setup after this uses them as they are and switches automatic "
+                     "revive on again.")
+    if os.path.isfile(TABLE):
+        named.add(TABLE)
+        lines.append(f"  your record: {TABLE} ({len(read_table()['lanes'])} session(s)). A setup after this keeps it: "
+                     "the sessions still running then stay on it and are brought back after the next restart.")
+    if os.path.isfile(LOG):
+        named.add(LOG)
+        lines.append(f"  the log: {LOG}. A setup after this goes on writing it.")
+    for d in (CFG_DIR, STATE):
+        rest = [n for n in in_folder(d) if os.path.join(d, n) not in named]
+        if rest:
+            lines.append(f"  also in {d}: {', '.join(rest)}")
+    return lines
 
 
 def uninstall():
     if DRY:
         print("would remove the boot service, the record timer and the installed copy; the record and the log stay")
         return 0
+    # G5.12 (T59): a revive that is starting sessions is waited for, never cut under and never a refusal
+    pid, said = revive_holding(), 0.0
+    while pid:
+        if time.time() - said >= 60:
+            said = time.time()
+            print(f"Waiting: a revive is starting sessions right now (process {pid}), and uninstall takes nothing "
+                  "away under it. Nothing has been removed yet. Uninstall goes on by itself when that revive ends; "
+                  "to stop waiting, press Ctrl-C and run uninstall again later.", flush=True)
+        time.sleep(0.2 if TESTING else 2)
+        pid = revive_holding()
     # A person's file in one of our folders never stops the leave (family rule 8): everything of ours goes, what
     # is theirs stays and is named, with why each folder stayed, and the exit code is success.
-    kept, failed = [], []
+    kept, failed, gone = [], [], []
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
     places = our_places(script)
+    made = read_made()          # G3.26: read before the list itself goes
+    was_here = any(os.path.lexists(p) for p, _ in places)
     if MAC:
-        for label in ("ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record"):
+        for label in BOOT_JOBS:
             run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"])
-        for p, kind in places[1:]:
-            remove_ours(p, kind, kept, failed)
     else:
         env = user_env()
-        run(["systemctl", "--user", "disable", "--now", "windstorm-tardigrade-record.timer"], env=env)
-        run(["systemctl", "--user", "disable", "windstorm-tardigrade-revive.service"], env=env)
-        for p, kind in places[1:]:
-            remove_ours(p, kind, kept, failed)
+        run(["systemctl", "--user", "disable", "--now", BOOT_UNITS[1]], env=env)
+        run(["systemctl", "--user", "disable", BOOT_UNITS[0]], env=env)
+        for link, unit in wants_links():    # where systemd could not be asked, its links to our units go by our hand
+            if our_link(link, unit):
+                was_here = True
+                try:
+                    os.remove(link)
+                    gone.append(link)
+                except OSError as e:
+                    failed.append(f"{link}: {e.strerror}")
+    for p, kind in places[1:]:
+        remove_ours(p, kind, kept, failed, gone)
+    if not MAC:
         run(["systemctl", "--user", "daemon-reload"], env=env)
-    remove_ours(script, "copy", kept, failed)
+    remove_ours(script, "copy", kept, failed, gone)
     cache = os.path.join(INSTALL_DIR, "__pycache__")
     try:
         names = [] if os.path.islink(cache) or not os.path.isdir(cache) else sorted(os.listdir(cache))
     except OSError:
         names = []
     for f in names:            # Python's cache of our script only; anything else in there is the person's
-        remove_ours(os.path.join(cache, f), "cache", kept, failed)
-    stayed = []                # (folder, why) for each of our folders that is still there
+        remove_ours(os.path.join(cache, f), "cache", kept, failed, gone)
+    stayed, went = [], []      # (folder, why) for each of our folders that is still there; folders taken away
     for d in (cache, INSTALL_DIR):
         if os.path.islink(d) or not os.path.isdir(d):
             continue
         try:
             os.rmdir(d)        # only when nothing is left in it
+            went.append(d)
         except OSError:
-            try:
-                inside = sorted(os.listdir(d))
-            except OSError:
-                inside = []
-            stayed.append((d, "it holds " + (", ".join(inside[:5]) + (f" and {len(inside) - 5} more" if len(inside) > 5 else "")
+            inside = in_folder(d)
+            stayed.append((d, "it holds " + (", ".join(x.split("/ (")[0] for x in inside[:5])
+                                             + (f" and {len(inside) - 5} more" if len(inside) > 5 else "")
                                              if inside else "something that could not be read")))
-    save_cfg_key("auto_revive", False)
-    print("Tardigrade's timer and boot service are off, and its units and installed copy are removed.")
+    # G3.26, G3.31: the folders setup made, by its own list, deepest first, each only when it is empty
+    full = []
+    for d in sorted(made or [], key=lambda x: (-x.count(os.sep), x)):
+        if d in went or os.path.islink(d) or not os.path.isdir(d):
+            continue
+        try:
+            os.rmdir(d)
+            went.append(d)
+        except OSError:
+            full.append(d)
+    if CFG.get("auto_revive"):
+        save_cfg_key("auto_revive", False)
+    on, unread = still_on()
+    cfgf = os.path.join(CFG_DIR, "config.json")
+    if not (was_here or gone or went or failed or on or unread or kept):
+        print("Tardigrade is already off this computer: its boot service, its record timer and its installed copy "
+              "are not here, and nothing of it runs.")
+    elif on or unread:
+        print("Tardigrade's units and installed copy are taken away as listed below, but it is not all off yet.")
+    else:
+        print("Tardigrade's timer and boot service are off, and its units and installed copy are removed.")
+    if gone:
+        print("Removed:")
+        for x in gone:
+            print(f"  {x}")
+    if went:
+        print("Removed, being empty now, these folders that setup had made:")
+        for x in went:
+            print(f"  {x}")
+    if made is None and was_here:
+        print(f"No folder above them was removed: the list of the folders setup made ({made_list()}) is not there or "
+              "could not be read, so Tardigrade cannot know which were made for it. A copy set up by a version before "
+              "0.1.11 has no such list.")
     if kept:
         print("Kept, because Tardigrade did not write them (they are yours, and they stay as they are):")
-        for p in kept:
-            print(f"  {p}")
+        for x in kept:
+            print(f"  {x}")
     for d, why in stayed:
         print(f"Kept the folder {d}: {why}.")
-    print(f"Kept: your record and log in {STATE}, and your settings in {CFG_DIR}; running sessions were not touched.")
+    if full:
+        print("Folders setup had made that stay, because they are not empty: " + ", ".join(full))
+    things = kept_lines()
+    if things:
+        print("Kept, and what a setup after this does with each:")
+        for x in things:
+            print(x)
+    if os.path.isfile(cfgf) and not CFG.get("auto_revive") and (was_here or gone):
+        print(f"Automatic revive is switched off in your settings now (auto_revive false in {cfgf}). That line stays: "
+              "with it, a record made by hand does not wait for a boot revive that no longer runs.")
+    print("Running sessions were not touched.")
     if failed:
         print("These are Tardigrade's, but they could not be removed:")
         for x in failed:
             print(f"  {x}")
-        print("Tardigrade's timer and boot service are off, but not all of its files are gone: they are named above.")
+    for x in on:
+        print("Still on: " + x)
+    if unread:
+        step = (f"log in at this Mac's screen as this user and run: launchctl print gui/{os.getuid()}/{BOOT_JOBS[0]}" if MAC else
+                f"in a login where `systemctl --user` answers, run: systemctl --user stop {BOOT_UNITS[1]}")
+        print("Could not be read, so it is not said to be off: " + "; ".join(unread) + ". The unit files are gone, so "
+              "nothing of Tardigrade starts at the next boot or login; what may still run until then is the record "
+              "timer. Next: " + step + ".")
+    if failed or on:
+        print("Tardigrade is not all off this computer yet: what is left is named above.")
         return 1
+    if unread:
+        return 3
     print("Tardigrade is off this computer: nothing comes back by itself any more. What stayed is named above.")
+    if os.path.abspath(__file__) == script:
+        # family rule 7: what the person must hear is a numbered line, the last thing before the stop. The line that
+        # ran this cannot answer a second time: the copy it names went with the rest (leaving a stub would break G3.31)
+        print("1. The line that ran this named the installed copy, and that copy is gone with the rest. If the same "
+              "line is run again, Python answers that it cannot open the file: that answer means Tardigrade is off.")
     return 0
 
 
@@ -3845,13 +4122,16 @@ if __name__ == "__main__":
     # G3.29 (T80), family rule 28: nothing we make has a group or other write bit, whatever umask we were started
     # with (a job runner on a shared machine was seen starting every job with umask 000)
     os.umask(os.umask(0o022) | 0o022)
+    # G3.30 (T81): a census, a report, a dry run and a bare `trust` only read; setup reads until its first write;
+    # uninstall takes away and makes no folder
+    READS[0] = DRY or cmd in ("census", "status", "report", "setup", "uninstall") or (cmd == "trust" and not ARGS)
     private_dirs()
     if TESTING_IGNORED:     # G5.15: the first line of the run, on the screen (stderr, so --json stays whole) and in the log
         said = ("found TARDIGRADE_TESTING and ignored it: there is no test marker in this home, so this run behaves "
                 "exactly as it does for a person (no shorter waits, no stand-in facts, nothing handed on)")
         print(said, file=sys.stderr, flush=True)
-        try:
-            fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:        # a run that only reads adds this line to a log that is there, and makes none (G3.30)
+            fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | (0 if READS[0] else os.O_CREAT), 0o600)
             with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {said}\n")
         except OSError:

@@ -56,6 +56,19 @@ boot service still brings your sessions back after a restart, and the 5-minute r
 the copy in `~/.local/share/windstorm-tardigrade/`. To take them off, run
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall`. Your settings, record and log stay.
 
+What setup puts where: the copy, and its own list `folders-made.json`, in `~/.local/share/windstorm-tardigrade/`. On
+Linux three unit files in `~/.config/systemd/user/`, and `systemctl --user enable` makes two links for them in that
+folder, `default.target.wants/windstorm-tardigrade-revive.service` and
+`timers.target.wants/windstorm-tardigrade-record.timer`. On a Mac two plists in `~/Library/LaunchAgents/`. Your
+settings and the record are in `~/.config/windstorm-tardigrade/`, the log and Tardigrade's notes of past boots in
+`~/.local/state/windstorm-tardigrade/`. A folder on that way that was not there is made by setup and written on its
+list. `setup --dry-run` names the links and those folders before anything is written, and census names them after.
+`uninstall` takes away the units, the links, the copy and the list, then each folder on the list that is empty now,
+deepest first. It keeps your settings, record and log, says what a setup after it does with each, and says that
+`auto_revive` now reads false in your settings and why that line stays. A copy set up by a version before 0.1.11 has
+no list: uninstall then removes no folder above its own, and says so. A census, a report, a dry run and a setup that
+stops before its first write make no file and no folder; a dry run's lines go to the screen only, not to the log.
+
 What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
 first, then the other folders of the `PATH` of whoever runs the restore: at boot, the boot service's (which on
@@ -77,7 +90,7 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 | `tardigrade revive --only "Name"` | Brings back just that one. |
 | `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
-| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. The last line says Tardigrade is off this computer. |
+| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. It reads back what went: something of its own that could not be removed, or a timer that still runs, is named with the one command to use, and then it does not say off (exit 1; exit 3 when systemd or launchd gave no answer). While a restore is starting sessions it waits for it. When all is off, the last line says Tardigrade is off this computer; run again, it says it is already off. |
 
 In Claude Code you can say these in plain words. In a terminal, each is
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py <command>`.

@@ -101,7 +101,9 @@ says which it is.
 Run `uninstall` and show what it prints, word for word. It turns off the timer and the boot service and removes
 the units and the installed copy. A file Tardigrade did not write that sits in one of its folders is the person's: it
 is kept and named, with why its folder stayed. That is not a failure; the exit code is success and the last line
-says Tardigrade is off this computer.
+says Tardigrade is off this computer. Exit 1 means something of Tardigrade's could not be removed or still runs, and
+exit 3 that systemd or launchd gave no answer: show the lines, give the one command they name, and do not say it is
+off. If it says it is waiting for a revive, let it wait.
 
 Never delete, and never offer to delete, anything the uninstall kept (the person's files, the record, the log, the
 settings, a folder that stayed) unless the person asks for it in their own words in this conversation.
