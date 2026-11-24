@@ -2632,6 +2632,13 @@ class Setup(Base):
         self.assertIn(f"1. {d} belongs to another account", lines[1])
         self.assertIn("Only that account or an administrator can close it.", lines[1])
         self.assertNotIn("chmod", " ".join(lines))
+        # a folder root owns that others can write: root named as its owner, and no command the person cannot run
+        tg.open_folders = lambda: [(d, "every account on this computer")]
+        tg.folder_owner = lambda x: 0
+        lines = tg.open_folder_lines()
+        self.assertIn(f"1. {d} belongs to root, the administrator, and every account on this computer can write it", lines[1])
+        self.assertIn("only an administrator can close it", lines[1])
+        self.assertNotIn("chmod", " ".join(lines))
 
     def test_G5_15_the_testing_setting_alone_changes_nothing_and_says_so(self):
         # T78, family rule 27: two keys for test mode, the setting AND the marker the suite writes in its scratch home

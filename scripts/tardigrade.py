@@ -3576,6 +3576,14 @@ def open_folders():
     return out
 
 
+def folder_owner(d):
+    """the user number that owns folder d (-1 when it cannot be read)"""
+    try:
+        return os.stat(d).st_uid
+    except OSError:
+        return -1
+
+
 def open_folder_lines():
     """the numbered lines for the person, one per open folder, each with the one command that closes it"""
     lines = []
@@ -3586,6 +3594,11 @@ def open_folder_lines():
         elif who == "the account that owns it":
             lines.append(f"{i}. {d} belongs to another account: that account can replace anything in it, Tardigrade's "
                          "own units and copy included. Only that account or an administrator can close it.")
+        elif folder_owner(d) != os.getuid():     # family rule 28: a folder the person does not own gets no command
+            owner = "root, the administrator" if folder_owner(d) == 0 else "another account"
+            lines.append(f"{i}. {d} belongs to {owner}, and {who} can write it: anything in it, Tardigrade's own units "
+                         "and copy included, can be replaced by another account. You cannot change this folder; only an "
+                         "administrator can close it.")
         else:
             lines.append(f"{i}. {d} can be written by {who}: anything in it, Tardigrade's own units and copy included, "
                          f"can be replaced by another account. To close it: chmod go-w {shlex.quote(d)}")
