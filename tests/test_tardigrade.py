@@ -2623,6 +2623,62 @@ class Setup(Base):
         rc, out = self.tg("setup", "--dry-run")
         self.assertIn("would copy", out)
         self.assertFalse(os.path.exists(os.path.join(self.home, ".config", "systemd")))
+        # a folder another account owns: named with its owner, and no command, since the person cannot change it
+        tg.open_folders = lambda: [(d, "the account that owns it")]
+        lines = tg.open_folder_lines()
+        self.assertIn(f"1. {d} belongs to another account", lines[1])
+        self.assertIn("Only that account or an administrator can close it.", lines[1])
+        self.assertNotIn("chmod", " ".join(lines))
+
+    def test_G5_15_the_testing_setting_alone_changes_nothing_and_says_so(self):
+        # T78, family rule 27: two keys for test mode, the setting AND the marker the suite writes in its scratch home
+        self.stand_in_services()
+        mark = os.path.join(self.home, "tardigrade-test-home")
+        # with the marker: the test behaviour (a stand-in fact: this boot's id)
+        rc, out = self.tg("setup", TARDIGRADE_FAKE_BOOT_ID="boot-marked")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(os.path.exists(self.state("revived-boot-marked")), out)
+        self.assertNotIn("ignored it", out)
+        # the setting alone: no stand-in fact, and the first line of the run says it was found and ignored
+        os.remove(mark)
+        r = subprocess.run([sys.executable, "-I", SCRIPT, "census", "--json"], capture_output=True, text=True,
+                           env=dict(self.env, TARDIGRADE_FAKE_BOOT_ID="boot-unmarked"), timeout=240)
+        self.assertTrue(r.stderr.startswith("found TARDIGRADE_TESTING and ignored it: there is no test marker"), r.stderr)
+        json.loads(r.stdout)                                    # the JSON stays whole
+        self.assertIn("found TARDIGRADE_TESTING and ignored it", fread(self.state("tardigrade.log")))
+        rc, out = self.tg("setup", TARDIGRADE_FAKE_BOOT_ID="boot-unmarked")
+        self.assertFalse(os.path.exists(self.state("revived-boot-unmarked")), out)
+        with open("/proc/sys/kernel/random/boot_id") as f:
+            self.assertTrue(os.path.exists(self.state("revived-" + f.read().strip())), out)
+        # and nothing hands it on: not to a tmux server, not to a session's start file
+        import importlib.util
+        old = dict(os.environ)
+        try:
+            os.environ.update(HOME=self.home, TARDIGRADE_TESTING="1")
+            for marked in (False, True):
+                if marked:
+                    with open(mark, "w") as f:
+                        f.write(MARK_TEXT + "\n")
+                spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+                tg = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(tg)
+                tg.load_cfg()
+                self.assertEqual(tg.TESTING, marked)
+                self.assertEqual("TARDIGRADE_TESTING" in tg.clean_env(), marked)
+                self.assertEqual("TARDIGRADE_TESTING" in tg.server_env(), marked)
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+        # a marker that is not the suite's (a link, or other words) is no key
+        os.remove(mark)
+        os.symlink(os.path.join(self.tmp, "elsewhere"), mark)
+        with open(os.path.join(self.tmp, "elsewhere"), "w") as f:
+            f.write(MARK_TEXT + "\n")
+        self.assertIn("ignored it", self.tg("census")[1])
+        os.remove(mark)
+        with open(mark, "w") as f:
+            f.write("something else\n")
+        self.assertIn("ignored it", self.tg("census")[1])
         self.assertFalse(os.path.exists(os.path.join(self.home, ".local", "share", "windstorm-tardigrade")))
 
     def test_G5_3_setup_and_census_say_who_has_to_log_in_on_a_mac(self):

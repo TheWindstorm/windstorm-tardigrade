@@ -3679,7 +3679,7 @@ if __name__ == "__main__":
     if cmd not in COMMANDS:
         print(f"unknown command: {cmd}\n{__doc__}")
         sys.exit(2)
-    # G3.29 (T80), family rule 28: nothing we make is writable by another account, whatever umask we were started
+    # G3.29 (T80), family rule 28: nothing we make has a group or other write bit, whatever umask we were started
     # with (a job runner on a shared machine was seen starting every job with umask 000)
     os.umask(os.umask(0o022) | 0o022)
     private_dirs()
