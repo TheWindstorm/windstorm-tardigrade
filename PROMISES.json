@@ -1521,6 +1521,20 @@
    "issue": 116,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T109",
+   "seen": "2026-11-24, by the family's reviewer, with tmux 3.4 on a Linux box, on a throwaway tmux server with one session whose name has a non-ASCII letter (\"tést\"). A tmux client whose environment has no LANG and no LC_ variable, or has LC_ALL=C, prints \"_\" for every non-ASCII letter of a session's name: `list-panes`, `list-sessions` and `display-message -p` gave \"t_st\". `has-session` by that underscore name answers \"can't find session\" (exit 1), and by the true name finds it (exit 0). With LANG=en_US.UTF-8, with LC_ALL=C.UTF-8, with the flag `-u`, or with TMUX set (a client started inside a pane) the name came out whole. Read in the tool's code the same hour: every tmux read of the tool takes `#{session_name}` with the process's own environment and no `-u`; that name is kept in the record, compared with the live read, and used as the target of `has-session`, `display-message`, `capture-pane` and `list-panes` and as the name of the session made at a revive. So a record taken from an environment with no UTF-8 language would keep \"t_st\" for a session named \"tést\", while a census typed inside a pane reads \"tést\" for the same session. A session's folder is not at risk: the tool takes it from the process, not from tmux. Not seen yet: what the environment of the tool's launchd job and of its systemd user units carries on a stock machine; tmux on a Mac; any tmux but 3.4; and what the released tool then does (a session that comes back under a changed name, a row twice, \"down\" for a session that runs, or a second copy).",
+   "promise": "a session's name is read whole in every environment the tool runs in: a terminal, inside a pane, the record timer, the boot service or job. Every tmux call of the tool's own carries `-u`; the attach line printed for the person does not, and nothing in the tmux server's own environment changes. A name that came out changed is never compared with one that did not, never kept in a record and never used as a target. A record already kept under a changed name: setup takes a record at once, so the row of a session that still runs takes its true name then, by its session id, with no second row and one line in the log; the row of a session that is already down keeps the name it has, because an underscore that stands for a letter cannot be told from a true one, and the README says so. The tests' tmux stand-in prints \"_\" for non-ASCII letters unless the call carries `-u`, and one world has such a session read from an environment with no LANG. Before the tag the released 0.1.10.1 and this version are each walked on a stock machine with such a session through a restart, and the row says what each did.",
+   "codon": "G5.28",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 117,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
