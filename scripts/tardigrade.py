@@ -3566,13 +3566,13 @@ def who_can_write(d):
 
 
 def open_folders():
-    """[(folder, who)] for every folder from the home down to each thing of ours that runs (the installed copy, the
-    units or plists) that another account can write, or that could not be read (who None)"""
+    """[(folder, who)] for every folder from the home down to each thing of ours that runs or decides what runs (the
+    installed copy, the units or plists, the settings, and the state folder where revive writes the start files it
+    runs) that another account can write, or that could not be read (who None)"""
     seen, out = set(), []
-    for p, _ in our_places(os.path.join(INSTALL_DIR, "tardigrade.py")):
-        if not os.path.lexists(p):
-            continue
-        chain, d = [], os.path.dirname(p)
+    tops = [os.path.dirname(p) for p, _ in our_places(os.path.join(INSTALL_DIR, "tardigrade.py")) if os.path.lexists(p)]
+    for top in tops + [d for d in (CFG_DIR, STATE, launch_dir()) if os.path.isdir(d)]:
+        chain, d = [], top
         while True:
             chain.append(d)
             if d == HOME or d == os.path.dirname(d):
@@ -3603,15 +3603,15 @@ def open_folder_lines():
             lines.append(f"{i}. {d}: who can write it could not be read (the folder, a folder above it, or its group's "
                          "members), so Tardigrade cannot tell whether another account can replace what is in it.")
         elif who == "the account that owns it":
-            lines.append(f"{i}. {d} belongs to another account: that account can replace anything in it, Tardigrade's "
-                         "own units and copy included. Only that account or an administrator can close it.")
+            lines.append(f"{i}. {d} belongs to another account: that account can replace anything in it, what Tardigrade "
+                         "runs at boot included. Only that account or an administrator can close it.")
         elif folder_owner(d) != os.getuid():     # family rule 28: a folder the person does not own gets no command
             owner = "root, the administrator" if folder_owner(d) == 0 else "another account"
-            lines.append(f"{i}. {d} belongs to {owner}, and {who} can write it: anything in it, Tardigrade's own units "
-                         "and copy included, can be replaced by another account. You cannot change this folder; only an "
+            lines.append(f"{i}. {d} belongs to {owner}, and {who} can write it: anything in it, what Tardigrade runs at "
+                         "boot included, can be replaced by another account. You cannot change this folder; only an "
                          "administrator can close it.")
         else:
-            lines.append(f"{i}. {d} can be written by {who}: anything in it, Tardigrade's own units and copy included, "
+            lines.append(f"{i}. {d} can be written by {who}: anything in it, what Tardigrade runs at boot included, "
                          f"can be replaced by another account. To close it: chmod go-w {shlex.quote(d)}")
     if lines:
         lines.insert(0, "On the way to what runs at boot, another account can write these folders (Tardigrade does not "

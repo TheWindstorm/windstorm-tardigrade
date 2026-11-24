@@ -4,18 +4,20 @@
 
 - **Set up under a wide-open umask? Run setup again.** Up to 0.1.9, setup started with umask 000 (as some job runners
   start every job) made the installed copy and the three units at mode 666 and the folders it created at 777
-  (`~/.local/share/windstorm-tardigrade`, `~/.config/systemd/user` and the folders above them it had to make). The boot
-  service runs that copy as you, so another account that could reach those folders could have changed what runs at
-  your next boot (seen in a scratch home on 0.1.9; no separate notice for 0.1.9, since it takes that umask AND a home
-  another account can enter). From 0.1.10 the tool adds 022 to whatever umask it is given, and setup takes group and
-  other write off its own copy, units and install folder when an earlier run left them open (T80).
+  (`~/.local/share/windstorm-tardigrade`, `~/.config/systemd/user`, `~/.local/state` and the folders above them it had
+  to make). The boot service runs that copy as you, so another account that could reach those folders could have
+  changed what runs at your next boot (seen in a scratch home on 0.1.9; no separate notice for 0.1.9, since it takes
+  that umask AND a home another account can enter). From 0.1.10 the tool adds 022 to whatever umask it is given, and
+  setup takes group and other write off its own copy, units and install folder when an earlier run left them open
+  (T80).
 - **The folders above are named, not changed.** A file is only as closed as the folders above it. Setup, the boot run
-  and census walk every folder from your home down to each thing of Tardigrade's that runs. A folder it cannot know it
-  made, whose mode bits and group members let another account reach it and write it, is named in a numbered line with
-  the one command that closes it (`chmod go-w <folder>`); census repeats it until it is closed. A folder of your own
-  private group with nobody else in it is not named. A folder another account owns is named with its owner and no
-  command. What is read is the mode bits and the groups' members; access lists are not read. Seen on a stock Linux
-  machine; not yet on a Mac (T80).
+  and census walk every folder from your home down to each thing of Tardigrade's that runs or decides what runs (the
+  copy, the units, the settings folder, and the state folder where the start files are written). A folder it cannot
+  know it made, whose mode bits and group members let another account reach it and write it, is named in a numbered
+  line with the one command that closes it (`chmod go-w <folder>`); census repeats it until it is closed. A folder of
+  your own private group with nobody else in it is not named. A folder another account owns is named with its owner
+  and no command. What is read is the mode bits and the groups' members; access lists are not read. Seen on a stock
+  Linux machine; not yet on a Mac (T80).
 - **Only what Tardigrade wrote.** Setup, revive and uninstall overwrite or remove only files Tardigrade wrote, known by
   their own marks (seen on 0.1.9 in a scratch home: setup wrote over a person's own `tardigrade.py`, uninstall removed
   it and a person's `__pycache__` folder whole, a revive removed a person's folder named `lock` and a person's file in

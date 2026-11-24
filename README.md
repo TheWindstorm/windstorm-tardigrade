@@ -40,15 +40,16 @@ git clone --depth 1 --branch v0.1.10 https://github.com/TheWindstorm/windstorm-t
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
-Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute
-timer for your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs
-no administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
+Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute timer for
+your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs no
+administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
 copy: run it again after you update the plugin. Setup leaves no group or other write permission on anything it makes,
 whatever umask it was started with (it reads and sets the mode bits; it does not read access lists). If you ran setup
-with a wide-open umask (umask 000, as some job runners start every job), run setup again with 0.1.10 or later: it closes
-its own copy, units and install folder, and it names each folder above them whose mode bits and group members let
-another account in to write, with the one command that closes it (`chmod go-w <folder>`); census repeats it until it is
-closed. A folder another account owns is named with its owner, and no command: only an administrator can change it.
+with a wide-open umask (umask 000, as some job runners start every job), run setup again with 0.1.10 or later: it
+closes its own copy, units and install folder, and it names each folder above them, or above its settings and state
+folders, whose mode bits and group members let another account in to write, with the one command that closes it
+(`chmod go-w <folder>`); census repeats it until it is closed. A folder another account owns is named with its owner,
+and no command: only an administrator can change it.
 
 Taking the plugin off with Claude Code's own `claude plugin uninstall` does not take off what setup installed. The
 boot service still brings your sessions back after a restart, and the 5-minute record timer still runs, both from

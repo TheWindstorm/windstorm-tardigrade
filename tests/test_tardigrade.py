@@ -2563,7 +2563,9 @@ class Setup(Base):
         self.assertEqual(rc, 0, out)
         self.assertNotIn("another account can write", out)
         # the home 0.1.9's setup left when started under umask 000 (seen 2026-11-23 in a scratch home)
-        above = [".local", ".local/share", ".config", ".config/systemd", ".config/systemd/user"]   # the copy's, then the units
+        # the copy's, then the units', then the state folder's, where revive writes the start files it runs (the
+        # state folder left open was seen 2026-11-24 on a stock Linux machine after 0.1.9's setup under umask 000)
+        above = [".local", ".local/share", ".config", ".config/systemd", ".config/systemd/user", ".local/state"]
         for rel in above + [".local/share/windstorm-tardigrade"]:
             os.chmod(os.path.join(self.home, rel), 0o777)
         for rel in (".local/share/windstorm-tardigrade/tardigrade.py", ".config/systemd/user/windstorm-tardigrade-revive.service",
@@ -2574,8 +2576,8 @@ class Setup(Base):
         self.assertEqual(rc, 0, out)
         for i, rel in enumerate(above, 1):
             p = os.path.join(self.home, rel)
-            self.assertIn(f"{i}. {p} can be written by every account on this computer: anything in it, Tardigrade's "
-                          f"own units and copy included, can be replaced by another account. To close it: chmod go-w {p}", out)
+            self.assertIn(f"{i}. {p} can be written by every account on this computer: anything in it, what Tardigrade "
+                          f"runs at boot included, can be replaced by another account. To close it: chmod go-w {p}", out)
             self.assertEqual(os.stat(p).st_mode & 0o777, 0o777, rel)      # not ours to change: named, left as it is
         self.assertNotIn(f"{os.path.join(self.home, '.local/share/windstorm-tardigrade')} can be written", out)
         self.assertEqual(os.stat(os.path.join(self.home, ".local/share/windstorm-tardigrade")).st_mode & 0o022, 0)
@@ -2597,6 +2599,15 @@ class Setup(Base):
         os.chmod(self.home, 0o755)
         self.assertIn(f"1. {os.path.join(self.home, '.local')} can be written by every account", self.tg("census")[1])
         os.chmod(os.path.join(self.home, ".local"), 0o755)
+        # the settings and state folders, and the start files' folder in it, are the tool's own: each run closes the
+        # first two to 0700, which keeps the third out of reach, so none of them is named; the folders above them are
+        for rel in (".config/windstorm-tardigrade", ".local/state/windstorm-tardigrade",
+                    ".local/state/windstorm-tardigrade/launch"):
+            os.makedirs(os.path.join(self.home, rel), exist_ok=True)
+            os.chmod(os.path.join(self.home, rel), 0o777)
+        self.assertNotIn("another account can write", self.tg("census")[1])
+        for rel in (".config/windstorm-tardigrade", ".local/state/windstorm-tardigrade"):
+            self.assertEqual(os.stat(os.path.join(self.home, rel)).st_mode & 0o777, 0o700, rel)
 
     def test_G3_29_a_group_folder_is_named_only_when_another_member_can_reach_it(self):
         # family rule 28, WHEN A PERSON'S FOLDER IS NAMED: a 775 folder in the person's own group with nobody else in
