@@ -1367,6 +1367,20 @@
    "issue": 104,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T98",
+   "seen": "2026-11-24, before an upgrade on a large Linux machine with about 100 sessions: the machine's keeper asked for \"the session count and the would-start count, before and after, read only\". The tool could not answer the second half read-only. A census has no such number: it was derived by hand from `census --json` (down rows that are neither ended nor already written down as down, plus the sessions coming back, plus the waiting screens left by a stopped restore), by a rule the maintainer gave in a message. And `revive --dry-run`, the one command that lists what a revive would start, was read in the code of 0.1.9 and 0.1.10.1 to make the state folder, take the revive lock and write log lines. A keeper without the maintainer at hand would have had no number, or would have run a \"dry run\" that writes.",
+   "promise": "(1) census names the number of sessions a revive would start now, as a line on the page and a field in `census --json`, and it is counted by the same function the revive decides by, so the two cannot drift; where census cannot tell (a failed read), it says so and gives no number. (2) `revive --dry-run` writes nothing and removes nothing: 0.1.11 (T81) already makes no file or folder and writes no log line when no lock is in its way; this row holds the rest, a dry run with a lock in its way (a revive running, or a lock left by a cut run), and a home that is set up. A test compares the whole-home listing and the log's bytes before and after a dry run, with and without a lock, and compares census's number with what the next revive starts. Built with T97 and T66, which change the same lines of the census page.",
+   "codon": "G3.35",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.12",
+   "ship_in": "0.1.12",
+   "test": "",
+   "proven": "",
+   "issue": 105,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

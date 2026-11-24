@@ -262,6 +262,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G3.32 | Due in 0.1.11 (T92). After an uninstall that keeps something, its last lines and the census say what a setup after it does with each kept thing; a test holds the lines to what setup then does. | Not built yet. |
 | G3.33 | Due in 0.1.10.1 (T93), alone. The census says a reboot brings sessions back only when the boot service, the timer and the copy they run are there now, never from the setting alone; else NO with what is missing and run setup, or "could not be read" when systemctl or launchctl gives no answer. Setup's "is set up" is the same read, as its last act (exit 0, 1, or 3 when it could not be read). | `test_G3_33_census_says_a_reboot_brings_sessions_back_only_from_what_is_there_now`, `test_G3_33_setup_says_set_up_only_when_the_same_read_passes` |
 | G3.34 | Due in 0.1.12 (T97), with T66. When a running session is left out of the record, the census's "Comes back after a reboot" line says how many of the running sessions it covers and how many it does not, and points to the list below; `census --json` carries the two counts. | Not built yet. |
+| G3.35 | Due in 0.1.12 (T98), with T97 and T66. Census names the number of sessions a revive would start now, on the page and in `census --json`, counted by the same function the revive decides by. `revive --dry-run` writes nothing and removes nothing, also with a lock in its way and in a home that is set up. | Not built yet. |
 
 ### G4 Windows and tabs
 
