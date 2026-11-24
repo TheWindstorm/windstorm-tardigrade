@@ -1223,7 +1223,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G5_18_the_guard_catches_each_kind_in_a_planted_test_and_only_the_gate_can_take_it_out",
    "proven": "",
    "issue": 94,
    "moved_why": "",

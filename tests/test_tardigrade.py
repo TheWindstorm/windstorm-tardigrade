@@ -23,6 +23,40 @@ import uuid
 # temporary home of its own and loses this account's lines to its desktop session and its tmux server; every program
 # the run starts inherits that. git finds no global config there (GIT_CONFIG_NOSYSTEM beside it: older git has no
 # GIT_CONFIG_GLOBAL, so the home is the base). Each test still makes its own home under its own folder (Base.setUp).
+# THE GUARD'S OTHER PARTS (T87, G5.18; the first is above). The real home is read from the account, before HOME is
+# changed; a setting that would put the suite's temporary folders inside it stops the run before anything is made.
+try:
+    import pwd
+    REAL_HOME = os.path.realpath(pwd.getpwuid(os.getuid()).pw_dir)
+except (ImportError, KeyError):
+    REAL_HOME = os.path.realpath(os.path.expanduser("~"))
+TMP_ROOT = os.path.realpath(os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
+if REAL_HOME != os.sep and (TMP_ROOT + os.sep).startswith(REAL_HOME + os.sep):
+    sys.exit("The suite stopped before making anything: its temporary folders (TARDIGRADE_TEST_TMP) would be inside "
+             "the home of the account that runs it. Nothing was made or changed.")
+REAL_TMUX_DIRS = sorted({os.path.join(os.path.realpath(_d), f"tmux-{os.getuid()}")
+                         for _d in ("/tmp", os.environ.get("TMUX_TMPDIR") or "/tmp")})
+PROGRAMS = ("tmux", "systemctl", "crontab", "loginctl", "launchctl", "claude")
+
+
+def _real_program(name):
+    """this machine's own program of that name: the first on PATH that is not a loud stand-in of this suite (a run
+    of the suite started by a test of the suite inherits a PATH with the outer run's stand-ins first)"""
+    for d in (os.environ.get("PATH") or os.defpath).split(os.pathsep):
+        cand = os.path.join(d or ".", name)
+        if not (os.path.isfile(cand) and os.access(cand, os.X_OK)):
+            continue
+        try:
+            with open(cand, "rb") as f:
+                if b"the suite's guard: " in f.read(400):
+                    continue
+        except OSError:
+            continue
+        return cand
+    return None
+
+
+_REAL_TMUX = _real_program("tmux")      # read before this run's stand-ins come first on PATH
 RUN_HOME = tempfile.mkdtemp(prefix="tgrun", dir=os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
 os.makedirs(os.path.join(RUN_HOME, "home"))
 os.environ["HOME"] = os.path.join(RUN_HOME, "home")
@@ -30,6 +64,24 @@ os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
 for _k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE",
            "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
     os.environ.pop(_k, None)
+# Part 2: what answers for the ACCOUNT and not for its home resolves first to a stand-in that fails loudly and
+# writes down that it was reached; a test brings its own. The one real program the tests need, tmux, is linked
+# into the run's folder and used by that path, always with a socket folder of the test's own.
+STUBS = os.path.join(RUN_HOME, "stand-ins")
+UNPLANNED = os.path.join(RUN_HOME, "unplanned.log")
+REAL_LINKS = os.path.join(RUN_HOME, "real")
+for _d in (STUBS, REAL_LINKS, os.path.join(RUN_HOME, "tmux")):
+    os.makedirs(_d)
+for _n in PROGRAMS:
+    with open(os.path.join(STUBS, _n), "w") as _f:
+        _f.write(f'#!/bin/sh\necho "{_n} $*" >> "{UNPLANNED}"\n'
+                 f'echo "the suite\'s guard: {_n} was reached and the test brought no {_n} of its own ({_n} $*)" >&2\n'
+                 "exit 97\n")
+    os.chmod(os.path.join(STUBS, _n), 0o755)
+os.environ["PATH"] = STUBS + os.pathsep + os.environ.get("PATH", os.defpath)
+os.environ["TMUX_TMPDIR"] = os.path.join(RUN_HOME, "tmux")
+if _REAL_TMUX:
+    os.symlink(_REAL_TMUX, os.path.join(REAL_LINKS, "tmux"))
 
 
 def _end_run_home():
@@ -88,7 +140,7 @@ def names_folder(pid, folder):
 # another program's). A pid is only a number: between the moment it is written down and the moment it is signalled
 # the process can end and the number can be given to another program.
 NOT_SHOWN = []          # (test, pid, why): signals that were not sent; the test that asked fails
-_SIGNAL = {"on": True, "shown": None}
+_SIGNAL = {"shown": None}
 
 
 def parent_of(pid):
@@ -152,13 +204,13 @@ def _signal_hook(event, args):
     """The net under signal_mine (the first part of the guard's hook, T87): every os.kill and os.killpg of this
     process passes here. A signal to a pid that is not shown to be the running test's own is refused before it is
     sent, and fails that test. Signal 0 sends nothing (it asks whether a process is there) and passes."""
-    if event[:7] != "os.kill" or not _SIGNAL["on"]:
+    if event[:7] != "os.kill" or _guard_out():
         return
     pid, sig = args[0], args[1]
     if event == "os.kill" and (sig == 0 or pid == os.getpid() or pid == _SIGNAL["shown"]
                                or (pid > 1 and shown_mine(pid, GUARD["tmp"]))):
         return
-    test = GUARD["test"] or "no test"
+    test = WATCH["test"] or GUARD["test"] or "no test"
     why = ("a whole process group" if event == "os.killpg" or pid <= 1 else
            f"{cmdline_of(pid)!r}: not shown to be the test's own")
     NOT_SHOWN.append((test, pid, why))
@@ -192,7 +244,7 @@ SCRIPT = os.path.join(ROOT, "scripts", "tardigrade.py")
 MARK_TEXT = "made by Windstorm Tardigrade's test suite for one run in this scratch home"
 FAKE = os.path.join(ROOT, "tests", "fake_claude.py")
 FAKE_HERDR = os.path.join(ROOT, "tests", "fake_herdr.py")
-TMUX = shutil.which("tmux")
+TMUX = os.path.join(REAL_LINKS, "tmux") if _REAL_TMUX else None
 REAL_PS = shutil.which("ps")
 WAIT = float(os.environ.get("TARDIGRADE_TEST_WAIT", "40"))
 
@@ -295,6 +347,175 @@ def _guarded_spec(name, location=None, *a, **kw):
 
 importlib.util.spec_from_file_location = _guarded_spec
 
+# Part 3 (T87): a hook in the test process counts, while a test runs: an open, a listing or a change in the real home
+# outside this checkout and Python's own libraries (a rename, link or copy at either end); a child handed the real
+# home or none, or no tmux folder of its own, or a PATH that finds this machine's own copy of one of part 2's
+# programs before a stand-in or a copy in a temporary folder, or one of them by its own path; and each time a loud
+# stand-in was reached. Part 4: the count fails the test in its own result, at its end, whatever it asserted and
+# also when it swallowed the error. THE GUARD HAS NO SWITCH: no setting takes it out. Only the gate test's planted
+# cases run with it out (_GUARD_OUT), and anything else found there fails the test that meets it.
+# What the hook cannot see: a read that only stats a path, and what a child does by itself (parts 1 and 2 are for
+# those).
+WATCH = {"case": None, "test": None, "hits": [], "mark": 0}
+_GUARD_OUT = []
+GATE_TEST = "test_G5_18_the_guard_catches_each_kind_in_a_planted_test_and_only_the_gate_can_take_it_out"
+_TEMP_ROOTS = sorted({TMP_ROOT, os.path.realpath(tempfile.gettempdir()), "/tmp"})
+
+
+def _python_own():
+    import site
+    own = [ROOT, sys.prefix, sys.base_prefix, sys.exec_prefix]
+    try:
+        own.append(site.getusersitepackages())
+    except Exception:
+        pass
+    return sorted({os.path.realpath(x) for x in own if x})
+
+
+_EXEMPT = _python_own()
+_PATH_EVENTS = {"open": (0,), "os.listdir": (0,), "os.scandir": (0,), "os.walk": (0,), "glob.glob": (0,),
+                "os.chmod": (0,), "os.chown": (0,), "os.remove": (0,), "os.rmdir": (0,), "os.mkdir": (0,),
+                "os.utime": (0,), "os.truncate": (0,), "os.rename": (0, 1), "os.link": (0, 1), "os.symlink": (0, 1),
+                "shutil.rmtree": (0,), "shutil.copyfile": (0, 1), "shutil.copymode": (0, 1), "shutil.copystat": (0, 1),
+                "shutil.copytree": (0, 1), "shutil.move": (0, 1), "shutil.chown": (0,), "tempfile.mkstemp": (0,),
+                "tempfile.mkdtemp": (0,)}
+
+
+def _under(path, roots):
+    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
+def _in_real_home(p):
+    if REAL_HOME == os.sep or not isinstance(p, (str, bytes, os.PathLike)):
+        return False
+    try:
+        q = os.path.realpath(os.fsdecode(p))
+    except (TypeError, ValueError, OSError):
+        return False
+    return _under(q, [REAL_HOME]) and not _under(q, _EXEMPT)
+
+
+def _child_hits(argv, env):
+    env = os.environ if env is None else env
+    if isinstance(argv, (str, bytes, os.PathLike)):
+        argv = [argv]
+    argv = [os.fsdecode(a) if isinstance(a, (bytes, os.PathLike)) else str(a) for a in (argv or [])]
+    line, hits = " ".join(argv)[:120], []
+    home, tdir, path = env.get("HOME"), env.get("TMUX_TMPDIR"), env.get("PATH")
+    if not home:
+        hits.append(f"a child with no HOME: {line}")
+    elif os.path.realpath(home) == REAL_HOME:
+        hits.append(f"a child handed the real home: {line}")
+    if not tdir or os.path.join(os.path.realpath(tdir), f"tmux-{os.getuid()}") in REAL_TMUX_DIRS:
+        hits.append(f"a child with no tmux folder of its own (TMUX_TMPDIR {tdir or 'not set'}): {line}")
+    for name in PROGRAMS:
+        found = shutil.which(name, path=os.defpath if path is None else path)
+        if found and not _under(os.path.abspath(found), _TEMP_ROOTS):
+            hits.append(f"a child whose PATH finds this machine's own {name} ({found}) before a stand-in: {line}")
+            break
+    if argv and os.sep in argv[0] and os.path.basename(argv[0]) in PROGRAMS \
+            and not _under(os.path.abspath(argv[0]), _TEMP_ROOTS):
+        hits.append(f"this machine's own {os.path.basename(argv[0])}, by its path: {line}")
+    return hits
+
+
+def _guard_out():
+    case = WATCH["case"]
+    return case is not None and any(c is case for c in _GUARD_OUT)
+
+
+def _watch_hook(event, args):
+    if WATCH["case"] is None or (event not in _PATH_EVENTS and event[:10] != "subprocess" and event[:3] != "os."):
+        return
+    if _guard_out():
+        return
+    try:
+        if event in _PATH_EVENTS:
+            for i in _PATH_EVENTS[event]:
+                if i < len(args) and _in_real_home(args[i]):
+                    WATCH["hits"].append(f"{event} in the home of the account that runs the suite: "
+                                         f"{os.fsdecode(args[i])}")
+        elif event == "subprocess.Popen":
+            WATCH["hits"] += _child_hits(args[1], args[3])
+        elif event in ("os.exec", "os.posix_spawn"):
+            WATCH["hits"] += _child_hits(args[1], args[2])
+    except Exception as e:                      # the hook never breaks the call it watches; it fails the test
+        WATCH["hits"].append(f"the guard's hook itself failed at {event}: {e!r}")
+
+
+sys.addaudithook(_watch_hook)
+
+
+def _unplanned_size():
+    try:
+        return os.path.getsize(UNPLANNED)
+    except OSError:
+        return 0
+
+
+def _watch_end(case):
+    """part 4: what was counted while this test ran fails it, in its own result"""
+    out = any(c is case for c in _GUARD_OUT)
+    name = case._testMethodName
+    hits, WATCH["hits"] = list(WATCH["hits"]), []
+    try:
+        with open(UNPLANNED) as f:
+            f.seek(WATCH["mark"])
+            reached = f.read().splitlines()
+    except OSError:
+        reached = []
+    WATCH["mark"] = _unplanned_size()
+    hits += [f"a stand-in that fails loudly was reached, and the test brought none of its own: {x}" for x in reached]
+    # G7.11 (T86): a signal this test asked for by a pid it could not show as its own was not sent, and fails it
+    mine = [x for x in NOT_SHOWN if x[0] == name]
+    NOT_SHOWN[:] = [x for x in NOT_SHOWN if x[0] != name]
+    hits += [f"signal: {test} asked to signal pid {pid}, not shown to be its own ({why}); not sent"
+             for test, pid, why in mine]
+    if out:
+        return                                  # a planted case of the gate test, run with the guard taken out
+    if _GUARD_OUT and name != GATE_TEST:
+        _GUARD_OUT[:] = []
+        hits.append("the guard was taken out outside the gate test's planted run; it is back in")
+    if hits:
+        hits = list(dict.fromkeys(hits))
+        raise GuardRefused(f"guard: {name}: " + "; ".join(hits[:6])
+                           + (f"; and {len(hits) - 6} more" if len(hits) > 6 else ""))
+
+
+_case_run = unittest.TestCase.run
+
+
+def _watched_run(self, result=None):
+    before = dict(WATCH)
+    WATCH.update(case=self, test=self._testMethodName, hits=[], mark=_unplanned_size())
+    self.addCleanup(_watch_end, self)           # registered first, so it runs last, after the test's own cleanups
+    try:
+        return _case_run(self, result)
+    finally:
+        WATCH.update(before, mark=_unplanned_size())
+
+
+unittest.TestCase.run = _watched_run
+
+
+def planted(act, out=False):
+    """Run act() as a test of its own that swallows every error, and give its result. out=True: with the guard taken
+    out for that one case (the gate test's use, G5.18 part 5)."""
+    class Planted(unittest.TestCase):
+        def test_planted(self):
+            try:
+                act()
+            except Exception:
+                pass
+    case, res = Planted("test_planted"), unittest.TestResult()
+    if out:
+        _GUARD_OUT.append(case)
+    try:
+        case.run(res)
+    finally:
+        _GUARD_OUT[:] = [c for c in _GUARD_OUT if c is not case]
+    return res
+
 
 @unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
 class Base(unittest.TestCase):
@@ -327,7 +548,7 @@ class Base(unittest.TestCase):
         with open(os.path.join(self.bin, "systemctl"), "w") as f:
             f.write('#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\nexit 1\n')
         os.chmod(os.path.join(self.bin, "systemctl"), 0o755)
-        self.path = f"{self.bin}:/usr/local/bin:/usr/bin:/bin"
+        self.path = f"{self.bin}:{STUBS}:/usr/local/bin:/usr/bin:/bin"       # the loud stand-ins before the system's
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",
                     "USER": os.environ.get("USER", "u"), "LANG": "C.UTF-8", "TERM": "xterm-256color",
                     "TARDIGRADE_TESTING": "1", "TARDIGRADE_FAKE_UPTIME_S": "100000", "TARDIGRADE_FAKE_BOOT_ID": "boot-a",
@@ -361,11 +582,6 @@ class Base(unittest.TestCase):
     def guard_end(self):
         caught, GUARD["caught"] = GUARD["caught"], []
         GUARD.update(tmp=None, test=None)
-        # G7.11 (T86): a signal this test asked for by a pid it could not show as its own was not sent, and fails it
-        mine = [x for x in NOT_SHOWN if x[0] == self._testMethodName]
-        NOT_SHOWN[:] = [x for x in NOT_SHOWN if x[0] != self._testMethodName]
-        caught += [f"signal: {test} asked to signal pid {pid}, not shown to be its own ({why}); not sent"
-                   for test, pid, why in mine]
         if caught:
             raise GuardRefused("; ".join(caught))
 
@@ -1126,7 +1342,9 @@ class Revive(Base):
         sid = self.recorded_then_rebooted()
         self.cfg({"path": f"{self.bin}:/usr/bin:/bin"})
         n = len(self.launches())
-        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, PATH="/usr/local/bin:/usr/bin:/bin")
+        # the boot service's PATH: the system's folders and no folder with claude in it. The suite's loud stand-ins
+        # come first on it (G5.18): a start that used this PATH would reach one, and never this machine's own claude
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, PATH=f"{STUBS}:/usr/local/bin:/usr/bin:/bin")
         self.assertEqual(rc, 0, out)
         new = self.wait_launches(n + 1)[-1]
         self.assertEqual(new["argv"][new["argv"].index("--resume") + 1], sid)
@@ -1144,12 +1362,12 @@ class Revive(Base):
         self.reboot()
         n = len(self.launches())
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-b",
-                          PATH=f"/usr/local/bin::.:rel/bin:/usr/bin:/bin:{extra}:{extra}:")
+                          PATH=f"{STUBS}:/usr/local/bin::.:rel/bin:/usr/bin:/bin:{extra}:{extra}:")
         self.assertEqual(rc, 0, out)
         new = self.wait_launches(n + 1)[-1]
         # and only whole paths, once each: "", "." or "rel/bin" would mean the session's own project folder
         self.assertEqual(new["path"].split(":"), [local, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
-                                                         "/usr/sbin", "/sbin", extra], out)
+                                                         "/usr/sbin", "/sbin", STUBS, extra], out)
 
     def test_G2_2_the_revived_session_is_told_what_happened(self):
         sid = self.recorded_then_rebooted()
@@ -5075,7 +5293,9 @@ class Signals(Base):
         """T86: a pid is only a number. A signal goes out when the process is shown to be the test's still, by its
         folder, its remembered start time, or as the suite's own child; any other is not sent and fails the test"""
         me = self._testMethodName
-        clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        other = tempfile.mkdtemp(prefix="tgother")                 # a folder that is not this test's
+        self.addCleanup(shutil.rmtree, other, True)
+        clean = {"PATH": os.environ["PATH"], "HOME": other, "TMUX_TMPDIR": other}
         nap = [shutil.which("sleep"), "300"]
         gone = lambda pid: self.until(lambda: not running(pid), f"pid {pid} to go")
         asked = lambda: [x for x in NOT_SHOWN if x[0] == me]
@@ -5101,11 +5321,9 @@ class Signals(Base):
         self.assertEqual((len(asked()), {x[1] for x in asked()} - {stranger, os.getpgid(stranger), -os.getpgid(stranger)}),
                          (5, set()))
         # the test that asked fails when it ends, whatever it asserts
-        keep = dict(GUARD)
         with self.assertRaisesRegex(GuardRefused, f"asked to signal pid {stranger}, not shown to be its own"):
-            self.guard_end()
-        GUARD.update(keep, caught=[])
-        self.assertEqual(forget(), 0, "guard_end takes what it reports")
+            _watch_end(self)
+        self.assertEqual(forget(), 0, "the end takes what it reports")
         # (1b) a process with nothing to read: no command line, and an environment that names nothing of ours. That
         # is how a process looks for a moment while it ends, so it is given three seconds to finish ending. One that
         # is alive and stays like that is a stranger like any other: waited for, never signalled, written down.
@@ -5162,26 +5380,107 @@ class Signals(Base):
         self.assertEqual(forget(), 1)
         # (5) with the hook taken out the same signal is delivered: the hook is what refused it
         loose, born = self.orphan(nap, clean)
-        _SIGNAL["on"] = False
-        try:
-            os.kill(loose, signal.SIGTERM)
-        finally:
-            _SIGNAL["on"] = True
+        res = planted(lambda: os.kill(loose, signal.SIGTERM), out=True)
+        self.assertTrue(res.wasSuccessful() and res.testsRun == 1, res.failures + res.errors)
         gone(loose)
         self.assertEqual(forget(), 0)
         # (6) nothing in this file signals a pid any other way
         import ast
         tree, out = ast.parse(fread(__file__)), []
+        inside = {}                                     # each call -> the named function it stands in
         for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.Lambda)):
-                continue
-            for c in ast.walk(fn):
-                if (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute) and c.func.attr in ("kill", "killpg")
-                        and isinstance(c.func.value, ast.Name) and c.func.value.id == "os"):
-                    probe = len(c.args) == 2 and isinstance(c.args[1], ast.Constant) and c.args[1].value == 0
-                    if not probe and getattr(fn, "name", "") not in ("signal_mine", "_on_signal", me):
-                        out.append(f"line {c.lineno} in {getattr(fn, 'name', 'a lambda')}")
+            if isinstance(fn, ast.FunctionDef):
+                for c in ast.walk(fn):
+                    if isinstance(c, ast.Call):
+                        inside[c] = fn.name             # the innermost wins: ast.walk reaches inner functions later
+        for c, where in inside.items():
+            if (isinstance(c.func, ast.Attribute) and c.func.attr in ("kill", "killpg")
+                    and isinstance(c.func.value, ast.Name) and c.func.value.id == "os"):
+                probe = len(c.args) == 2 and isinstance(c.args[1], ast.Constant) and c.args[1].value == 0
+                if not probe and where not in ("signal_mine", "_on_signal", me, GATE_TEST):
+                    out.append(f"line {c.lineno} in {where}")
         self.assertEqual(sorted(set(out)), [], "a signal sent past signal_mine")
+
+    def test_G5_18_the_guard_catches_each_kind_in_a_planted_test_and_only_the_gate_can_take_it_out(self):
+        """T87: the guard's parts 2 to 5. A planted test of each kind is caught, also when it swallows the error, and
+        passes with the guard taken out; nothing but a planted case of this test can take it out; no setting sends
+        the suite's folders into the real home"""
+        probe = os.path.join(REAL_HOME, ".tardigrade-guard-probe")      # never there: each act fails before it makes it
+        self.assertFalse(os.path.lexists(probe))
+        good = {"HOME": self.home, "PATH": self.path, "TMUX_TMPDIR": self.tmp}
+        true = shutil.which("true")
+        other = tempfile.mkdtemp(prefix="tgother")
+        self.addCleanup(shutil.rmtree, other, True)
+        nap = [shutil.which("sleep"), "300"]
+        away = {"PATH": os.environ["PATH"], "HOME": other, "TMUX_TMPDIR": other}
+
+        def quiet(argv, env):
+            return subprocess.run(argv, env=env, cwd="/", capture_output=True)
+
+        def no(key):
+            return {k: v for k, v in good.items() if k != key}
+        kinds = [
+            ("open in the home of the account", lambda: open(os.path.join(probe, "none"))),
+            ("os.listdir in the home of the account", lambda: os.listdir(probe)),
+            ("os.mkdir in the home of the account", lambda: os.mkdir(os.path.join(probe, "a", "b"))),
+            ("os.rename in the home of the account",
+             lambda: os.rename(os.path.join(self.tmp, "none"), os.path.join(probe, "x"))),
+            ("shutil.copyfile in the home of the account",
+             lambda: shutil.copyfile(os.path.join(probe, "none"), os.path.join(self.tmp, "copied"))),
+            ("a child handed the real home", lambda: quiet([true], dict(good, HOME=REAL_HOME))),
+            ("a child with no HOME", lambda: quiet([true], no("HOME"))),
+            ("a child with no tmux folder of its own", lambda: quiet([true], no("TMUX_TMPDIR"))),
+            ("a child whose PATH finds this machine's own tmux", lambda: quiet([true], dict(good, PATH="/usr/bin:/bin"))),
+            ("a child whose PATH finds this machine's own", lambda: quiet([true], no("PATH"))),
+            ("this machine's own tmux, by its path", lambda: quiet([_REAL_TMUX, "-V"], good)),
+            ("a stand-in that fails loudly was reached, and the test brought none of its own: crontab -l",
+             lambda: quiet(["crontab", "-l"], good)),
+            ("a stand-in that fails loudly was reached, and the test brought none of its own: loginctl show-user",
+             lambda: quiet(["/bin/sh", "-c", "loginctl show-user nobody; exit 0"], good)),     # a child of a child
+        ]
+        for words, act in kinds:
+            res = planted(act)
+            self.assertEqual((res.testsRun, len(res.failures), len(res.errors)), (1, 1, 0), words)
+            self.assertIn("guard: test_planted: ", res.failures[0][1], words)
+            self.assertIn(words, res.failures[0][1])
+            res = planted(act, out=True)
+            self.assertTrue(res.wasSuccessful() and res.testsRun == 1, (words, res.failures, res.errors))
+            self.assertFalse(os.path.lexists(probe), words)
+        # a signal to a process that is not the test's (G7.11): caught in, delivered out
+        res = planted(lambda: os.kill(self.stranger(nap, away), signal.SIGTERM))
+        self.assertEqual(len(res.failures), 1)
+        self.assertIn("not shown to be its own", res.failures[0][1])
+        # a planted test that reaches nothing passes with the guard in, and a stand-in of its own is no reach
+        mine = os.path.join(self.bin, "crontab")
+        with open(mine, "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(mine, 0o755)
+        for act in (lambda: None, lambda: quiet([true], good), lambda: quiet(["crontab", "-l"], good),
+                    lambda: quiet([TMUX, "-V"], good), lambda: fread(SCRIPT), lambda: os.listdir(self.tmp)):
+            res = planted(act)
+            self.assertTrue(res.wasSuccessful() and res.testsRun == 1, (res.failures, res.errors))
+        # THE GUARD HAS NO SWITCH: taken out by anything but this test's planted run, it fails the test that meets it
+        res = planted(lambda: _GUARD_OUT.append(object()))
+        self.assertEqual(len(res.failures), 1)
+        self.assertIn("the guard was taken out outside the gate test's planted run; it is back in", res.failures[0][1])
+        self.assertEqual(_GUARD_OUT, [])
+        res = planted(lambda: open(os.path.join(probe, "none")))
+        self.assertEqual(len(res.failures), 1, "the guard is in again")
+        # no setting sends the suite's folders into the real home: the run stops before it makes anything
+        run = subprocess.run([sys.executable, "-I", "-B", os.path.abspath(__file__), "-k", "no_such_test"],
+                             env=dict(os.environ, TARDIGRADE_TEST_TMP=probe), capture_output=True, text=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("The suite stopped before making anything: its temporary folders (TARDIGRADE_TEST_TMP) would be "
+                      "inside the home of the account that runs it. Nothing was made or changed.", run.stderr)
+        self.assertFalse(os.path.lexists(probe))
+        # the stand-ins are first on the run's own PATH and on every test's, and the one real program is a link
+        for nm in PROGRAMS:
+            self.assertEqual(shutil.which(nm, path=os.environ["PATH"]), os.path.join(STUBS, nm), nm)
+            self.assertTrue(_under(shutil.which(nm, path=self.path), [self.bin, STUBS]), nm)
+        self.assertEqual(os.path.realpath(TMUX), os.path.realpath(_REAL_TMUX))
+
+    def stranger(self, argv, env):
+        return self.orphan(argv, env)[0]
 
 
 class Invariants(unittest.TestCase):
