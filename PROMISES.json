@@ -1391,7 +1391,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.12",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G5_24_the_plugin_line_reads_every_row_claude_code_keeps_for_the_plugin",
    "proven": "",
    "issue": 106,
    "moved_why": "moved earlier, from 0.1.12, on the maintainer's ruling of 2026-11-24: the line this row corrects ships in 0.1.11 (T51), and it would say \"same\" beside an enabled older plugin from the day it ships; two rows can be made today by anyone with a second catalog and the plugin's bare name.",

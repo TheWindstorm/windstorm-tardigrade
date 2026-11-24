@@ -51,8 +51,9 @@ After the plugin is updated, run `setup` again so the installed copy matches.
 
 If setup says the installed copy is a newer version than this script, it has stopped and changed nothing. Show its
 words. **Never add `--downgrade` yourself**: moving a machine back is the person's choice, in their own words. Census
-says when the plugin's version differs from the installed copy's, and when Claude Code removed the plugin while what
-setup installed still runs: show that line too.
+says when the plugin's version differs from the installed copy's, when Claude Code holds the plugin more than once,
+and when Claude Code removed the plugin while what setup installed still runs: show that line too. Do not uninstall
+either plugin yourself: which one stays is the person's to say.
 
 ## Census
 

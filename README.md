@@ -68,7 +68,10 @@ Setup never moves a computer back by itself. Run from a script older than the in
 that was not updated), it stops, names both versions and has changed nothing; `setup --downgrade` is the word that
 moves it back, and it is yours to give: an agent does not give it for you unasked. From the same or a newer script,
 setup says which version was installed before and which is now. Census says when the Claude Code plugin's version
-differs from the copy that runs at boot, with both versions, or that it could not be read.
+differs from the copy that runs at boot, with both versions, or that it could not be read. When Claude Code holds the
+plugin more than once (installed from two catalogs that both list it, or for two scopes), census names every one with
+its id and version, says "the same" only when all of them are, and for two catalogs gives the line that takes one off;
+which one is yours to say.
 
 What setup puts where: the copy, and its own list `folders-made.json`, in `~/.local/share/windstorm-tardigrade/`. On
 Linux three unit files in `~/.config/systemd/user/`, and `systemctl --user enable` makes two links for them in that
@@ -430,7 +433,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 155 tests on Linux with stand-ins for `claude` and `herdr`, run on every pull request and on every push to main or a release branch,
+- 156 tests on Linux with stand-ins for `claude` and `herdr`, run on every pull request and on every push to main or a release branch,
   with Python 3.9 (the floor) and 3.13, on a runner image the workflow names.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.

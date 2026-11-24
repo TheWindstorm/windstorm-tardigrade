@@ -4228,6 +4228,74 @@ sys.exit(rc)
         self.assertEqual(j["answer"], "unread")
         self.assertIn("could not be read, so whether they match is not known.", out)
 
+    def test_G5_24_the_plugin_line_reads_every_row_claude_code_keeps_for_the_plugin(self):
+        """T99: Claude Code keeps one key per catalog the plugin was installed from, and one row per scope under a
+        key. Every row is read: an older, enabled plugin in a second row is named, in whichever order the file
+        holds them, and "same" is said only when every row is the same"""
+        import re
+        self.stand_in_services()
+        ver = re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        own, shared = "windstorm-tardigrade@windstorm-tardigrade", "windstorm-tardigrade@a-shared-catalog"
+        other = "another-plugin@a-shared-catalog"
+        user = lambda v: {"scope": "user", "version": v, "installPath": "/nowhere/named/9.9.9"}
+
+        def census(rows):
+            self.registry(rows)
+            out = self.tg("census")[1]
+            j = json.loads(self.tg("census", "--json")[1])["plugin"]
+            lines = [l for l in out.splitlines() if "plugin" in l]
+            self.assertLessEqual(len(lines), 1, out)
+            return (lines[0] if lines else ""), j
+
+        step = (f"Next step: keep one. In a terminal, `claude plugin uninstall {shared}` or `claude plugin uninstall "
+                f"{own}` takes that one off; which one is yours to say.")
+        two = "That is more than one skill of one name: an agent may load any of them, and each runs its own script. "
+        # two catalogs, the older row second: the case that was seen (the first row matched, and "same" was said)
+        for order in ([shared, own], [own, shared]):
+            rows = {other: [user("0.0.9")]}
+            rows.update({k: [user(ver if k == shared else "0.0.9")] for k in order})
+            line, j = census(rows)
+            said = "; ".join(f"{k} at version {ver if k == shared else '0.0.9'}" for k in order)
+            self.assertEqual(line, f"Claude Code holds the Tardigrade plugin 2 times: {said}. The copy that runs at boot "
+                             f"is version {ver}. {two}Setup run from an older one stops, so that it does not move this "
+                             f"computer back. {step}", order)
+            self.assertEqual((j["answer"], j["installed"], j["plugin"]), ("differs", ver, "0.0.9"), order)
+            self.assertEqual(j["rows"], [{"id": k, "scope": "user", "version": ver if k == shared else "0.0.9"}
+                                         for k in order])
+        # both the same as the copy: "same", and the two are still named once, with the step
+        line, j = census({own: [user(ver)], shared: [user(ver)]})
+        self.assertEqual(j["answer"], "same")
+        self.assertEqual(line, f"Claude Code holds the Tardigrade plugin 2 times: {own} at version {ver}; {shared} at "
+                         f"version {ver}. The copy that runs at boot is version {ver}. {two}{step}")
+        # three rows: a second scope under one key, older; and a newer one beside it
+        line, j = census({own: [user(ver), {"scope": "project", "version": "0.0.9"}], shared: [user("99.0.1")]})
+        self.assertEqual(j["answer"], "differs")
+        self.assertEqual(line, f"Claude Code holds the Tardigrade plugin 3 times: {own} (scope user) at version {ver}; "
+                         f"{own} (scope project) at version 0.0.9; {shared} at version 99.0.1. The copy that runs at boot "
+                         f"is version {ver}. {two}Setup run from an older one stops, so that it does not move this "
+                         f"computer back. Setup run from a newer one brings the copy up to it. {step}")
+        self.assertEqual(len(j["rows"]), 3)
+        # one catalog, two scopes: named, and no word about two skills or taking one off
+        line, j = census({own: [user(ver), {"scope": "project", "version": ver}]})
+        self.assertEqual(j["answer"], "same")
+        self.assertEqual(line, f"Claude Code holds the Tardigrade plugin 2 times: {own} (scope user) at version {ver}; "
+                         f"{own} (scope project) at version {ver}. The copy that runs at boot is version {ver}.")
+        # a row that cannot be read is said, never skipped: beside one that matches it is "unread", never "same"
+        for bad in ([{"scope": "user"}], ["not a row"], "not a list"):
+            line, j = census({shared: [user(ver)], own: bad})
+            self.assertEqual(j["answer"], "unread", bad)
+            self.assertIn(f"{own} at a version that could not be read", line, bad)
+            line, j = census({own: bad, shared: [user("0.0.9")]})
+            self.assertEqual((j["answer"], j["plugin"]), ("differs", "0.0.9"), bad)
+        # one row alone, and none, are as before (G5.10); an emptied row is none
+        line, j = census({shared: [user("0.0.9")], own: []})
+        self.assertEqual((j["answer"], j["rows"]), ("differs", [{"id": shared, "scope": "user", "version": "0.0.9"}]))
+        self.assertIn(f"The Claude Code plugin is version 0.0.9; the copy that runs at boot is version {ver}.", line)
+        line, j = census({other: [user("0.0.9")], own: []})
+        self.assertEqual((line, j["answer"], j["rows"]), ("", "none", []))
+
     def test_G3_19_a_copy_set_up_from_the_plugin_says_when_claude_code_removed_the_plugin_and_goes_on(self):
         """T60: the boot service and the timer go on until this tool's own uninstall. A copy set up from the
         plugin's folder says in one line, in the census, the report and the log at each boot, that Claude Code

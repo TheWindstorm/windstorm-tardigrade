@@ -3427,7 +3427,7 @@ def census():
     places = setup_places()
     d["setup_places"] = {"links": places[0], "folders_made": places[1]}
     plug = plugin_facts()
-    d["plugin"] = {k: plug[k] for k in ("answer", "installed", "plugin")}
+    d["plugin"] = {k: plug[k] for k in ("answer", "installed", "plugin", "rows")}
     if d.get("cannot_tell"):
         if "--json" in ARGS:
             print(json.dumps(d, indent=1, sort_keys=True))
@@ -4145,8 +4145,11 @@ UNINSTALL_LINE = "python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py u
 
 def plugin_registry(base):
     """Claude Code's own list of installed plugins under its folder base. Three answers (family rule 24):
-    ("row", version) when it has a row for this plugin, ("no-row", "") when it reads fine and has none (an emptied
-    row counts as none), ("unread", why) when the file is not there, cannot be read or is not the shape known."""
+    ("rows", [...]) when it has rows for this plugin, ("no-row", []) when it reads fine and has none (an emptied
+    row counts as none), ("unread", why) when the file is not there, cannot be read or is not the shape known.
+    G5.24 (T99): EVERY row is given, under every key (Claude Code keeps one key per catalog the plugin was installed
+    from, and under a key one row per scope), each as {"id", "scope", "version"}; a row whose version cannot be read
+    is given with version "", never left out. The version is the row's own, never a folder's name."""
     p = os.path.join(base, "plugins", "installed_plugins.json")
     try:
         with open(p, encoding="utf-8") as f:
@@ -4158,20 +4161,26 @@ def plugin_registry(base):
     plugins = d.get("plugins") if isinstance(d, dict) else None
     if not isinstance(plugins, dict):
         return "unread", f"{p} does not look as expected"
+    found = []
     for key, rows in plugins.items():
-        if isinstance(key, str) and key.split("@")[0] == PLUGIN and isinstance(rows, list) and rows:
-            v = rows[0].get("version") if isinstance(rows[0], dict) else None
-            return "row", (v if isinstance(v, str) else "")
-    return "no-row", ""
+        if not (isinstance(key, str) and key.split("@")[0] == PLUGIN):
+            continue
+        for row in (rows if isinstance(rows, list) else [None]):
+            v = row.get("version") if isinstance(row, dict) else None
+            sc = row.get("scope") if isinstance(row, dict) else None
+            found.append({"id": key, "scope": sc if isinstance(sc, str) else "", "version": v if isinstance(v, str) else ""})
+    return ("rows", found) if found else ("no-row", [])
 
 
 def plugin_facts():
     """G3.19 (T60) and G5.10 (T51): what Claude Code's registry says of the plugin, beside the installed copy.
     {"answer": ..., "line": the one line for the person or "", and both versions}. Answers:
     "no copy"; "removed" (the copy was set up from the plugin's folder, the registry reads fine and has no row);
-    "same"; "differs"; "unread" (the registry or a version could not be read); "none" (no plugin to speak of)."""
+    "same"; "differs"; "unread" (the registry or a version could not be read); "none" (no plugin to speak of).
+    G5.24 (T99): with more than one row, "same" only when every row is the same, "differs" when any differs; "rows"
+    lists each, and "plugin" is the one version they share, else the first that differs."""
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
-    out = {"answer": "none", "line": "", "installed": "", "plugin": ""}
+    out = {"answer": "none", "line": "", "installed": "", "plugin": "", "rows": []}
     if not is_ours(script, "copy"):
         return dict(out, answer="no copy")
     out["installed"] = version_of(script)
@@ -4189,6 +4198,10 @@ def plugin_facts():
             return out          # a copy set up from a clone never had a row: a missing row says nothing
         return dict(out, answer="removed", line="Claude Code removed the Tardigrade plugin. What setup installed is "
                     "still here: sessions are still brought back after a restart. To take it off: " + UNINSTALL_LINE)
+    out["rows"] = x
+    if len(x) > 1:
+        return plugin_rows_facts(out, x)
+    x = x[0]["version"]
     out["plugin"] = x
     if not x or not out["installed"]:
         return dict(out, answer="unread", line="The version of the Claude Code plugin or of the installed copy could "
@@ -4200,6 +4213,36 @@ def plugin_facts():
                 f"version {out['installed']}. " + ("Run setup again from the plugin to bring the copy up to it." if newer
                                                  else "Setup run from that plugin stops, so that it does not move this "
                                                  "computer back: update the plugin in Claude Code."))
+
+
+def plugin_rows_facts(out, rows):
+    """G5.24 (T99): Claude Code holds the plugin more than once (from two catalogs, or for two scopes). Every row is
+    named; one of another version than the installed copy is not hidden behind one that matches."""
+    inst = out["installed"]
+    ids = [r["id"] for r in rows]
+
+    def named(r):
+        return (r["id"] + (f" (scope {r['scope'] or 'not named'})" if ids.count(r["id"]) > 1 else "") + " at "
+                + (f"version {r['version']}" if r["version"] else "a version that could not be read"))
+    differ = [r for r in rows if r["version"] and inst and r["version"] != inst]
+    unread = [r for r in rows if not r["version"]]
+    versions = {r["version"] for r in rows}
+    line = (f"Claude Code holds the Tardigrade plugin {len(rows)} times: " + "; ".join(named(r) for r in rows) + ". "
+            + (f"The copy that runs at boot is version {inst}. " if inst else
+               "The version of the copy that runs at boot could not be read. "))
+    catalogs = sorted(set(ids))
+    if len(catalogs) > 1:
+        line += "That is more than one skill of one name: an agent may load any of them, and each runs its own script. "
+    if any(vkey(r["version"]) < vkey(inst) for r in differ):
+        line += "Setup run from an older one stops, so that it does not move this computer back. "
+    if any(vkey(r["version"]) > vkey(inst) for r in differ):
+        line += "Setup run from a newer one brings the copy up to it. "
+    if len(catalogs) > 1:
+        line += ("Next step: keep one. In a terminal, " + " or ".join(f"`claude plugin uninstall {i}`" for i in catalogs)
+                 + " takes that one off; which one is yours to say.")
+    return dict(out, line=line.strip(), plugin=(versions.pop() if len(versions) == 1 else
+                                                (differ[0]["version"] if differ else "")),
+                answer="differs" if differ else "unread" if unread or not inst else "same")
 
 
 def group_accounts(gid):
