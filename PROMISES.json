@@ -1045,6 +1045,20 @@
    "issue": 80,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T75",
+   "seen": "2026-11-23, another skill's suite began to fail at midnight UTC, hours before a planned tag, because a stand-in read \"23:59Z today\" from the machine's clock. Tardigrade 0.1.9 reads the machine's clock directly in about sixty places, with no single clock a test can hand it, and one test (test_G2_44) builds a limit reply that resets three days from the real now. It passes because the tool reads the same real clock, but the suite cannot be run with the date moved ahead.",
+   "promise": "every clock read in the tool goes through one now(), with an offset a test can hand it through an environment setting whose name says it is for tests only; when it is set, every log line the run writes says the run is shifted and by how much. test_G2_44 takes its date from that clock. Every place that compares now() with a time kept on disk (a file's own time, the record's stamp) is decided one by one and written down: either a true finding about what the tool does with a record days old, or a test that writes its files under the shifted clock; file times are never shifted wholesale. Before each tag, the release list runs the whole suite once at +1, +7 and +30 days, with a control test that must fail when shifted and does. 0.1.9 cannot do this run; that is said on 0.1.10's release list as the state before it, not as a gap in 0.1.9's proofs.",
+   "codon": "G5.14",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "",
+   "proven": "",
+   "issue": 81,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
