@@ -228,6 +228,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G2.24 | After the starts it keeps looking for up to `watch_min` minutes, then counts: LOADED (Claude Code has written the session's own file), UP-NOT-LOADED and DOWN, the last two by name. "A process is up" is not counted as loaded. | `test_G2_24_after_the_starts_it_counts_loaded_and_names_what_is_not` |
 | G2.52 | Due in 0.1.11 (T69). Setup and each boot run make every marker they keep readable by the person only, not only the ones they write; a test plants an old marker with a wider mode and sees it tightened. | Not built yet. |
 | G2.53 | Due in 0.1.11 (T85). A revive that starts after an earlier one was stopped part way starts each recorded session at most once: no session id gets a second Claude, no tmux session a second pane; the test stops revive at planted points, not after a time. | Not built yet. |
+| G2.54 | Due in 0.1.11 (T89). A missing prompt history is said as not there, never as could not be read; an unreadable one is said as could not be read with its cause; nothing is decided differently because of the word. | Not built yet. |
 
 ### G3 Census: say what is running and what is not
 
