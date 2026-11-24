@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -5105,6 +5106,31 @@ class Signals(Base):
             self.guard_end()
         GUARD.update(keep, caught=[])
         self.assertEqual(forget(), 0, "guard_end takes what it reports")
+        # (1b) a process with nothing to read: no command line, and an environment that names nothing of ours. That
+        # is how a process looks for a moment while it ends, so it is given three seconds to finish ending. One that
+        # is alive and stays like that is a stranger like any other: waited for, never signalled, written down.
+        hold = tempfile.mkdtemp(prefix="tgghost")
+        self.addCleanup(shutil.rmtree, hold, True)
+        fifo = os.path.join(hold, "f")
+        os.mkfifo(fifo)
+        blank = [shutil.which("bash"), "-c", 'exec 0<>"$1"; exec -a "" cat', "x", fifo]   # cat, named "", waits
+        ghost, ghost_born = self.orphan(blank, clean)
+        self.until(lambda: cmdline_of(ghost) == "", "the planted process to have no command line")
+        self.assertEqual((start_time(ghost), shown_mine(ghost, self.tmp)), (ghost_born, ""))
+        t0 = time.time()
+        self.assertFalse(signal_mine(ghost, signal.SIGKILL, self.tmp, test=me))
+        self.assertGreaterEqual(time.time() - t0, 2.9, "it was given the time to finish ending")
+        time.sleep(0.3)
+        self.assertTrue(running(ghost), "a live process with no command line was signalled")
+        self.assertEqual([(x[1], x[2][:4]) for x in asked()], [(ghost, "'': ")], "and it is written down")
+        self.assertEqual(forget(), 1)
+        # one that does end during the wait was nobody's to signal: nothing sent, nothing written down
+        threading.Timer(0.5, signal_mine, (ghost, signal.SIGKILL, "", ghost_born)).start()
+        t0 = time.time()
+        self.assertFalse(signal_mine(ghost, signal.SIGTERM, self.tmp, test=me))
+        self.assertLess(time.time() - t0, 2.5, "the wait ends when the process has ended")
+        gone(ghost)
+        self.assertEqual(forget(), 0, "it ended while it was waited for: nothing to write down")
         # (2) shown by the start time remembered with it: sent
         self.assertTrue(signal_mine(stranger, signal.SIGTERM, self.tmp, started=born, test=me))
         gone(stranger)
