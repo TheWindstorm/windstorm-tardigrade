@@ -5,8 +5,10 @@ real session, no real tmux server and no service is touched. Linux only. Run: py
 """
 import ast
 import hashlib
+import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -73,11 +75,86 @@ for _sig in (signal.SIGTERM, signal.SIGHUP):
 import atexit  # noqa: E402
 atexit.register(_end_live)
 
+# THE SUITE'S GUARD (T78, family rule 23). From 0.1.10 the test setting counts only with the suite's marker in the
+# test's own scratch home (G5.15); anywhere else the tool acts for real, and the home of the account that runs the
+# suite may hold a live install and running sessions. So no test but T78's own may run the tool with the setting
+# ignored, and none may run it with a home outside the test's own temporary folder. A run of the program is refused
+# before it starts; a load in the test's process is refused right after it (nothing has run yet but the module's
+# own lines). Either way the test fails, whatever it asserts: the refusal is raised and also kept, and Base checks
+# what was kept when the test ends.
+GUARD = {"tmp": None, "test": None, "caught": []}
+GUARD_SETTING_MAY_BE_IGNORED = {"test_G5_15_the_testing_setting_alone_changes_nothing_and_says_so"}
+_RUNS_TOOL = re.compile(r"(?:^|[\s/\"'])tardigrade\.py(?=$|[\s\"'])")
+
+
+class GuardRefused(AssertionError):
+    pass
+
+
+def suite_marked(home):
+    """the suite's marker is in home, as the tool reads it (a regular file, not a link, its words first)"""
+    p = os.path.join(home, "tardigrade-test-home")
+    try:
+        return not os.path.islink(p) and os.path.isfile(p) and fread(p).startswith(MARK_TEXT)
+    except OSError:
+        return False
+
+
+def guard_check(home, testing, how):
+    tmp, test = GUARD["tmp"], GUARD["test"]
+    if tmp is None:
+        why = "no test that made its own folder is running"
+    elif not home or not (os.path.realpath(home) + os.sep).startswith(os.path.realpath(tmp) + os.sep):
+        why = f"its home {home!r} is not inside the test's own folder {tmp}"
+    elif not testing and test not in GUARD_SETTING_MAY_BE_IGNORED:
+        why = "the test setting is ignored there (no suite marker in that home), so the tool would act for real"
+    else:
+        return
+    msg = f"guard: {test or 'no test'} ran the tool ({how}) and {why}"
+    GUARD["caught"].append(msg)
+    raise GuardRefused(msg)
+
+
+_popen_init = subprocess.Popen.__init__
+
+
+def _guarded_popen_init(self, args, *a, **kw):
+    argv = [args] if isinstance(args, (str, bytes, os.PathLike)) else list(args)
+    line = " ".join(os.fsdecode(x) if isinstance(x, (bytes, os.PathLike)) else str(x) for x in argv)
+    if _RUNS_TOOL.search(line):
+        env = kw.get("env")
+        env = os.environ if env is None else env
+        home = env.get("HOME")
+        guard_check(home, env.get("TARDIGRADE_TESTING") == "1" and bool(home) and suite_marked(home),
+                    "as a program: " + line[:160])
+    _popen_init(self, args, *a, **kw)
+
+
+subprocess.Popen.__init__ = _guarded_popen_init
+_spec_from_file_location = importlib.util.spec_from_file_location
+
+
+def _guarded_spec(name, location=None, *a, **kw):
+    spec = _spec_from_file_location(name, location, *a, **kw)
+    if location is not None and os.path.basename(os.fspath(location)) == "tardigrade.py" and spec and spec.loader:
+        run = spec.loader.exec_module
+
+        def exec_module(module):
+            run(module)
+            guard_check(module.HOME, module.TESTING, "loaded in the test's process")
+        spec.loader.exec_module = exec_module
+    return spec
+
+
+importlib.util.spec_from_file_location = _guarded_spec
+
 
 @unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="tg", dir=os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
+        GUARD.update(tmp=self.tmp, test=self._testMethodName, caught=[])
+        self.addCleanup(self.guard_end)
         self.pids, self.loose = [], []
         LIVE.append(self)
         self.addCleanup(self.end_all)     # runs even when setUp fails after this line, or tearDown raises
@@ -115,6 +192,25 @@ class Base(unittest.TestCase):
         self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1, "retry_gap_s": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
+
+    def load_tool(self):
+        """the tool loaded in this test's process with this test's home (the suite's marker in it) and the test
+        setting, kept for the whole test: some of its functions read the environment at each call (the guard)"""
+        from unittest import mock
+        patch = mock.patch.dict(os.environ, HOME=self.home, TARDIGRADE_TESTING="1",
+                                TARDIGRADE_FAKE_X11_DIR=os.path.join(self.tmp, "x11"))
+        patch.start()
+        self.addCleanup(patch.stop)
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        return tg
+
+    def guard_end(self):
+        caught, GUARD["caught"] = GUARD["caught"], []
+        GUARD.update(tmp=None, test=None)
+        if caught:
+            raise GuardRefused("; ".join(caught))
 
     def end_all(self):
         """end only what this test started, each by its exact process id; every step runs even if one fails"""
@@ -511,9 +607,7 @@ class Record(Base):
         self.assertNotIn("Agent One", out)
         # nothing more of it is read by our code: not its environment, its arguments or its status file
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.HOME, tg.CFG["skip_cwd_prefix"] = self.home, [agents]
         read = []
         for fn in ("env_facts", "argv_of", "session_json", "has_tty"):
@@ -980,9 +1074,7 @@ class Revive(Base):
         self.wait_launches(n + 2)
         self.assertIn("could not be used: it does not look as expected", out)
         import importlib.util                           # and nobody is taken as ended by it: one too many is the safe side
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.HOME, tg.STATE = self.home, st
         tg.LOG = os.path.join(st, "tardigrade.log")
         self.assertEqual(tg.exited_at({"session_id": a, "last_seen": seen}), 0)
@@ -1191,15 +1283,9 @@ class Revive(Base):
         os.makedirs(rt)
         with open(os.path.join(rt, "bus"), "w") as f:
             f.write("")
-        # the test setting counts only with the suite's marker in HOME (G5.15), so the tool is loaded with this
-        # test's home, where setUp wrote it; with the runner's own home it read the machine's real X11 folder
-        from unittest import mock
-        patch = mock.patch.dict(os.environ, HOME=self.home, TARDIGRADE_TESTING="1", TARDIGRADE_FAKE_X11_DIR=x11)
-        patch.start()
-        self.addCleanup(patch.stop)               # live_desktop reads the X11 folder's setting at each call
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        # the test setting counts only with the suite's marker in HOME (G5.15): with the runner's own home this test
+        # read the machine's real X11 folder (seen 2026-11-24 on CI, which has no display :10)
+        tg = self.load_tool()
         self.assertTrue(tg.TESTING)
         gone = [("DISPLAY", ":11.0"), ("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-gone,guid=1")]
         self.assertEqual(tg.live_desktop(gone), [("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", f"unix:path={rt}/bus")])
@@ -1395,9 +1481,7 @@ class Revive(Base):
                           "Bash", "Edit", "--resume", sid])
         # the name it has now goes with --name: a session renamed since it started keeps its new name
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         self.assertEqual(tg.flags_of({"mode": "default", "name": "New Name", "flags": ["-n", "Old Name", "--chrome"]}),
                          ["-n", "New Name", "--chrome"])
         self.assertEqual(tg.start_flags(["claude", "-c", "--resume", "x", "--print", "hi", "--ide", "-d", "api"]),
@@ -1690,9 +1774,7 @@ class Revive(Base):
         self.assertEqual(len(stamps), 2, out)
         self.assertGreaterEqual(stamps[1] - stamps[0], 5, "one note a minute (6 s in tests): they were not spaced")
         # the rules, one by one
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.CFG.update(wake="idle", wake_names=["^Alpha"], wake_skip=[])
         self.assertEqual([tg.wants_note({"name": x}) for x in ("Alpha Lane", "Beta Lane")], [True, False])
         tg.CFG.update(wake_text="Back at {when}. Carry on.")
@@ -1744,9 +1826,7 @@ class Revive(Base):
         self.assertNotIn("is at its usage limit", out)    # a screen can be history: it holds this session only (G2.45)
         # the forms it takes, or may take; and ordinary words are not mistaken for one
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         for text in ("⚠ Usage limit reached · limit resets 12pm", "/usage-credits to continue now", "usage credits",
                      "You've hit your limit · resets 3pm", "Weekly limit reached", "5-hour limit reached",
                      "Opus limit reached", "Approaching usage limit", "/extra-usage to keep going",
@@ -1817,9 +1897,7 @@ class Revive(Base):
         self.assertEqual(sorted(rep["note_not_typed"]), sorted(["Alpha Lane", other]))
         # a limit reply that the person went on past is not the end of the conversation; nor is an ordinary error
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.HOME = self.home
         r = {"session_id": a}
         self.assertTrue(tg.ended_on_limit(r))
@@ -1840,9 +1918,7 @@ class Revive(Base):
     def test_G2_48_a_limit_reply_holds_the_note_only_while_its_reset_is_ahead(self):
         import datetime as D
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         z = lambda w: D.datetime.fromisoformat(w.replace("Z", "+00:00")).timestamp()
         weekly, five = "You've hit your weekly limit \u00b7 resets ", "You've hit your 5-hour limit \u00b7 resets "
         # real reply texts from one weekend; the moment comes from the reply's own time and zone, never today's clock
@@ -1914,9 +1990,7 @@ class Revive(Base):
         self.assertNotIn("weekly limit", typed[0])
         self.assertNotIn("is at its usage limit", out)
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         self.assertEqual(tg.note_problem(tg.WAKE_NOTE), "")              # the default note never reads as one
         for text in ("set to continue automatically", "Stop and wait", "see /usage-credits"):
             self.assertTrue(tg.note_problem(text), text)
@@ -2619,9 +2693,7 @@ class Setup(Base):
         # family rule 28, WHEN A PERSON'S FOLDER IS NAMED: a 775 folder in the person's own group with nobody else in
         # it is the ordinary state of a Linux home; a second member who can pass the home makes it open
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         real_account_ids = tg.account_ids
         os.chmod(self.tmp, 0o755)
         d = os.path.join(self.home, ".local")
@@ -2683,6 +2755,41 @@ class Setup(Base):
         self.assertIn("only an administrator can close it", lines[1])
         self.assertNotIn("chmod", " ".join(lines))
 
+    def test_G5_15_the_suite_refuses_to_run_the_tool_outside_its_own_scratch_home(self):
+        # the suite's guard (T78, family rule 23): only T78's own test may run the tool with the test setting ignored,
+        # and no test may run it with a home outside its own folder; a refused program never starts
+        import pwd
+        real = pwd.getpwuid(os.getuid()).pw_dir
+        probe = os.path.join(self.tmp, "started")
+        refused = [
+            lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--version"], env=dict(self.env, HOME=real)),
+            lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--version"]),            # the runner's own HOME
+            lambda: subprocess.run(["/bin/sh", "-c", f"touch {probe}; exec python3 -I {SCRIPT} --version"],
+                                   env=dict(self.env, HOME=real)),
+            lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--version"], env=dict(self.env, TARDIGRADE_TESTING="0")),
+            lambda: importlib.util.spec_from_file_location("tardigrade", SCRIPT).loader.exec_module(
+                importlib.util.module_from_spec(importlib.util.spec_from_file_location("tardigrade", SCRIPT))),
+        ]
+        for i, run in enumerate(refused):
+            with self.assertRaises(GuardRefused, msg=i):
+                run()
+        self.assertFalse(os.path.exists(probe))                    # refused before it started
+        mark = os.path.join(self.home, "tardigrade-test-home")
+        os.rename(mark, mark + ".off")                              # the setting with no marker: ignored, so refused
+        with self.assertRaises(GuardRefused):
+            self.tg("--version")
+        os.rename(mark + ".off", mark)
+        tmp = GUARD["tmp"]
+        GUARD["tmp"] = None                                          # outside a test that made its own folder
+        with self.assertRaises(GuardRefused):
+            self.tg("--version")
+        GUARD["tmp"] = tmp
+        rc, out = self.tg("--version")                              # this test's own home, marker and setting: runs
+        self.assertEqual((rc, out.strip()), (0, re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1)))
+        self.assertTrue(self.load_tool().TESTING)
+        self.assertEqual(len(GUARD["caught"]), 7)
+        GUARD["caught"].clear()                                      # made on purpose, so they do not fail this test
+
     def test_G5_15_the_testing_setting_alone_changes_nothing_and_says_so(self):
         # T78, family rule 27: two keys for test mode, the setting AND the marker the suite writes in its scratch home
         self.stand_in_services()
@@ -2741,9 +2848,7 @@ class Setup(Base):
 
     def test_G5_3_setup_and_census_say_who_has_to_log_in_on_a_mac(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         short, lines = tg.mac_story("FileVault is On.", "me", "me")
         self.assertIn("unlocks this Mac (FileVault)", short)
         self.assertIn("NOTHING comes back", lines[0])
