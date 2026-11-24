@@ -50,6 +50,15 @@ def fread(path):
         return f.read()
 
 
+def running(pid):
+    """the process is there and not a zombie waiting for its parent to read its exit"""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
+
+
 def gone_soon(find, within=5.0):
     """What find() still lists after waiting up to `within` seconds for it to list nothing (G7.2). A process that was
     told to end exits a moment later, so a test that reads once can see it still there; one that stays is still caught."""
@@ -252,13 +261,28 @@ class Base(unittest.TestCase):
                 pass
         # anything else of this test's still running: a tardigrade run in flight when the run was stopped carries
         # the test's folder only in its HOME, not on its command line. Each is ended by its exact process id.
-        mine = self.processes_of_this_test()
-        for pid in mine:
-            self.kill(pid)
-        end = time.time() + 3
-        while time.time() < end and any(os.path.exists(f"/proc/{p}") for p in mine):
-            time.sleep(0.1)
+        self.end_mine()
         shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def end_mine(self, within=10.0):
+        """end every process of this test by its exact id, then scan again once those have exited, until a scan finds
+        none (T84, G7.10): what a run in flight starts as it is stopped (the tmux server of a session it brings back)
+        is there only after the first scan. One that outlives its SIGTERM gets SIGKILL in the next round. Returns what
+        is still there when the time is up."""
+        end, told = time.time() + within, set()
+        while True:
+            mine = self.processes_of_this_test()
+            if not mine or time.time() >= end:
+                return mine
+            for pid in mine:
+                try:
+                    os.kill(pid, signal.SIGKILL if pid in told else signal.SIGTERM)
+                except OSError:
+                    pass
+            told.update(mine)
+            wait = min(end, time.time() + 3)
+            while time.time() < wait and any(running(p) for p in mine):
+                time.sleep(0.1)
 
     def processes_of_this_test(self):
         """this user's processes whose command line or environment names this test's folder (never this one)"""
@@ -3426,6 +3450,43 @@ class Tests(unittest.TestCase):
         self.assertGreaterEqual(time.time() - t, 1.0)
         stays.kill()
         stays.wait()
+
+    def test_G7_10_the_cleanup_of_a_stopped_run_ends_what_its_run_in_flight_starts_as_it_is_stopped(self):
+        # T84: G7.1 failed under load (and once alone) on a session the tool's revive brought back while the run was
+        # being stopped: its tmux server was started after the cleanup's one scan. Planted here without the tool: a
+        # process of the test's (its folder only in its HOME, as a tardigrade run in flight) that, told to end, starts
+        # one more process naming the folder and only then exits.
+        tmp = tempfile.mkdtemp(prefix="tg")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        late = os.path.join(tmp, "late")
+        code = ("import os, signal, subprocess, sys, time\n"
+                "def stop(*_):\n"
+                "    subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', sys.argv[1]],\n"
+                "                     start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                "    time.sleep(0.3)\n"
+                "    os._exit(0)\n"
+                "signal.signal(signal.SIGTERM, stop)\n"
+                "open(sys.argv[2], 'w').close()\n"
+                "while True:\n"
+                "    time.sleep(1)\n")
+        ready = os.path.join(tempfile.mkdtemp(prefix="g710"), "ready")
+        self.addCleanup(shutil.rmtree, os.path.dirname(ready), True)
+        run = subprocess.Popen([sys.executable, "-c", code, late, ready], env=dict(os.environ, HOME=os.path.join(tmp, "h")))
+        self.addCleanup(lambda: run.poll() is None and run.kill())
+        end = time.time() + 10
+        while not os.path.exists(ready) and time.time() < end:
+            time.sleep(0.05)
+        test = Base("run")
+        test.tmp = tmp
+        find = test.processes_of_this_test
+        self.assertEqual(find(), [run.pid])                       # found by its HOME alone
+        try:
+            self.assertEqual(test.end_mine(), [])
+            self.assertEqual(gone_soon(find, within=1.0), [], "what it started as it was stopped is still there")
+            run.wait(timeout=5)
+        finally:
+            for pid in find():                                     # a failed run of this test leaves nothing either
+                os.kill(pid, signal.SIGKILL)
 
 
 class Invariants(unittest.TestCase):

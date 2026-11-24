@@ -308,6 +308,7 @@ The tests run on a person's own machine, so they must leave it as they found it.
 | G7.7 | Due in 0.1.11 (T63). The README's status line names the script's version, and T50's test fails when it differs. | Not built yet. |
 | G7.8 | Due in 0.1.11 (T67). The real rounds are written as eval cases in the skill-creator style (what the person says, what the agent must run and say), and they run before a release. | Not built yet. |
 | G7.9 | Due in 0.1.10 (T76). Every `git clone` line in the README names the release tag (`--depth 1 --branch v<version>`), never the default branch; the version test reads every clone line and fails on a bare clone, a branch or another tag. | `test_G7_4_every_place_that_states_the_version_says_the_same_one` |
+| G7.10 | Due in 0.1.10 (T84). The cleanup of a test run stopped part way scans again once what it found has exited, until a scan finds none, so the tmux server of a session the run in flight brings back as it is stopped is ended too (G7.1 failed on it under load). | `test_G7_10_the_cleanup_of_a_stopped_run_ends_what_its_run_in_flight_starts_as_it_is_stopped` |
 
 ### Planned: what the hundred-session reboot asked for
 
