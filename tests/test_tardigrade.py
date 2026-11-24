@@ -126,6 +126,12 @@ def signal_mine(pid, sig, folder, started=None, test=""):
     if was is None or not running(pid):
         return False                                    # gone: no signal to a number
     if not shown_mine(pid, folder, started):
+        # A process that is ending gives its memory back first: for a moment it is still listed and has no command
+        # line and no environment to read, so nothing can show whose it is. It is given three seconds to finish
+        # ending. One that stays like that is written down like any other that was not shown.
+        end = time.time() + 3
+        while cmdline_of(pid) == "" and start_time(pid) == was and running(pid) and time.time() < end:
+            time.sleep(0.05)
         if start_time(pid) != was or not running(pid):
             return False                                # it ended while it was being read
         NOT_SHOWN.append((test, pid, f"{cmdline_of(pid)!r}: neither this test's folder in its command line or "
