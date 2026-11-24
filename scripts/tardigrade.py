@@ -57,7 +57,25 @@ LOG = os.path.join(STATE, "tardigrade.log")
 INSTALL_DIR = os.path.join(HOME, ".local", "share", "windstorm-tardigrade")
 ARGS = sys.argv[2:]
 DRY = "--dry-run" in ARGS
-TESTING = os.environ.get("TARDIGRADE_TESTING") == "1"
+# G5.15 (T78), family rule 27: the test behaviour (shorter waits, stand-in facts) takes two keys, the setting AND the
+# marker the test suite writes in the scratch home it made. The setting alone changes nothing, and the run says so.
+TEST_MARK = os.path.join(HOME, "tardigrade-test-home")
+TEST_MARK_TEXT = "made by Windstorm Tardigrade's test suite for one run in this scratch home"
+
+
+def test_marked():
+    try:
+        st = os.lstat(TEST_MARK)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_size > 4096:
+            return False
+        with open(TEST_MARK, encoding="utf-8") as f:
+            return f.read().startswith(TEST_MARK_TEXT)
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+TESTING = os.environ.get("TARDIGRADE_TESTING") == "1" and test_marked()
+TESTING_IGNORED = "TARDIGRADE_TESTING" in os.environ and not TESTING
 
 CFG = {
     "shell": None,            # "bash" or "zsh"; default: your login shell
@@ -1609,7 +1627,7 @@ def clean_env():
     user = os.environ.get("USER") or os.path.basename(HOME)
     e = {"HOME": HOME, "USER": user, "LOGNAME": user, "SHELL": shutil.which(CFG["shell"]) or f"/bin/{CFG['shell']}",
          "LANG": os.environ.get("LANG") or "en_US.UTF-8", "TERM": "xterm-256color", "PATH": CFG["path"]}
-    for k in ("TMPDIR", "XDG_RUNTIME_DIR", "TARDIGRADE_TESTING"):
+    for k in ("TMPDIR", "XDG_RUNTIME_DIR") + (("TARDIGRADE_TESTING",) if TESTING else ()):
         if os.environ.get(k):
             e[k] = os.environ[k]
     return e
@@ -3052,6 +3070,9 @@ def census():
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
     for line in folders:
         print(line)
+    if os.environ.get("TMUX_TMPDIR") and not CFG.get("tmux_tmpdir"):     # G5.15: a person's setting that chose
+        print(f"tmux sockets are looked for in {tmux_dir()} (from TMUX_TMPDIR; the boot service does not have it: "
+              "set tmux_tmpdir in config.json to the same folder).")
     if d.get("record_not_written"):
         print(record_not_written_text(d["record_not_written"]))
     pr = d["restore"]
@@ -3222,6 +3243,8 @@ def open_windows():
             if t and shutil.which(t):
                 term = t
                 break
+        if term and desk and not DRY and term == os.environ.get("TERMINAL"):
+            print(f"Opening the windows with {term} (from TERMINAL).")      # G5.15: a person's setting that chose
     for r in hidden:
         att = [CFG["tmux"], "-S", r["tmux_socket"], "attach", "-t", "=" + r["tmux_session"]]
         line = " ".join(shlex.quote(x) for x in att[:-1]) + " " + q_target(r["tmux_session"])   # safe to paste in zsh too
@@ -3683,5 +3706,15 @@ if __name__ == "__main__":
     # with (a job runner on a shared machine was seen starting every job with umask 000)
     os.umask(os.umask(0o022) | 0o022)
     private_dirs()
+    if TESTING_IGNORED:     # G5.15: the first line of the run, on the screen (stderr, so --json stays whole) and in the log
+        said = ("found TARDIGRADE_TESTING and ignored it: there is no test marker in this home, so this run behaves "
+                "exactly as it does for a person (no shorter waits, no stand-in facts, nothing handed on)")
+        print(said, file=sys.stderr, flush=True)
+        try:
+            fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {said}\n")
+        except OSError:
+            pass
     load_cfg()
     sys.exit(COMMANDS[cmd]() or 0)

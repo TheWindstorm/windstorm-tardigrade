@@ -44,6 +44,7 @@ def gone_soon(find, within=5.0):
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "scripts", "tardigrade.py")
+MARK_TEXT = "made by Windstorm Tardigrade's test suite for one run in this scratch home"
 FAKE = os.path.join(ROOT, "tests", "fake_claude.py")
 FAKE_HERDR = os.path.join(ROOT, "tests", "fake_herdr.py")
 TMUX = shutil.which("tmux")
@@ -85,6 +86,10 @@ class Base(unittest.TestCase):
         self.work = os.path.join(self.tmp, "work")
         for d in (self.home, self.bin, self.work):
             os.makedirs(d)
+        # G5.15 (T78): the second key of test mode, written in the scratch home this test made (TARDIGRADE_TESTING alone
+        # changes nothing)
+        with open(os.path.join(self.home, "tardigrade-test-home"), "w") as f:
+            f.write(MARK_TEXT + "\n")
         # The stand-in is named "claude" from its first instant, as the native program (and npm from 2.1.113) is: its
         # first line names its interpreter directly, and a process started from a script keeps the script's name.
         # Through its own /usr/bin/env line it is "python3" until Python has loaded: the window of Claude Code from npm
@@ -696,7 +701,7 @@ class Revive(Base):
         for word in ("SHIFT_SECONDS", "LD_PRELOAD", "FAKE_NOW", "FAKE_TIME", "CLOCK_OFFSET"):
             self.assertNotIn(word, src)
         ce = src[src.index("def clean_env():"):src.index("def login_print(")]
-        self.assertIn('for k in ("TMPDIR", "XDG_RUNTIME_DIR", "TARDIGRADE_TESTING"):', ce)
+        self.assertIn('for k in ("TMPDIR", "XDG_RUNTIME_DIR") + (("TARDIGRADE_TESTING",) if TESTING else ()):', ce)
         # a session the tool starts gets none of the tool's other variables, and the shift only by the stand-in
         self.recorded_then_rebooted()
         n = len(self.launches())
@@ -2618,11 +2623,6 @@ class Setup(Base):
             raise KeyError(g)
         tg.group_accounts = unreadable                                        # membership that cannot be read is said
         self.assertIsNone(tg.who_can_write(d))
-
-    def test_G5_2_setup_dry_run_installs_nothing(self):
-        rc, out = self.tg("setup", "--dry-run")
-        self.assertIn("would copy", out)
-        self.assertFalse(os.path.exists(os.path.join(self.home, ".config", "systemd")))
         # a folder another account owns: named with its owner, and no command, since the person cannot change it
         tg.open_folders = lambda: [(d, "the account that owns it")]
         lines = tg.open_folder_lines()
@@ -2679,6 +2679,11 @@ class Setup(Base):
         with open(mark, "w") as f:
             f.write("something else\n")
         self.assertIn("ignored it", self.tg("census")[1])
+
+    def test_G5_2_setup_dry_run_installs_nothing(self):
+        rc, out = self.tg("setup", "--dry-run")
+        self.assertIn("would copy", out)
+        self.assertFalse(os.path.exists(os.path.join(self.home, ".config", "systemd")))
         self.assertFalse(os.path.exists(os.path.join(self.home, ".local", "share", "windstorm-tardigrade")))
 
     def test_G5_3_setup_and_census_say_who_has_to_log_in_on_a_mac(self):
@@ -3257,6 +3262,71 @@ class Invariants(unittest.TestCase):
                                     "signal", "termios", "select",    # the waiting screen (G4.4): standard, no network
                                     "ctypes",    # macOS only: a process's own argument list from the kernel (G2.39)
                                     "zoneinfo"})  # the zone a limit reply names, to read when it resets (G2.48)
+
+
+    def test_G5_15_every_environment_read_is_on_one_list(self):
+        # T78, family rule 27: every setting the released tool reads has an owner (a person's, a fact from the host,
+        # our own marker); test settings take two keys. environment.json holds the lists; this reads the code.
+        tree = ast.parse(fread(SCRIPT))
+
+        def environ(n):
+            return (isinstance(n, ast.Attribute) and n.attr == "environ" and isinstance(n.value, ast.Name)
+                    and n.value.id == "os")
+
+        def strs(n):
+            return [x.value for x in ast.walk(n) if isinstance(x, ast.Constant) and isinstance(x.value, str)]
+        found, loose = set(), []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                f = n.func
+                if (f.attr == "get" and environ(f.value)) or (f.attr == "getenv" and isinstance(f.value, ast.Name)
+                                                              and f.value.id == "os"):
+                    a = n.args[0] if n.args else None
+                    if isinstance(a, ast.Constant):
+                        found.add(a.value)
+                    else:
+                        loose.append(n.lineno)
+                if f.attr == "expanduser" and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value.startswith("~"):
+                    found.add("HOME")
+            if isinstance(n, ast.Subscript) and environ(n.value):
+                if isinstance(n.slice, ast.Constant):
+                    found.add(n.slice.value)
+                else:
+                    loose.append(n.lineno)
+            if isinstance(n, ast.Compare) and any(environ(c) for c in n.comparators) and isinstance(n.left, ast.Constant):
+                found.add(n.left.value)
+            if (isinstance(n, ast.For) and isinstance(n.target, ast.Name)
+                    and not any(isinstance(x, (ast.Call, ast.Attribute)) for x in ast.walk(n.iter))
+                    and any(isinstance(x, ast.Name) and x.id == n.target.id for b in n.body for y in ast.walk(b)
+                            if (isinstance(y, ast.Call) and isinstance(y.func, ast.Attribute) and environ(y.func.value))
+                            or (isinstance(y, ast.Subscript) and environ(y.value)) for x in ast.walk(y))):
+                found.update(strs(n.iter))      # for k in ("A", "B"): ... os.environ.get(k)
+        # a read by a name held in a variable must sit in a loop over names written out, read above
+        loops = {x.lineno for n in ast.walk(tree) if isinstance(n, ast.For) for x in ast.walk(n) if hasattr(x, "lineno")}
+        self.assertEqual([ln for ln in loose if ln not in loops], [], "an environment read by a name the test cannot see")
+        e = jload(os.path.join(ROOT, "environment.json"))
+        listed = {}
+        for kind in ("person", "host", "markers", "test_two_key"):
+            for x in e[kind]:
+                self.assertNotIn(x["name"], listed, f"{x['name']} is on two lists")
+                listed[x["name"]] = kind
+        self.assertEqual(sorted(found - set(listed)), [], "read by the tool, on no list")
+        self.assertEqual(sorted(set(listed) - found), [], "on a list, no longer read by the tool")
+        for x in e["person"]:
+            self.assertTrue(x.get("read_about") and x.get("said"), x["name"])
+        for x in e["host"]:
+            self.assertTrue(x.get("read") and x.get("not_there") and x.get("could_not_be_read"), x["name"])
+        for n in found:              # a test setting is read only behind both keys
+            if n.startswith("TARDIGRADE_FAKE_"):
+                self.assertEqual(listed[n], "test_two_key", n)
+        import re
+        src = fread(SCRIPT)
+        for m in re.finditer(r'os\.environ(?:\.get\(|\[)"(TARDIGRADE_FAKE_[A-Z0-9_]+)"', src):
+            start = src.rindex("\n", 0, m.start()) + 1
+            line = src[start:src.index("\n", m.end())]
+            above = src[src.rindex("\n", 0, start - 1) + 1:start]        # the guard may be the line above
+            self.assertTrue("TESTING" in line or ("TESTING" in above and above.strip().startswith("if ")),
+                            f"{m.group(1)} read without the two keys: {line.strip()}")
 
 
 class Promises(unittest.TestCase):

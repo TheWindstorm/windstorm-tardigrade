@@ -1,0 +1,113 @@
+{
+ "what": "Every environment setting the released tool reads, in the three kinds of family rule 27, and the two-key test settings. The test test_G5_15_every_environment_read_is_on_one_list reads every environment read in scripts/tardigrade.py against these lists and fails on one that is in none, or on a name listed here that the code no longer reads.",
+ "person": [
+  {
+   "name": "TERMINAL",
+   "read_about": "README, the `tardigrade open` row",
+   "said": "`open` says \"Opening the windows with <terminal> (from TERMINAL).\" when it chose the terminal"
+  },
+  {
+   "name": "TMUX_TMPDIR",
+   "read_about": "README, the tmux_tmpdir setting",
+   "said": "census says \"tmux sockets are looked for in <folder> (from TMUX_TMPDIR ...)\" when it chose the folder"
+  }
+ ],
+ "host": [
+  {
+   "name": "HOME",
+   "read": "where every file of Tardigrade's is",
+   "not_there": "Python takes the home folder from the account database",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "USER",
+   "read": "the account name for lingering, and sessions' USER and LOGNAME",
+   "not_there": "the home folder's name",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "SHELL",
+   "read": "the shell sessions start in, when the shell setting is empty (bash or zsh only)",
+   "not_there": "bash (zsh on a Mac)",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "LANG",
+   "read": "handed on to sessions",
+   "not_there": "en_US.UTF-8",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "PATH",
+   "read": "folders added after the default PATH of a tmux server it starts",
+   "not_there": "the default PATH alone",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "TMPDIR",
+   "read": "handed on to sessions",
+   "not_there": "not handed on",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "XDG_RUNTIME_DIR",
+   "read": "handed on to sessions; where systemctl --user finds the user's service manager",
+   "not_there": "/run/user/<uid>",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "DBUS_SESSION_BUS_ADDRESS",
+   "read": "for systemctl --user",
+   "not_there": "unix:path=<XDG_RUNTIME_DIR>/bus",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "DISPLAY",
+   "read": "whether there is a desktop for `open` and desktop notes",
+   "not_there": "no desktop: `open` prints the attach line for each session",
+   "could_not_be_read": "the tool's own environment is always readable"
+  },
+  {
+   "name": "WAYLAND_DISPLAY",
+   "read": "the same, for a Wayland desktop",
+   "not_there": "as DISPLAY",
+   "could_not_be_read": "the tool's own environment is always readable"
+  }
+ ],
+ "markers": [],
+ "markers_note": "Tardigrade sets no environment marker of its own that it reads back.",
+ "test_two_key": [
+  {
+   "name": "TARDIGRADE_TESTING",
+   "note": "the first key; the second is the file tardigrade-test-home that the test suite writes in its scratch home. The setting alone changes nothing, and the run's first line says it was found and ignored."
+  },
+  {
+   "name": "TARDIGRADE_FAKE_LOAD",
+   "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_BOOT_ID",
+   "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_UPTIME_S",
+   "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_USER_UP_S",
+   "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_X11_DIR",
+   "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_TMP",
+   "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_LINGER",
+   "note": "read only with both keys"
+  }
+ ]
+}

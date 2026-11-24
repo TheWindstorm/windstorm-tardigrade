@@ -71,7 +71,7 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 | `tardigrade setup` | Switches it on. From then on, sessions come back after a restart by themselves. |
 | `tardigrade census` | Lists every session: running with a window, running with **no window open**, and down. |
 | `tardigrade report` | The last restore's timeline (boot, first and last start, the count, the tabs) and what still needs you. |
-| `tardigrade open` | Opens a terminal window for each hidden session. |
+| `tardigrade open` | Opens a terminal window for each hidden session, with the terminal named in `TERMINAL` when that is set (it says so), else the first it finds. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
 | `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
@@ -274,7 +274,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `boot_wait_s` | `45` | Seconds the boot service waits before its run. Run setup again after changing it. |
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
-| `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
+| `tmux_tmpdir` | | Where tmux keeps its sockets. Empty: `TMUX_TMPDIR` when the run has it (census says so), else `/tmp`. Set this if your shell sets `TMUX_TMPDIR`: the boot service does not have it. |
 | `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. Tardigrade attaches tabs to a Herdr that is running; it never starts Herdr itself. When Herdr is not running, the log says so at once and `census` says how many tabs wait for it. Have Herdr's server start at login by itself (a launch agent on a Mac, a user service on Linux, running `herdr server`), not only from a terminal window that the desktop may or may not reopen. |
 | `answer_trust` | `false` | Set by `trust on` / `trust off`. Answer "trust this folder?" for a revived session's own folder. |
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
