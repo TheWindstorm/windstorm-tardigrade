@@ -1381,6 +1381,20 @@
    "issue": 105,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T99",
+   "seen": "2026-11-24, on a stock Linux VM (Ubuntu 24.04, Claude Code 2.1.331, a new account, the installed copy at 0.1.10.1): the plugin was installed from two catalogs at once, its own and a second one that lists it too (a stand-in for a shared catalog). Claude Code keeps one row per catalog, both enabled, each with its own folder and version. The tool reads the first row for the plugin in the file's order and stops there: with the 0.1.9 row first, census named the mismatch; with the 0.1.10.1 row first and the 0.1.9 row second, census said nothing and `census --json` answered \"same\", while a plugin at 0.1.9 was installed and enabled. An agent that loads the older plugin's skill there runs the older script (the case T51 names), and no line says it is there. Not seen on a person's machine: today no second catalog lists this plugin.",
+   "promise": "the census and the boot report read every row Claude Code keeps for the plugin, from whichever catalog: each row whose version differs from the installed copy's is named with its catalog and both versions, and \"same\" is said only when every row is the same; two rows are themselves named once, with what that means (two skills of one name) and the one next step. A row that cannot be read is said so, never skipped. A test plants two rows in both orders, and three, and reads the line and `census --json` each time. Due before a second catalog lists this plugin.",
+   "codon": "G5.24",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.12",
+   "ship_in": "0.1.12",
+   "test": "",
+   "proven": "",
+   "issue": 106,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
