@@ -3365,6 +3365,16 @@ def setup():
             print("NOT set up: systemd's user services did not take the units. The files are written in "
                   "~/.config/systemd/user/. Log out and in, then run setup again. Nothing comes back by itself yet.")
             return 1
+    # an earlier setup under a wide-open umask left these writable by others: close what is ours (G3.29)
+    for p, kind in [(INSTALL_DIR, "")] + our_places(script):
+        try:
+            if os.path.islink(p) or not (os.path.isdir(p) if not kind else is_ours(p, kind)):
+                continue
+            m = os.stat(p).st_mode & 0o7777
+            if m & 0o022:
+                os.chmod(p, m & ~0o022)
+        except OSError:
+            pass
     save_cfg_key("auto_revive", True)
     # this boot counts as revived: the sessions running now are the ones to remember
     write_marker("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
@@ -3554,6 +3564,9 @@ if __name__ == "__main__":
     if cmd not in COMMANDS:
         print(f"unknown command: {cmd}\n{__doc__}")
         sys.exit(2)
+    # G3.29 (T80), family rule 28: nothing we make is writable by another account, whatever umask we were started
+    # with (a job runner on a shared machine was seen starting every job with umask 000)
+    os.umask(os.umask(0o022) | 0o022)
     private_dirs()
     load_cfg()
     sys.exit(COMMANDS[cmd]() or 0)

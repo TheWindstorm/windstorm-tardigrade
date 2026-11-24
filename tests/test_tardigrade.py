@@ -2473,6 +2473,42 @@ class Setup(Base):
                          "Tardigrade is off this computer: nothing comes back by itself any more. What stayed is "
                          "named above.")
 
+    def test_G3_29_nothing_setup_makes_is_writable_by_another_account_whatever_the_umask(self):
+        # family rule 28 (11-23): a job gate on a shared machine started every job with umask 000; the start files
+        # and units run as the person at boot, so another account must never be able to rewrite them
+        self.stand_in_services()
+        before = set(self.whole_home())
+        for n in (1, 2):
+            r = subprocess.run(["/bin/sh", "-c", 'umask 000; exec "$0" -I "$1" setup', sys.executable, SCRIPT],
+                               capture_output=True, text=True, env=self.env, timeout=240)
+            out = r.stdout + r.stderr
+            self.assertEqual(r.returncode, 0, f"run {n}\n{out}")          # the second run is not refused
+            self.assertIn("is set up", out)
+        made = set(self.whole_home()) - before
+        self.assertIn(".local/share/windstorm-tardigrade/tardigrade.py", made)
+        self.assertIn(".config/systemd/user/windstorm-tardigrade-revive.service", made)
+        for rel in sorted(made):
+            p = os.path.join(self.home, rel)
+            mode = os.lstat(p).st_mode & 0o777
+            if not os.path.islink(p):
+                self.assertEqual(mode & 0o022, 0, f"{rel} is {oct(mode)}")
+        for d, dirs, files in os.walk(self.home):             # and nothing at all under the home is world-writable
+            for n in dirs + files:
+                p = os.path.join(d, n)
+                if not os.path.islink(p):
+                    self.assertEqual(os.lstat(p).st_mode & 0o002, 0, p)
+        # what an earlier setup under umask 000 left open (0.1.9 did) is closed by the next setup
+        opened = [".local/share/windstorm-tardigrade", ".local/share/windstorm-tardigrade/tardigrade.py",
+                  ".config/systemd/user/windstorm-tardigrade-revive.service",
+                  ".config/systemd/user/windstorm-tardigrade-record.service",
+                  ".config/systemd/user/windstorm-tardigrade-record.timer"]
+        for rel in opened:
+            os.chmod(os.path.join(self.home, rel), 0o777 if rel.endswith("tardigrade") else 0o666)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        for rel in opened:
+            self.assertEqual(os.stat(os.path.join(self.home, rel)).st_mode & 0o022, 0, rel)
+
     def test_G5_2_setup_dry_run_installs_nothing(self):
         rc, out = self.tg("setup", "--dry-run")
         self.assertIn("would copy", out)
