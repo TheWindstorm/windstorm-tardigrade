@@ -1353,6 +1353,20 @@
    "issue": 103,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T97",
+   "seen": "2026-11-24, on a Linux desktop with two sessions, one in a plain terminal window that a setting leaves out (loose_skip): the census's top lines said \"Running: 2\" and \"Comes back after a reboot: yes, by itself\"; lower on the same page, under \"RUNNING, BUT WILL NOT COME BACK after a reboot (1)\", it named that session with \"a loose_skip pattern in the settings leaves it out\". The page as a whole is true; the top line, read beside \"Running: 2\", reads as both sessions.",
+   "promise": "when a running session is left out of the record, the census's \"Comes back after a reboot\" line says how many of the running sessions it covers and how many it does not, and points to the list below (for example \"yes, by itself (1 of 2 running; 1 will not: see below)\"); with no session left out the line is as it is today. census --json carries the two counts. Built in the same change as T66. A test holds the line with a session left out for each of the three reasons the record has (a loose_skip pattern, a socket on skip_tmux_sockets, some program's own session with no terminal) and with none left out.",
+   "codon": "G3.34",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.12",
+   "ship_in": "0.1.12",
+   "test": "",
+   "proven": "",
+   "issue": 104,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
