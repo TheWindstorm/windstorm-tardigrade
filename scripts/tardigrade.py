@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.9"
+VERSION = "0.1.10"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -57,7 +57,25 @@ LOG = os.path.join(STATE, "tardigrade.log")
 INSTALL_DIR = os.path.join(HOME, ".local", "share", "windstorm-tardigrade")
 ARGS = sys.argv[2:]
 DRY = "--dry-run" in ARGS
-TESTING = os.environ.get("TARDIGRADE_TESTING") == "1"
+# G5.15 (T78), family rule 27: the test behaviour (shorter waits, stand-in facts) takes two keys, the setting AND the
+# marker the test suite writes in the scratch home it made. The setting alone changes nothing, and the run says so.
+TEST_MARK = os.path.join(HOME, "tardigrade-test-home")
+TEST_MARK_TEXT = "made by Windstorm Tardigrade's test suite for one run in this scratch home"
+
+
+def test_marked():
+    try:
+        st = os.lstat(TEST_MARK)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_size > 4096:
+            return False
+        with open(TEST_MARK, encoding="utf-8") as f:
+            return f.read().startswith(TEST_MARK_TEXT)
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+TESTING = os.environ.get("TARDIGRADE_TESTING") == "1" and test_marked()
+TESTING_IGNORED = "TARDIGRADE_TESTING" in os.environ and not TESTING
 
 CFG = {
     "shell": None,            # "bash" or "zsh"; default: your login shell
@@ -415,6 +433,38 @@ def marker():
     return os.path.join(STATE, f"revived-{boot_id()}")
 
 
+# G3.28 (T79): the tool overwrites or removes only what it wrote. A file is known as ours by a mark it carries,
+# or, for Python's cache, by the name Python gives the cache of our script. Anything else in our folders is the
+# person's: it is never written over or removed.
+MARKS = {
+    "copy": '"""Windstorm Tardigrade: bring Claude Code sessions back',     # every version's second line
+    "unit": "Description=Windstorm Tardigrade:",
+    "plist": "<string>ai.thewindstorm.tardigrade-",
+    "start": "# Windstorm Tardigrade start file.",
+    "marker": "",          # a boot marker: known by its name alone (revived-<boot id>), see is_ours
+}
+OUR_CACHE = re.compile(r"tardigrade\.[A-Za-z0-9_.-]+\.pyc")
+
+
+def is_ours(path, kind):
+    """True only when the file at path is one Tardigrade wrote: a plain file (never a link or a folder) that
+    carries our mark. Unreadable is not ours."""
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return False
+        if kind == "cache":
+            return bool(OUR_CACHE.fullmatch(os.path.basename(path)))
+        if kind == "marker":
+            return bool(re.fullmatch(r"revived-[A-Za-z0-9-]{1,64}", os.path.basename(path)))
+        with open(path, "rb") as f:
+            head = f.read(4096).decode("utf-8", "replace")
+    except OSError:
+        return False
+    if kind == "start":
+        return head.startswith(MARKS["start"])
+    return MARKS[kind] in head
+
+
 MARKERS_KEPT = 5            # G2.42, T38: only the newest few boot markers; an old boot's is never read again
 
 
@@ -422,7 +472,7 @@ def write_marker(text):
     """this boot's marker, this user's only (0600); the markers of all but the newest few boots are removed"""
     write_private(marker(), text)
     try:
-        old = sorted((p for p in glob.glob(os.path.join(STATE, "revived-*")) if p != marker()),
+        old = sorted((p for p in glob.glob(os.path.join(STATE, "revived-*")) if p != marker() and is_ours(p, "marker")),
                      key=lambda p: os.path.getmtime(p), reverse=True)
     except OSError:
         return
@@ -944,7 +994,7 @@ def in_skip_folder(path):
 def left_alone(pid):
     """G1.15: is this process working inside a folder named in skip_cwd_prefix? Then this code reads nothing more of it:
     not its environment, not its arguments, not its status file or conversation. (On Linux the system's ps, which
-    procs() runs for the whole list, opens more of every process; 0.1.10 reads /proc itself, T47.)"""
+    procs() runs for the whole list, opens more of every process; 0.1.11 reads /proc itself, T47.)"""
     return bool(CFG.get("skip_cwd_prefix")) and in_skip_folder(proc_cwd(pid))
 
 
@@ -1577,7 +1627,7 @@ def clean_env():
     user = os.environ.get("USER") or os.path.basename(HOME)
     e = {"HOME": HOME, "USER": user, "LOGNAME": user, "SHELL": shutil.which(CFG["shell"]) or f"/bin/{CFG['shell']}",
          "LANG": os.environ.get("LANG") or "en_US.UTF-8", "TERM": "xterm-256color", "PATH": CFG["path"]}
-    for k in ("TMPDIR", "XDG_RUNTIME_DIR", "TARDIGRADE_TESTING"):
+    for k in ("TMPDIR", "XDG_RUNTIME_DIR") + (("TARDIGRADE_TESTING",) if TESTING else ()):
         if os.environ.get(k):
             e[k] = os.environ[k]
     return e
@@ -2134,6 +2184,11 @@ def revive():
     try:
         os.mkdir(lock)
     except FileExistsError:
+        theirs = lock_not_ours(lock)
+        if theirs:     # G3.28: a folder by this name that holds anything but our owner file is not a lock of ours
+            log(f"revive: {lock} is there and holds what Tardigrade did not write ({theirs}); it is yours, so it "
+                "is not taken or removed, and no session is started. Move it out of this folder, then revive again.")
+            return 1
         # A revive that was cut off by a reboot or a power cut leaves its lock behind. The lock says which
         # boot and which process took it: a lock from another boot, or from a process that is gone, is stale.
         try:
@@ -2148,17 +2203,59 @@ def revive():
             log("revive: another revive is running (lock); nothing done")
             return 0
         log("revive: a lock was left by a revive that did not finish (a reboot or a power cut during it); taking over")
-        shutil.rmtree(lock, ignore_errors=True)
+        free_lock(lock)
         os.mkdir(lock)
     with open(owner, "w") as f:
         f.write(f"{boot_id()} {os.getpid()}\n")
     try:
         return _revive(boot)
     finally:
-        shutil.rmtree(lock, ignore_errors=True)
+        free_lock(lock)
+
+
+def lock_not_ours(lock):
+    """'' when the lock folder is ours (a real folder holding nothing, or only our owner file); else what in it
+    is not ours, named"""
+    if os.path.islink(lock) or not os.path.isdir(lock):
+        return "it is not a folder"
+    try:
+        other = sorted(set(os.listdir(lock)) - {"owner"})
+    except OSError:
+        return "it cannot be read"
+    if other:
+        return ", ".join(other[:5]) + (f" and {len(other) - 5} more" if len(other) > 5 else "")
+    o = os.path.join(lock, "owner")
+    if not os.path.lexists(o):
+        return ""
+    try:
+        if os.path.islink(o) or not os.path.isfile(o) or os.path.getsize(o) > 200:
+            return "owner is not our owner file"
+        with open(o) as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        return "owner cannot be read"
+    # ours says "<boot id> <pid>"; an empty one is ours too (a revive cut off between making it and writing it)
+    return "" if re.fullmatch(r"(\S+ \d+\n?)?", text) else "owner is not our owner file"
+
+
+def free_lock(lock):
+    """remove our owner file, then the folder only when it is empty; never anything else in it"""
+    if lock_not_ours(lock):
+        return
+    try:
+        os.remove(os.path.join(lock, "owner"))
+    except OSError:
+        pass
+    try:
+        os.rmdir(lock)
+    except OSError:
+        pass
 
 
 def _revive(boot):
+    if boot:      # G3.29: the boot run says it too, in its log, until the person closes the folder
+        for line in open_folder_lines():
+            log("revive --boot: " + line)
     if not CFG["tmux"]:
         log("revive: tmux is not installed; nothing can be started. Install tmux, then run setup again.")
         return 1
@@ -2274,8 +2371,9 @@ def _revive(boot):
     try:        # start files of sessions that are no longer on the record
         on_record = {r["session_id"] + ".sh" for r in read_table()["lanes"]}
         for f in os.listdir(launch_dir()):
-            if f not in on_record:
-                os.remove(os.path.join(launch_dir(), f))
+            p = os.path.join(launch_dir(), f)
+            if f not in on_record and is_ours(p, "start"):      # G3.28: only start files we wrote
+                os.remove(p)
     except OSError:
         pass
     created, came, note_for = set(), [], {}
@@ -2942,6 +3040,8 @@ def cannot_tell_text(why):
 
 def census():
     d = census_data()
+    folders = open_folder_lines()
+    d["open_folders"] = folders[1:]
     if d.get("cannot_tell"):
         if "--json" in ARGS:
             print(json.dumps(d, indent=1, sort_keys=True))
@@ -2950,6 +3050,8 @@ def census():
             print(cannot_tell_text(d["cannot_tell"]))
             if d.get("record_not_written"):
                 print(record_not_written_text(d["record_not_written"]))
+            for line in folders:
+                print(line)
         return 1
     if "--json" in ARGS:
         print(json.dumps(d, indent=1, sort_keys=True))
@@ -2966,6 +3068,11 @@ def census():
         print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
+    for line in folders:
+        print(line)
+    if os.environ.get("TMUX_TMPDIR") and not CFG.get("tmux_tmpdir"):     # G5.15: a person's setting that chose
+        print(f"tmux sockets are looked for in {tmux_dir()} (from TMUX_TMPDIR; the boot service does not have it: "
+              "set tmux_tmpdir in config.json to the same folder).")
     if d.get("record_not_written"):
         print(record_not_written_text(d["record_not_written"]))
     pr = d["restore"]
@@ -3136,6 +3243,8 @@ def open_windows():
             if t and shutil.which(t):
                 term = t
                 break
+        if term and desk and not DRY and term == os.environ.get("TERMINAL"):
+            print(f"Opening the windows with {term} (from TERMINAL).")      # G5.15: a person's setting that chose
     for r in hidden:
         att = [CFG["tmux"], "-S", r["tmux_socket"], "attach", "-t", "=" + r["tmux_session"]]
         line = " ".join(shlex.quote(x) for x in att[:-1]) + " " + q_target(r["tmux_session"])   # safe to paste in zsh too
@@ -3240,6 +3349,15 @@ def setup():
     if bad:
         print(f"wake_text is refused: its words \"{bad}\" read as Claude Code's usage or limit notice, and Tardigrade "
               "would take its own note for one. The default note is used until you change wake_text in config.json.")
+    theirs = [p for p, kind in our_places(script) if os.path.lexists(p) and not is_ours(p, kind)
+              and os.path.realpath(p) != os.path.realpath(os.path.abspath(__file__))]
+    if theirs:      # G3.28: setup is where a person's file stops, before any write
+        print("NOT set up: Tardigrade did not write these, so they are yours, and setup does not write over them:")
+        for p in theirs:
+            print(f"  {p}")
+        print("Move them out of the way, then run setup again. Nothing was installed and no file was written (only "
+              "Tardigrade's own settings and state folders, which every command makes, empty if they were not there).")
+        return 1
     if DRY:
         print(f"would copy this script to {script}, install the boot service and the 5-minute record timer, and record once")
         return 0
@@ -3280,6 +3398,16 @@ def setup():
             print("NOT set up: systemd's user services did not take the units. The files are written in "
                   "~/.config/systemd/user/. Log out and in, then run setup again. Nothing comes back by itself yet.")
             return 1
+    # an earlier setup under a wide-open umask left these writable by others: close what is ours (G3.29)
+    for p, kind in [(INSTALL_DIR, "")] + our_places(script):
+        try:
+            if os.path.islink(p) or not (os.path.isdir(p) if not kind else is_ours(p, kind)):
+                continue
+            m = os.stat(p).st_mode & 0o7777
+            if m & 0o022:
+                os.chmod(p, m & ~0o022)
+        except OSError:
+            pass
     save_cfg_key("auto_revive", True)
     # this boot counts as revived: the sessions running now are the ones to remember
     write_marker("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
@@ -3289,6 +3417,8 @@ def setup():
     record()
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")
     for line in who_logs_in():
+        print(line)
+    for line in open_folder_lines():
         print(line)
     return 0
 
@@ -3350,38 +3480,217 @@ def who_logs_in():
     return out
 
 
+def our_places(script):
+    """(path, kind) of every file setup writes outside the state and settings folders"""
+    if MAC:
+        la = os.path.join(HOME, "Library", "LaunchAgents")
+        units_at = [(os.path.join(la, label + ".plist"), "plist") for label in
+                    ("ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record")]
+    else:
+        ud = os.path.join(HOME, ".config", "systemd", "user")
+        units_at = [(os.path.join(ud, name), "unit") for name in units("", "")]
+    return [(script, "copy")] + units_at
+
+
+def group_accounts(gid):
+    """every account in group gid: its member list, and every account whose primary group it is (raises when it
+    cannot be read)"""
+    import grp
+    import pwd          # here, not at the top: neither exists on Windows, where setup says it is not supported
+    return set(grp.getgrgid(gid).gr_mem) | {u.pw_name for u in pwd.getpwall() if u.pw_gid == gid}
+
+
+def c_gid(gid):
+    """a group number as the C call takes it: a Mac writes "nobody" (-2) as 4294967294, which os.getgrouplist
+    refuses with OverflowError; given as the negative number it answers (seen on macOS 13 and 27, Python 3.9)"""
+    return gid - 2 ** 32 if gid >= 2 ** 31 else gid
+
+
+def account_ids(name):
+    """(uid, the set of its group ids) of the account name (raises when it cannot be read)"""
+    import pwd
+    u = pwd.getpwnam(name)
+    return u.pw_uid, {g % 2 ** 32 for g in os.getgrouplist(name, c_gid(u.pw_gid))}
+
+
+def may(st, uid, gids, bit):
+    """whether the account (uid, gids) has bit (4 read, 2 write, 1 pass) on a file with this stat"""
+    if st.st_uid == uid:
+        return bool(st.st_mode >> 6 & bit)
+    if st.st_gid in gids:
+        return bool(st.st_mode >> 3 & bit)
+    return bool(st.st_mode & bit)
+
+
+def who_can_write(d):
+    """Another account that can really REACH and WRITE the folder d (family rule 28, WHEN A PERSON'S FOLDER IS
+    NAMED): '' for none, None when it could not be read, else who. Write: writable by others, or by its group when
+    that group has a member other than the owner, or owned by another account. Reach: every folder from / down to
+    d lets that same account pass. (G3.29)"""
+    chain, x = [], d
+    while True:
+        chain.append(x)
+        if x == os.path.dirname(x):
+            break
+        x = os.path.dirname(x)
+    try:
+        sts = [os.stat(x) for x in reversed(chain)]
+    except OSError:
+        return None
+    st, me = sts[-1], os.getuid()
+    cands = []          # (who, uid, gids)
+    if st.st_uid not in (me, 0):
+        cands.append(("the account that owns it", st.st_uid, set()))
+    if st.st_mode & 0o002:
+        cands.append(("every account on this computer", -1, set()))
+    unread = []
+    if st.st_mode & 0o020:
+        try:
+            import pwd
+            mine = pwd.getpwuid(me).pw_name
+            names = sorted(group_accounts(st.st_gid) - {mine})
+        except (KeyError, OSError, OverflowError, ValueError):
+            return None
+        for n in names:
+            try:
+                uid, gids = account_ids(n)
+            except (KeyError, OSError, OverflowError, ValueError):
+                unread.append(n)        # one account that cannot be read is said, and the walk goes on
+                continue
+            cands.append((f"the account {n} (in the folder's group)", uid, gids))
+    for who, uid, gids in cands:
+        if uid == me:
+            continue
+        if all(may(s, uid, gids, 1) for s in sts) and may(st, uid, gids, 2):
+            return who
+    return None if unread else ""
+
+
+def open_folders():
+    """[(folder, who)] for every folder from the home down to each thing of ours that runs or decides what runs (the
+    installed copy, the units or plists, the settings, and the state folder where revive writes the start files it
+    runs) that another account can write, or that could not be read (who None)"""
+    seen, out = set(), []
+    tops = [os.path.dirname(p) for p, _ in our_places(os.path.join(INSTALL_DIR, "tardigrade.py")) if os.path.lexists(p)]
+    for top in tops + [d for d in (CFG_DIR, STATE, launch_dir()) if os.path.isdir(d)]:
+        chain, d = [], top
+        while True:
+            chain.append(d)
+            if d == HOME or d == os.path.dirname(d):
+                break
+            d = os.path.dirname(d)
+        for d in reversed(chain):
+            if d not in seen:
+                seen.add(d)
+                who = who_can_write(d)
+                if who != "":
+                    out.append((d, who))
+    return out
+
+
+def folder_owner(d):
+    """the user number that owns folder d (-1 when it cannot be read)"""
+    try:
+        return os.stat(d).st_uid
+    except OSError:
+        return -1
+
+
+def open_folder_lines():
+    """the numbered lines for the person, one per open folder, each with the one command that closes it"""
+    lines = []
+    for i, (d, who) in enumerate(open_folders(), 1):
+        if who is None:
+            lines.append(f"{i}. {d}: who can write it could not be read (the folder, a folder above it, or its group's "
+                         "members), so Tardigrade cannot tell whether another account can replace what is in it.")
+        elif who == "the account that owns it":
+            lines.append(f"{i}. {d} belongs to another account: that account can replace anything in it, what Tardigrade "
+                         "runs at boot included. Only that account or an administrator can close it.")
+        elif folder_owner(d) != os.getuid():     # family rule 28: a folder the person does not own gets no command
+            owner = "root, the administrator" if folder_owner(d) == 0 else "another account"
+            lines.append(f"{i}. {d} belongs to {owner}, and {who} can write it: anything in it, what Tardigrade runs at "
+                         "boot included, can be replaced by another account. You cannot change this folder; only an "
+                         "administrator can close it.")
+        else:
+            lines.append(f"{i}. {d} can be written by {who}: anything in it, what Tardigrade runs at boot included, "
+                         f"can be replaced by another account. To close it: chmod go-w {shlex.quote(d)}")
+    if lines:
+        lines.insert(0, "On the way to what runs at boot, another account can write these folders (Tardigrade does not "
+                        "change a folder it cannot know it made):")
+    return lines
+
+
+def remove_ours(path, kind, kept, failed):
+    """remove path when it is ours; a person's file there is kept and named (G3.28)"""
+    if not os.path.lexists(path):
+        return
+    if not is_ours(path, kind):
+        kept.append(path)
+        return
+    try:
+        os.remove(path)
+    except OSError as e:
+        failed.append(f"{path}: {e.strerror}")
+
+
 def uninstall():
     if DRY:
         print("would remove the boot service, the record timer and the installed copy; the record and the log stay")
         return 0
+    # A person's file in one of our folders never stops the leave (family rule 8): everything of ours goes, what
+    # is theirs stays and is named, with why each folder stayed, and the exit code is success.
+    kept, failed = [], []
+    script = os.path.join(INSTALL_DIR, "tardigrade.py")
+    places = our_places(script)
     if MAC:
         for label in ("ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record"):
             run(["launchctl", "bootout", f"gui/{os.getuid()}/{label}"])
-            try:
-                os.remove(os.path.join(HOME, "Library", "LaunchAgents", label + ".plist"))
-            except OSError:
-                pass
+        for p, kind in places[1:]:
+            remove_ours(p, kind, kept, failed)
     else:
         env = user_env()
         run(["systemctl", "--user", "disable", "--now", "windstorm-tardigrade-record.timer"], env=env)
         run(["systemctl", "--user", "disable", "windstorm-tardigrade-revive.service"], env=env)
-        for name in units("", ""):
-            try:
-                os.remove(os.path.join(HOME, ".config", "systemd", "user", name))
-            except OSError:
-                pass
+        for p, kind in places[1:]:
+            remove_ours(p, kind, kept, failed)
         run(["systemctl", "--user", "daemon-reload"], env=env)
+    remove_ours(script, "copy", kept, failed)
+    cache = os.path.join(INSTALL_DIR, "__pycache__")
     try:
-        os.remove(os.path.join(INSTALL_DIR, "tardigrade.py"))
+        names = [] if os.path.islink(cache) or not os.path.isdir(cache) else sorted(os.listdir(cache))
     except OSError:
-        pass
-    shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)
-    try:
-        os.rmdir(INSTALL_DIR)                  # only if nothing else is in it
-    except OSError:
-        pass
+        names = []
+    for f in names:            # Python's cache of our script only; anything else in there is the person's
+        remove_ours(os.path.join(cache, f), "cache", kept, failed)
+    stayed = []                # (folder, why) for each of our folders that is still there
+    for d in (cache, INSTALL_DIR):
+        if os.path.islink(d) or not os.path.isdir(d):
+            continue
+        try:
+            os.rmdir(d)        # only when nothing is left in it
+        except OSError:
+            try:
+                inside = sorted(os.listdir(d))
+            except OSError:
+                inside = []
+            stayed.append((d, "it holds " + (", ".join(inside[:5]) + (f" and {len(inside) - 5} more" if len(inside) > 5 else "")
+                                             if inside else "something that could not be read")))
     save_cfg_key("auto_revive", False)
-    print("Removed. Nothing comes back by itself any more. Your record and log are kept; running sessions were not touched.")
+    print("Tardigrade's timer and boot service are off, and its units and installed copy are removed.")
+    if kept:
+        print("Kept, because Tardigrade did not write them (they are yours, and they stay as they are):")
+        for p in kept:
+            print(f"  {p}")
+    for d, why in stayed:
+        print(f"Kept the folder {d}: {why}.")
+    print(f"Kept: your record and log in {STATE}, and your settings in {CFG_DIR}; running sessions were not touched.")
+    if failed:
+        print("These are Tardigrade's, but they could not be removed:")
+        for x in failed:
+            print(f"  {x}")
+        print("Tardigrade's timer and boot service are off, but not all of its files are gone: they are named above.")
+        return 1
+    print("Tardigrade is off this computer: nothing comes back by itself any more. What stayed is named above.")
     return 0
 
 
@@ -3418,6 +3727,19 @@ if __name__ == "__main__":
     if cmd not in COMMANDS:
         print(f"unknown command: {cmd}\n{__doc__}")
         sys.exit(2)
+    # G3.29 (T80), family rule 28: nothing we make has a group or other write bit, whatever umask we were started
+    # with (a job runner on a shared machine was seen starting every job with umask 000)
+    os.umask(os.umask(0o022) | 0o022)
     private_dirs()
+    if TESTING_IGNORED:     # G5.15: the first line of the run, on the screen (stderr, so --json stays whole) and in the log
+        said = ("found TARDIGRADE_TESTING and ignored it: there is no test marker in this home, so this run behaves "
+                "exactly as it does for a person (no shorter waits, no stand-in facts, nothing handed on)")
+        print(said, file=sys.stderr, flush=True)
+        try:
+            fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {said}\n")
+        except OSError:
+            pass
     load_cfg()
     sys.exit(COMMANDS[cmd]() or 0)

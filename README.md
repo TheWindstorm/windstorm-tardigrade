@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.9, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.10, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
 > that version found faults, which is what they were for; after the fixes every session came back every time, all
 > 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
@@ -36,14 +36,20 @@ changed, as it has in 0.1.9), then set up again: setup is what refreshes the cop
 Without the plugin system, it is one file:
 
 ```bash
-git clone https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.10 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
-Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute
-timer for your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs
-no administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
-copy: run it again after you update the plugin.
+Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute timer for
+your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs no
+administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
+copy: run it again after you update the plugin. Setup leaves no group or other write permission on anything it makes,
+whatever umask it was started with (it reads and sets the mode bits; it does not read access lists). If you ran setup
+with a wide-open umask (umask 000, as some job runners start every job), run setup again with 0.1.10 or later: it
+closes its own copy, units and install folder, and it names each folder above them, or above its settings and state
+folders, whose mode bits and group members let another account in to write, with the one command that closes it
+(`chmod go-w <folder>`); census repeats it until it is closed. A folder another account owns is named with its owner,
+and no command: only an administrator can change it.
 
 Taking the plugin off with Claude Code's own `claude plugin uninstall` does not take off what setup installed. The
 boot service still brings your sessions back after a restart, and the 5-minute record timer still runs, both from
@@ -66,12 +72,12 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 | `tardigrade setup` | Switches it on. From then on, sessions come back after a restart by themselves. |
 | `tardigrade census` | Lists every session: running with a window, running with **no window open**, and down. |
 | `tardigrade report` | The last restore's timeline (boot, first and last start, the count, the tabs) and what still needs you. |
-| `tardigrade open` | Opens a terminal window for each hidden session. |
+| `tardigrade open` | Opens a terminal window for each hidden session, with the terminal named in `TERMINAL` when that is set (it says so), else the first it finds. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
 | `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
-| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log are yours and stay; to remove them as well, delete `~/.config/windstorm-tardigrade` and `~/.local/state/windstorm-tardigrade` afterwards. |
+| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. The last line says Tardigrade is off this computer. |
 
 In Claude Code you can say these in plain words. In a terminal, each is
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py <command>`.
@@ -181,7 +187,7 @@ silently. A first message is never written down.
 `--remote-control` is carried. A session started with it comes back with Remote Control on, which 0.1.7 did not
 do, and the log says so the first time a record sees it.
 
-Known edge until 0.1.10 (T70): the permission mode that census and the dry run show is the start flag. A session
+Known edge until 0.1.11 (T70): the permission mode that census and the dry run show is the start flag. A session
 that Claude Code runs in another mode was shown as "default" (seen once, with auto mode), and it came back in the
 mode Claude Code kept for it.
 
@@ -221,10 +227,10 @@ Setup tells you this for your machine. It never changes it for you.
   sessions, and the record is kept exactly as it was. Only the tmux servers the record depends on count (each
   recorded session's, tmux's default, `loose_socket`, `tsv_socket`). Census names a record that has not been written
   for an hour, and why. A restore that cannot read the process list for all of `retry_min` starts nothing, and
-  `report` and `on_done` say so. Known edge until 0.1.10 (T54): if the session file Claude Code
+  `report` and `on_done` say so. Known edge until 0.1.11 (T54): if the session file Claude Code
   keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
   `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
-  Known edge until 0.1.10 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
+  Known edge until 0.1.11 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
   -v claude)` ends in `cli.js`), a session started by hand cannot be seen as running until it has loaded: Claude Code
   runs under node's name at first, then renames itself and drops its start arguments. A restore can start a second
   copy of such a session. Update Claude Code (2.1.113 and later ship the native program, through npm too), and start
@@ -269,13 +275,13 @@ Setup tells you this for your machine. It never changes it for you.
 | `boot_wait_s` | `45` | Seconds the boot service waits before its run. Run setup again after changing it. |
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
-| `tmux_tmpdir` | | Set this if your shell sets `TMUX_TMPDIR`. |
+| `tmux_tmpdir` | | Where tmux keeps its sockets. Empty: `TMUX_TMPDIR` when the run has it (census says so), else `/tmp`. Set this if your shell sets `TMUX_TMPDIR`: the boot service does not have it. |
 | `herdr_tabs` | `true` | With Herdr, re-attach each session's tab after a revive. Tardigrade attaches tabs to a Herdr that is running; it never starts Herdr itself. When Herdr is not running, the log says so at once and `census` says how many tabs wait for it. Have Herdr's server start at login by itself (a launch agent on a Mac, a user service on Linux, running `herdr server`), not only from a terminal window that the desktop may or may not reopen. |
 | `answer_trust` | `false` | Set by `trust on` / `trust off`. Answer "trust this folder?" for a revived session's own folder. |
 | `watch_min` | `15` | After a boot, keep looking at the started sessions this long: to type the message once each is idle, to answer the trust question if you switched that on, and to count which have loaded. A slow machine loads late. |
 | `load_max` | `0` | With a number here, each start waits (up to `load_wait_s`, default 120) while the machine's load is above it. |
 | `skip_tmux_sockets` | `[]` | tmux socket names to leave alone, for when another tool already brings those sessions back. One restorer per session. |
-| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted, and Tardigrade's own code reads only its folder (from the system): not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. On Linux, the system's `ps`, which Tardigrade runs to list processes, opens more than that for every process on the machine (its environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only process id, parent, user, state and program name. From 0.1.10 the list is read from /proc directly (T47). |
+| `skip_cwd_prefix` | `[]` | Folders to leave alone, for when another tool runs its own agents with Claude Code there. A claude process working inside one is counted, and Tardigrade's own code reads only its folder (from the system): not its environment, its arguments, its status file or its conversation. It is never recorded or brought back. On Linux, the system's `ps`, which Tardigrade runs to list processes, opens more than that for every process on the machine (its environment and arguments too; seen with strace, procps-ng 4.0.4) and passes back only process id, parent, user, state and program name. From 0.1.11 the list is read from /proc directly (T47). |
 
 On a small machine, set `starts_at_once` to 2, and, if the machine must stay usable while sessions come back, a
 `load_max` of about twice its number of cores. Right after a boot most of the load is the boot itself.
@@ -292,7 +298,7 @@ Check this before the first reboot on a machine. A session started with a login 
 label your start can read, comes back on whatever login the plain `claude` finds, which may be another account.
 If every session on the machine should run on one login, put the wrapper that fetches it into `claude_command`.
 `tardigrade revive --dry-run --all` shows each session's start line, so you can see this before you need it.
-Known edge until 0.1.10 (T57): a session started on an account has been seen to lose its label from its
+Known edge until 0.1.11 (T57): a session started on an account has been seen to lose its label from its
 record row, so the next restart started it on the machine's own login without a word. After starting such a session,
 check that its line in `tardigrade revive --dry-run --all` ends in `[account NAME]`.
 

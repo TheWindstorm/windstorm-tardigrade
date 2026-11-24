@@ -11,7 +11,10 @@ another dialog open under it, and write down every key received), `failonce` (en
 the empty box), `limitqueue` (a line typed in meets the weekly limit and is held for the reset), `oldlimit` (session ids whose
 redrawn history shows an old limit reply above a newer short turn), `tallstatus` (that many status-line
 lines drawn at the very foot, under the box and any notice), `psfailon` (session ids whose start, unless
-started by hand with MY_SETTING=byhand, makes the test's stand-in `ps` fail from that moment: HOME/psfail)."""
+started by hand with MY_SETTING=byhand, makes the test's stand-in `ps` fail from that moment: HOME/psfail),
+`clockshift` (G5.14, T75: the family's clock shift, LD_PRELOAD and SHIFT_SECONDS, one per line; the suite writes it
+when it runs shifted, and a stand-in the tool started with its clean environment takes it from here, so the tool's
+own environment stays what it is for a person)."""
 import ctypes
 import json
 import os
@@ -19,6 +22,12 @@ import select
 import sys
 import time
 import uuid
+
+_cs = os.path.join(os.environ.get("HOME", ""), "clockshift")
+if "SHIFT_SECONDS" not in os.environ and os.path.exists(_cs):
+    with open(_cs) as _f:
+        _pre, _sec = _f.read().split("\n")[:2]
+    os.execve(os.path.abspath(sys.argv[0]), sys.argv, dict(os.environ, LD_PRELOAD=_pre, SHIFT_SECONDS=_sec))
 
 try:
     ctypes.CDLL(None).prctl(15, b"claude", 0, 0, 0)   # PR_SET_NAME, so `ps` shows "claude"
@@ -48,9 +57,13 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
     f.write(json.dumps({"pid": os.getpid(), "sid": sid, "argv": a, "cwd": os.getcwd(),
                         "child": "CLAUDE_CODE_CHILD_SESSION" in os.environ,
                         "claude_env": sorted(k for k in os.environ if k.startswith("CLAUDE")),
-                        "path": os.environ.get("PATH", ""),
+                        "path": os.environ.get("PATH", ""), "now": int(time.time()),
+                        # the family's clock shift is the suite's, handed on by this stand-in: kept out of "seen", which
+                        # holds what the tool handed on, so a shifted run compares the same "seen" as an unshifted one
+                        "shift": os.environ.get("SHIFT_SECONDS"),
                         "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME", "PWD", "INVOCATION_ID", "JOURNAL_STREAM",
-                                                           "CLAUDE_CODE_AUTO_COMPACT_WINDOW") if k in os.environ}}) + "\n")
+                                                           "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "TG_NOT_HANDED")
+                                 if k in os.environ}}) + "\n")
 if listed("psfailon", sid) and os.environ.get("MY_SETTING") != "byhand":
     open(os.path.join(home, "psfail"), "w").close()
 if "--resume" in a and listed("noconv", sid):

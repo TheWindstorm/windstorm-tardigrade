@@ -4,8 +4,11 @@ They run a stand-in `claude` (tests/fake_claude.py) inside a private tmux folder
 real session, no real tmux server and no service is touched. Linux only. Run: python3 -m unittest -v
 """
 import ast
+import hashlib
+import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -14,6 +17,23 @@ import tempfile
 import time
 import unittest
 import uuid
+
+# THE RUN'S OWN HOME (T78, the guard's first part): before anything here loads the tool, the whole run gets a
+# temporary home of its own and loses this account's lines to its desktop session and its tmux server; every program
+# the run starts inherits that. git finds no global config there (GIT_CONFIG_NOSYSTEM beside it: older git has no
+# GIT_CONFIG_GLOBAL, so the home is the base). Each test still makes its own home under its own folder (Base.setUp).
+RUN_HOME = tempfile.mkdtemp(prefix="tgrun", dir=os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
+os.makedirs(os.path.join(RUN_HOME, "home"))
+os.environ["HOME"] = os.path.join(RUN_HOME, "home")
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+for _k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE",
+           "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+    os.environ.pop(_k, None)
+
+
+def _end_run_home():
+    shutil.rmtree(RUN_HOME, True)
+
 
 def jload(path):
     with open(path, encoding="utf-8") as f:
@@ -30,6 +50,23 @@ def fread(path):
         return f.read()
 
 
+def running(pid):
+    """the process is there and not a zombie waiting for its parent to read its exit"""
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
+        return False
+
+
+def cmdline_of(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().replace(b"\0", b" ").decode(errors="replace").strip()[:200]
+    except OSError:
+        return "(gone while being read)"
+
+
 def gone_soon(find, within=5.0):
     """What find() still lists after waiting up to `within` seconds for it to list nothing (G7.2). A process that was
     told to end exits a moment later, so a test that reads once can see it still there; one that stays is still caught."""
@@ -43,6 +80,7 @@ def gone_soon(find, within=5.0):
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "scripts", "tardigrade.py")
+MARK_TEXT = "made by Windstorm Tardigrade's test suite for one run in this scratch home"
 FAKE = os.path.join(ROOT, "tests", "fake_claude.py")
 FAKE_HERDR = os.path.join(ROOT, "tests", "fake_herdr.py")
 TMUX = shutil.which("tmux")
@@ -57,7 +95,11 @@ LIVE = []
 
 def _end_live(*_):
     for t in list(LIVE):
-        t.end_all()
+        try:
+            t.end_all()
+        except AssertionError as e:                 # stopped or exiting: each test's cleanup still runs, and says so
+            sys.stderr.write(f"{e}\n")
+    _end_run_home()
 
 
 def _on_signal(signum, _frame):
@@ -71,11 +113,86 @@ for _sig in (signal.SIGTERM, signal.SIGHUP):
 import atexit  # noqa: E402
 atexit.register(_end_live)
 
+# THE SUITE'S GUARD (T78, family rule 23). From 0.1.10 the test setting counts only with the suite's marker in the
+# test's own scratch home (G5.15); anywhere else the tool acts for real, and the home of the account that runs the
+# suite may hold a live install and running sessions. So no test but T78's own may run the tool with the setting
+# ignored, and none may run it with a home outside the test's own temporary folder. A run of the program is refused
+# before it starts; a load in the test's process is refused right after it (nothing has run yet but the module's
+# own lines). Either way the test fails, whatever it asserts: the refusal is raised and also kept, and Base checks
+# what was kept when the test ends.
+GUARD = {"tmp": None, "test": None, "caught": []}
+GUARD_SETTING_MAY_BE_IGNORED = {"test_G5_15_the_testing_setting_alone_changes_nothing_and_says_so"}
+_RUNS_TOOL = re.compile(r"(?:^|[\s/\"'])tardigrade\.py(?=$|[\s\"'])")
+
+
+class GuardRefused(AssertionError):
+    pass
+
+
+def suite_marked(home):
+    """the suite's marker is in home, as the tool reads it (a regular file, not a link, its words first)"""
+    p = os.path.join(home, "tardigrade-test-home")
+    try:
+        return not os.path.islink(p) and os.path.isfile(p) and fread(p).startswith(MARK_TEXT)
+    except OSError:
+        return False
+
+
+def guard_check(home, testing, how):
+    tmp, test = GUARD["tmp"], GUARD["test"]
+    if tmp is None:
+        why = "no test that made its own folder is running"
+    elif not home or not (os.path.realpath(home) + os.sep).startswith(os.path.realpath(tmp) + os.sep):
+        why = f"its home {home!r} is not inside the test's own folder {tmp}"
+    elif not testing and test not in GUARD_SETTING_MAY_BE_IGNORED:
+        why = "the test setting is ignored there (no suite marker in that home), so the tool would act for real"
+    else:
+        return
+    msg = f"guard: {test or 'no test'} ran the tool ({how}) and {why}"
+    GUARD["caught"].append(msg)
+    raise GuardRefused(msg)
+
+
+_popen_init = subprocess.Popen.__init__
+
+
+def _guarded_popen_init(self, args, *a, **kw):
+    argv = [args] if isinstance(args, (str, bytes, os.PathLike)) else list(args)
+    line = " ".join(os.fsdecode(x) if isinstance(x, (bytes, os.PathLike)) else str(x) for x in argv)
+    if _RUNS_TOOL.search(line):
+        env = kw.get("env")
+        env = os.environ if env is None else env
+        home = env.get("HOME")
+        guard_check(home, env.get("TARDIGRADE_TESTING") == "1" and bool(home) and suite_marked(home),
+                    "as a program: " + line[:160])
+    _popen_init(self, args, *a, **kw)
+
+
+subprocess.Popen.__init__ = _guarded_popen_init
+_spec_from_file_location = importlib.util.spec_from_file_location
+
+
+def _guarded_spec(name, location=None, *a, **kw):
+    spec = _spec_from_file_location(name, location, *a, **kw)
+    if location is not None and os.path.basename(os.fspath(location)) == "tardigrade.py" and spec and spec.loader:
+        run = spec.loader.exec_module
+
+        def exec_module(module):
+            run(module)
+            guard_check(module.HOME, module.TESTING, "loaded in the test's process")
+        spec.loader.exec_module = exec_module
+    return spec
+
+
+importlib.util.spec_from_file_location = _guarded_spec
+
 
 @unittest.skipUnless(sys.platform.startswith("linux") and TMUX, "needs Linux and tmux")
 class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="tg", dir=os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
+        GUARD.update(tmp=self.tmp, test=self._testMethodName, caught=[])
+        self.addCleanup(self.guard_end)
         self.pids, self.loose = [], []
         LIVE.append(self)
         self.addCleanup(self.end_all)     # runs even when setUp fails after this line, or tearDown raises
@@ -84,6 +201,10 @@ class Base(unittest.TestCase):
         self.work = os.path.join(self.tmp, "work")
         for d in (self.home, self.bin, self.work):
             os.makedirs(d)
+        # G5.15 (T78): the second key of test mode, written in the scratch home this test made (TARDIGRADE_TESTING alone
+        # changes nothing)
+        with open(os.path.join(self.home, "tardigrade-test-home"), "w") as f:
+            f.write(MARK_TEXT + "\n")
         # The stand-in is named "claude" from its first instant, as the native program (and npm from 2.1.113) is: its
         # first line names its interpreter directly, and a process started from a script keeps the script's name.
         # Through its own /usr/bin/env line it is "python3" until Python has loaded: the window of Claude Code from npm
@@ -100,9 +221,34 @@ class Base(unittest.TestCase):
         os.makedirs(os.path.join(self.tmp, "x11"))
         with open(os.path.join(self.tmp, "x11", "X10"), "w") as f:      # this "machine" has a desktop on display :10
             f.write("")
+        # G5.14 (T75), family rule 25: a suite run under the family's clock shift hands it on to every program it starts;
+        # the tool's clean environment does not carry it, so the stand-in takes it from HOME/clockshift
+        if os.environ.get("LD_PRELOAD") and os.environ.get("SHIFT_SECONDS"):
+            self.env.update(LD_PRELOAD=os.environ["LD_PRELOAD"], SHIFT_SECONDS=os.environ["SHIFT_SECONDS"])
+            with open(os.path.join(self.home, "clockshift"), "w") as f:
+                f.write(os.environ["LD_PRELOAD"] + "\n" + os.environ["SHIFT_SECONDS"] + "\n")
         self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1, "retry_gap_s": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
+
+    def load_tool(self):
+        """the tool loaded in this test's process with this test's home (the suite's marker in it) and the test
+        setting, kept for the whole test: some of its functions read the environment at each call (the guard)"""
+        from unittest import mock
+        patch = mock.patch.dict(os.environ, HOME=self.home, TARDIGRADE_TESTING="1",
+                                TARDIGRADE_FAKE_X11_DIR=os.path.join(self.tmp, "x11"))
+        patch.start()
+        self.addCleanup(patch.stop)
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        return tg
+
+    def guard_end(self):
+        caught, GUARD["caught"] = GUARD["caught"], []
+        GUARD.update(tmp=None, test=None)
+        if caught:
+            raise GuardRefused("; ".join(caught))
 
     def end_all(self):
         """end only what this test started, each by its exact process id; every step runs even if one fails"""
@@ -126,13 +272,33 @@ class Base(unittest.TestCase):
                 pass
         # anything else of this test's still running: a tardigrade run in flight when the run was stopped carries
         # the test's folder only in its HOME, not on its command line. Each is ended by its exact process id.
-        mine = self.processes_of_this_test()
-        for pid in mine:
-            self.kill(pid)
-        end = time.time() + 3
-        while time.time() < end and any(os.path.exists(f"/proc/{p}") for p in mine):
-            time.sleep(0.1)
+        left = self.end_mine(within=self.cleanup_bound)
         shutil.rmtree(self.tmp, ignore_errors=True)
+        if left:        # the bound was reached: the test fails and names what stayed; nothing wider than exact pids
+            raise AssertionError("the cleanup's bound was reached and these processes of the test are still there:\n"
+                                 + "\n".join(f"pid {p}: {cmdline_of(p)}" for p in left))
+
+    cleanup_bound = 10.0
+
+    def end_mine(self, within=10.0):
+        """end every process of this test by its exact id, then scan again once those have exited, until a scan finds
+        none (T84, G7.10): what a run in flight starts as it is stopped (the tmux server of a session it brings back)
+        is there only after the first scan. One that outlives its SIGTERM gets SIGKILL in the next round. Returns what
+        is still there when the time is up."""
+        end, told = time.time() + within, set()
+        while True:
+            mine = self.processes_of_this_test()
+            if not mine or time.time() >= end:
+                return mine
+            for pid in mine:
+                try:
+                    os.kill(pid, signal.SIGKILL if pid in told else signal.SIGTERM)
+                except OSError:
+                    pass
+            told.update(mine)
+            wait = min(end, time.time() + 3)
+            while time.time() < wait and any(running(p) for p in mine):
+                time.sleep(0.1)
 
     def processes_of_this_test(self):
         """this user's processes whose command line or environment names this test's folder (never this one)"""
@@ -499,9 +665,7 @@ class Record(Base):
         self.assertNotIn("Agent One", out)
         # nothing more of it is read by our code: not its environment, its arguments or its status file
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.HOME, tg.CFG["skip_cwd_prefix"] = self.home, [agents]
         read = []
         for fn in ("env_facts", "argv_of", "session_json", "has_tty"):
@@ -681,6 +845,37 @@ class Revive(Base):
         self.tg("record", "--force")
         self.reboot()
         return sid
+
+    def test_G5_14_the_family_clock_shift_reaches_what_the_tests_start_and_the_tool_has_no_offset(self):
+        # T75, family rule 25: before each tag the suite runs at 0, +1, +7 and +30 days under the family's clock shift.
+        # The tool gets no clock offset of its own; its clean environment hands on only its own list.
+        src = fread(SCRIPT)
+        for word in ("SHIFT_SECONDS", "LD_PRELOAD", "FAKE_NOW", "FAKE_TIME", "CLOCK_OFFSET"):
+            self.assertNotIn(word, src)
+        ce = src[src.index("def clean_env():"):src.index("def login_print(")]
+        self.assertIn('for k in ("TMPDIR", "XDG_RUNTIME_DIR") + (("TARDIGRADE_TESTING",) if TESTING else ()):', ce)
+        # a session the tool starts gets none of the tool's other variables, and the shift only by the stand-in
+        self.recorded_then_rebooted()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TG_NOT_HANDED="1")
+        self.assertEqual(rc, 0, out)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertNotIn("TG_NOT_HANDED", new["seen"])
+        self.assertEqual(new["shift"], os.environ.get("SHIFT_SECONDS") if
+                         os.environ.get("LD_PRELOAD") else None)
+        self.assertLess(abs(new["now"] - time.time()), 600)      # the session's clock is the test's, shifted or not
+        # a record that really is days old, its time set by the test: a down row past down_keep_days (14) is
+        # forgotten at the next record, one inside it is kept
+        t = self.table()
+        now = int(time.time())
+        old = dict(t["lanes"][0], session_id=str(uuid.uuid4()), name="Old Lane", tmux_session="old")
+        t["down"] = [dict(old, down_since=now - 15 * 86400),
+                     dict(old, session_id=str(uuid.uuid4()), name="Recent Lane", down_since=now - 13 * 86400)]
+        with open(os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"), "w") as f:
+            json.dump(t, f)
+        self.tg("record")
+        self.assertEqual([d["name"] for d in self.table()["down"] if d["name"] in ("Old Lane", "Recent Lane")],
+                         ["Recent Lane"])
 
     def test_G2_1_revive_brings_a_session_back_as_itself(self):
         sid = self.recorded_then_rebooted()
@@ -937,9 +1132,7 @@ class Revive(Base):
         self.wait_launches(n + 2)
         self.assertIn("could not be used: it does not look as expected", out)
         import importlib.util                           # and nobody is taken as ended by it: one too many is the safe side
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.HOME, tg.STATE = self.home, st
         tg.LOG = os.path.join(st, "tardigrade.log")
         self.assertEqual(tg.exited_at({"session_id": a, "last_seen": seen}), 0)
@@ -1148,11 +1341,10 @@ class Revive(Base):
         os.makedirs(rt)
         with open(os.path.join(rt, "bus"), "w") as f:
             f.write("")
-        os.environ.update(TARDIGRADE_TESTING="1", TARDIGRADE_FAKE_X11_DIR=x11)
-        self.addCleanup(lambda: [os.environ.pop(k, None) for k in ("TARDIGRADE_TESTING", "TARDIGRADE_FAKE_X11_DIR")])
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        # the test setting counts only with the suite's marker in HOME (G5.15): with the runner's own home this test
+        # read the machine's real X11 folder (seen 2026-11-24 on CI, which has no display :10)
+        tg = self.load_tool()
+        self.assertTrue(tg.TESTING)
         gone = [("DISPLAY", ":11.0"), ("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/dbus-gone,guid=1")]
         self.assertEqual(tg.live_desktop(gone), [("XDG_RUNTIME_DIR", rt), ("DBUS_SESSION_BUS_ADDRESS", f"unix:path={rt}/bus")])
         there = [("DISPLAY", ":10.0"), ("DBUS_SESSION_BUS_ADDRESS", f"unix:path={rt}/bus"), ("LANG", "C")]
@@ -1347,9 +1539,7 @@ class Revive(Base):
                           "Bash", "Edit", "--resume", sid])
         # the name it has now goes with --name: a session renamed since it started keeps its new name
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         self.assertEqual(tg.flags_of({"mode": "default", "name": "New Name", "flags": ["-n", "Old Name", "--chrome"]}),
                          ["-n", "New Name", "--chrome"])
         self.assertEqual(tg.start_flags(["claude", "-c", "--resume", "x", "--print", "hi", "--ide", "-d", "api"]),
@@ -1388,7 +1578,7 @@ class Revive(Base):
         # systemctl --user of whoever runs the tests
         src = fread(SCRIPT)
         u = src[src.index("def uninstall():"):src.index("def trust_cmd():")]
-        self.assertIn('shutil.rmtree(os.path.join(INSTALL_DIR, "__pycache__"), ignore_errors=True)', u)
+        self.assertIn('remove_ours(os.path.join(cache, f), "cache", kept, failed)', u)     # G3.28: our cache only
 
     def test_G2_42_only_the_newest_few_boot_markers_are_kept_and_they_are_private(self):
         # T38: seen on a Linux machine, 14 markers in two days, at mode 664, the old ones never read again
@@ -1642,9 +1832,7 @@ class Revive(Base):
         self.assertEqual(len(stamps), 2, out)
         self.assertGreaterEqual(stamps[1] - stamps[0], 5, "one note a minute (6 s in tests): they were not spaced")
         # the rules, one by one
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.CFG.update(wake="idle", wake_names=["^Alpha"], wake_skip=[])
         self.assertEqual([tg.wants_note({"name": x}) for x in ("Alpha Lane", "Beta Lane")], [True, False])
         tg.CFG.update(wake_text="Back at {when}. Carry on.")
@@ -1696,9 +1884,7 @@ class Revive(Base):
         self.assertNotIn("is at its usage limit", out)    # a screen can be history: it holds this session only (G2.45)
         # the forms it takes, or may take; and ordinary words are not mistaken for one
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         for text in ("⚠ Usage limit reached · limit resets 12pm", "/usage-credits to continue now", "usage credits",
                      "You've hit your limit · resets 3pm", "Weekly limit reached", "5-hour limit reached",
                      "Opus limit reached", "Approaching usage limit", "/extra-usage to keep going",
@@ -1769,9 +1955,7 @@ class Revive(Base):
         self.assertEqual(sorted(rep["note_not_typed"]), sorted(["Alpha Lane", other]))
         # a limit reply that the person went on past is not the end of the conversation; nor is an ordinary error
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         tg.HOME = self.home
         r = {"session_id": a}
         self.assertTrue(tg.ended_on_limit(r))
@@ -1792,9 +1976,7 @@ class Revive(Base):
     def test_G2_48_a_limit_reply_holds_the_note_only_while_its_reset_is_ahead(self):
         import datetime as D
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         z = lambda w: D.datetime.fromisoformat(w.replace("Z", "+00:00")).timestamp()
         weekly, five = "You've hit your weekly limit \u00b7 resets ", "You've hit your 5-hour limit \u00b7 resets "
         # real reply texts from one weekend; the moment comes from the reply's own time and zone, never today's clock
@@ -1866,9 +2048,7 @@ class Revive(Base):
         self.assertNotIn("weekly limit", typed[0])
         self.assertNotIn("is at its usage limit", out)
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         self.assertEqual(tg.note_problem(tg.WAKE_NOTE), "")              # the default note never reads as one
         for text in ("set to continue automatically", "Stop and wait", "see /usage-credits"):
             self.assertTrue(tg.note_problem(text), text)
@@ -2345,6 +2525,389 @@ class Setup(Base):
         self.assertEqual(t["down"], [], out)
         self.assertIn("vanished together", out)
 
+    # ----- G3.28 (T79): only what we wrote; a person's file never stops the leave (family rules 8 and 23) -----
+    def stand_in_services(self):
+        self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
+                    'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
+        self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+
+    def whole_home(self):
+        """{path under HOME: (kind, sha256 or '')} for every file, folder and link, hidden ones too"""
+        out = {}
+        for d, dirs, files in os.walk(self.home):
+            for n in dirs + files:
+                p = os.path.join(d, n)
+                rel = os.path.relpath(p, self.home)
+                if os.path.islink(p):
+                    out[rel] = ("link", os.readlink(p))
+                elif os.path.isdir(p):
+                    out[rel] = ("dir", "")
+                else:
+                    with open(p, "rb") as f:
+                        out[rel] = ("file", hashlib.sha256(f.read()).hexdigest())
+        return out
+
+    def persons(self, files):
+        """write a person's own files (path under HOME: text); returns their listing"""
+        for rel, text in files.items():
+            p = os.path.join(self.home, rel)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write(text)
+        return {rel: v for rel, v in self.whole_home().items() if rel in files}
+
+    def test_G3_28_setup_revive_and_uninstall_touch_only_what_tardigrade_wrote(self):
+        # seen 2026-11-23 on 0.1.9 in a scratch home: setup wrote over a person's tardigrade.py, uninstall removed
+        # it and a person's __pycache__ whole, a revive removed a person's folder named lock and a person's file in
+        # the launch folder
+        self.stand_in_services()
+        share, units = ".local/share/windstorm-tardigrade", ".config/systemd/user"
+        os.makedirs(self.state(""), exist_ok=True)
+        mine = self.persons({f"{share}/tardigrade.py": "# my own script, not Tardigrade\nprint('hi')\n"})
+        before = self.whole_home()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT set up", out)
+        self.assertIn(os.path.join(self.home, share, "tardigrade.py"), out)
+        self.assertEqual(self.whole_home(), before, out)              # setup stopped before any write
+        self.assertIn("Nothing was installed and no file was written", out)
+        os.rename(os.path.join(self.home, share, "tardigrade.py"), os.path.join(self.home, "my-script.py"))
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        old = time.time() - 200000                                     # older than this "boot" (uptime 100000 s)
+        theirs = self.persons({
+            f"{share}/notes.txt": "my notes\n",
+            f"{share}/__pycache__/mine.txt": "mine\n",
+            f"{units}/my-own.service": "[Unit]\nDescription=my own\n",
+            ".local/state/windstorm-tardigrade/lock/diary.txt": "dear diary\n",
+            ".local/state/windstorm-tardigrade/launch/my-start.sh": "echo mine\n",
+            ".local/state/windstorm-tardigrade/revived-notes.txt": "mine\n",
+            ".config/windstorm-tardigrade/my-settings.txt": "mine\n"})
+        os.utime(self.state("lock"), (old, old))
+        ours_start = self.state("launch/gone-session.sh")
+        with open(ours_start, "w") as f:
+            f.write("# Windstorm Tardigrade start file. Written again at each revive; safe to delete.\necho\n")
+        cache = os.path.join(self.home, share, "__pycache__", "tardigrade.cpython-312.pyc")
+        with open(cache, "wb") as f:
+            f.write(b"\x00cache")
+        # a folder named lock with a person's file in it is not a lock of ours: not taken, not removed
+        rc, out = self.tg("revive")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("not taken or removed", out)
+        self.assertIn("diary.txt", out)
+        self.assertEqual(self.whole_home().get(".local/state/windstorm-tardigrade/lock/diary.txt"),
+                         theirs[".local/state/windstorm-tardigrade/lock/diary.txt"])
+        # the person moves it; a revive's clean-up then removes only start files it wrote
+        os.rename(self.state("lock"), os.path.join(self.home, "my-lock"))
+        theirs = {(k if "/lock/" not in k else "my-lock/diary.txt"): v for k, v in theirs.items()}
+        rc, out = self.tg("revive")
+        self.assertFalse(os.path.exists(ours_start), out)
+        self.assertFalse(os.path.exists(self.state("lock")), out)    # our own lock: taken and given back
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        after = self.whole_home()
+        theirs["my-script.py"] = mine[f"{share}/tardigrade.py"]       # the person's script, moved by them
+        for rel, v in theirs.items():
+            self.assertEqual(after.get(rel), v, f"{rel}\n{out}")
+        for rel in (f"{share}/tardigrade.py", f"{share}/__pycache__/tardigrade.cpython-312.pyc",
+                    f"{units}/windstorm-tardigrade-revive.service", f"{units}/windstorm-tardigrade-record.service",
+                    f"{units}/windstorm-tardigrade-record.timer"):
+            self.assertNotIn(rel, after, out)
+        self.assertNotIn("shutil.rmtree", fread(SCRIPT))               # no recursive delete anywhere
+
+    def test_G3_28_uninstall_goes_to_its_end_with_a_persons_file_in_each_folder(self):
+        # family rule 8, A FOREIGN FILE DOES NOT STOP A LEAVE: everything of ours goes, the person's files stay and
+        # are named with why each folder stayed and no command, the exit code is success, and the last line says so
+        self.stand_in_services()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        share = os.path.join(self.home, ".local", "share", "windstorm-tardigrade")
+        os.makedirs(os.path.join(share, "__pycache__"), exist_ok=True)
+        with open(os.path.join(share, "__pycache__", "tardigrade.cpython-312.pyc"), "wb") as f:
+            f.write(b"\x00cache")
+        theirs = self.persons({
+            ".local/share/windstorm-tardigrade/mine.txt": "mine\n",
+            ".local/share/windstorm-tardigrade/__pycache__/mine.txt": "mine\n",
+            ".config/systemd/user/mine.txt": "mine\n",
+            ".local/state/windstorm-tardigrade/mine.txt": "mine\n",
+            ".config/windstorm-tardigrade/mine.txt": "mine\n"})
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        after = self.whole_home()
+        for rel, v in theirs.items():
+            self.assertEqual(after.get(rel), v, f"{rel}\n{out}")
+        for gone in ("tardigrade.py", "__pycache__/tardigrade.cpython-312.pyc"):
+            self.assertFalse(os.path.exists(os.path.join(share, gone)), out)
+        for name in ("windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service",
+                     "windstorm-tardigrade-record.timer"):
+            self.assertFalse(os.path.exists(os.path.join(self.home, ".config", "systemd", "user", name)), out)
+        log = fread(os.path.join(self.home, "systemctl.log"))
+        self.assertIn("disable --now windstorm-tardigrade-record.timer", log)
+        self.assertIn("disable windstorm-tardigrade-revive.service", log)
+        self.assertIn(f"Kept the folder {share}: it holds __pycache__, mine.txt.", out)
+        self.assertIn(f"Kept the folder {os.path.join(share, '__pycache__')}: it holds mine.txt.", out)
+        self.assertIn(os.path.join(share, "__pycache__", "mine.txt"), out)      # named, as the person's
+        for cmd in ("rm ", "rmdir", "sudo", "delete", "remove them"):           # no command for what stayed
+            self.assertNotIn(cmd, out.lower())
+        self.assertEqual(out.strip().splitlines()[-1],
+                         "Tardigrade is off this computer: nothing comes back by itself any more. What stayed is "
+                         "named above.")
+
+    def test_G3_29_nothing_setup_makes_is_writable_by_another_account_whatever_the_umask(self):
+        # family rule 28 (11-23): a job gate on a shared machine started every job with umask 000; the start files
+        # and units run as the person at boot, so another account must never be able to rewrite them
+        self.stand_in_services()
+        before = set(self.whole_home())
+        for n in (1, 2):
+            r = subprocess.run(["/bin/sh", "-c", 'umask 000; exec "$0" -I "$1" setup', sys.executable, SCRIPT],
+                               capture_output=True, text=True, env=self.env, timeout=240)
+            out = r.stdout + r.stderr
+            self.assertEqual(r.returncode, 0, f"run {n}\n{out}")          # the second run is not refused
+            self.assertIn("is set up", out)
+        made = set(self.whole_home()) - before
+        self.assertIn(".local/share/windstorm-tardigrade/tardigrade.py", made)
+        self.assertIn(".config/systemd/user/windstorm-tardigrade-revive.service", made)
+        for rel in sorted(made):
+            p = os.path.join(self.home, rel)
+            mode = os.lstat(p).st_mode & 0o777
+            if not os.path.islink(p):
+                self.assertEqual(mode & 0o022, 0, f"{rel} is {oct(mode)}")
+        for d, dirs, files in os.walk(self.home):             # and nothing at all under the home is world-writable
+            for n in dirs + files:
+                p = os.path.join(d, n)
+                if not os.path.islink(p):
+                    self.assertEqual(os.lstat(p).st_mode & 0o002, 0, p)
+        # what an earlier setup under umask 000 left open (0.1.9 did) is closed by the next setup
+        opened = [".local/share/windstorm-tardigrade", ".local/share/windstorm-tardigrade/tardigrade.py",
+                  ".config/systemd/user/windstorm-tardigrade-revive.service",
+                  ".config/systemd/user/windstorm-tardigrade-record.service",
+                  ".config/systemd/user/windstorm-tardigrade-record.timer"]
+        for rel in opened:
+            os.chmod(os.path.join(self.home, rel), 0o777 if rel.endswith("tardigrade") else 0o666)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        for rel in opened:
+            self.assertEqual(os.stat(os.path.join(self.home, rel)).st_mode & 0o022, 0, rel)
+
+    def test_G3_29_the_folders_above_what_runs_are_named_with_their_command_and_not_changed(self):
+        # family rule 28, A FILE IS ONLY AS CLOSED AS THE FOLDERS ABOVE IT: 0.1.9's setup under umask 000 made the
+        # folders above its units and copy 777; in such a folder a closed file is replaced by deleting it
+        self.stand_in_services()
+        os.chmod(self.tmp, 0o755)                             # a home other accounts can pass into, as most are
+        for d, dirs, _ in os.walk(self.home):                 # a home with nothing open, as a person's would be
+            for x in [d] + [os.path.join(d, n) for n in dirs]:
+                os.chmod(x, os.stat(x).st_mode & ~0o022)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("another account can write", out)
+        # the home 0.1.9's setup left when started under umask 000 (seen 2026-11-23 in a scratch home)
+        # the copy's, then the units', then the state folder's, where revive writes the start files it runs (the
+        # state folder left open was seen 2026-11-24 on a stock Linux machine after 0.1.9's setup under umask 000)
+        above = [".local", ".local/share", ".config", ".config/systemd", ".config/systemd/user", ".local/state"]
+        for rel in above + [".local/share/windstorm-tardigrade"]:
+            os.chmod(os.path.join(self.home, rel), 0o777)
+        for rel in (".local/share/windstorm-tardigrade/tardigrade.py", ".config/systemd/user/windstorm-tardigrade-revive.service",
+                    ".config/systemd/user/windstorm-tardigrade-record.service",
+                    ".config/systemd/user/windstorm-tardigrade-record.timer"):
+            os.chmod(os.path.join(self.home, rel), 0o666)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        for i, rel in enumerate(above, 1):
+            p = os.path.join(self.home, rel)
+            self.assertIn(f"{i}. {p} can be written by every account on this computer: anything in it, what Tardigrade "
+                          f"runs at boot included, can be replaced by another account. To close it: chmod go-w {p}", out)
+            self.assertEqual(os.stat(p).st_mode & 0o777, 0o777, rel)      # not ours to change: named, left as it is
+        self.assertNotIn(f"{os.path.join(self.home, '.local/share/windstorm-tardigrade')} can be written", out)
+        self.assertEqual(os.stat(os.path.join(self.home, ".local/share/windstorm-tardigrade")).st_mode & 0o022, 0)
+        rc, out = self.tg("census")
+        self.assertIn(f"5. {os.path.join(self.home, '.config/systemd/user')} can be written by every account", out)
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertIn(f"revive --boot: 1. {os.path.join(self.home, '.local')} can be written", out)
+        # the person runs the one command each line gives; then nothing more is said
+        for rel in above:
+            r = subprocess.run(["/bin/sh", "-c", f"chmod go-w {os.path.join(self.home, rel)}"])
+            self.assertEqual(r.returncode, 0)
+        rc, out = self.tg("census")
+        self.assertNotIn("another account can write", out)
+        self.assertIn('"open_folders": []', self.tg("census", "--json")[1])
+        # reach: a home at 700 keeps every other account out, so nothing under it is named, open or not
+        os.chmod(os.path.join(self.home, ".local"), 0o777)
+        os.chmod(self.home, 0o700)
+        self.assertNotIn("another account can write", self.tg("census")[1])
+        os.chmod(self.home, 0o755)
+        self.assertIn(f"1. {os.path.join(self.home, '.local')} can be written by every account", self.tg("census")[1])
+        os.chmod(os.path.join(self.home, ".local"), 0o755)
+        # the settings and state folders, and the start files' folder in it, are the tool's own: each run closes the
+        # first two to 0700, which keeps the third out of reach, so none of them is named; the folders above them are
+        for rel in (".config/windstorm-tardigrade", ".local/state/windstorm-tardigrade",
+                    ".local/state/windstorm-tardigrade/launch"):
+            os.makedirs(os.path.join(self.home, rel), exist_ok=True)
+            os.chmod(os.path.join(self.home, rel), 0o777)
+        self.assertNotIn("another account can write", self.tg("census")[1])
+        for rel in (".config/windstorm-tardigrade", ".local/state/windstorm-tardigrade"):
+            self.assertEqual(os.stat(os.path.join(self.home, rel)).st_mode & 0o777, 0o700, rel)
+
+    def test_G3_29_a_group_folder_is_named_only_when_another_member_can_reach_it(self):
+        # family rule 28, WHEN A PERSON'S FOLDER IS NAMED: a 775 folder in the person's own group with nobody else in
+        # it is the ordinary state of a Linux home; a second member who can pass the home makes it open
+        import importlib.util
+        tg = self.load_tool()
+        real_account_ids = tg.account_ids
+        os.chmod(self.tmp, 0o755)
+        d = os.path.join(self.home, ".local")
+        os.makedirs(d, exist_ok=True)
+        os.chmod(self.home, 0o750)
+        os.chmod(d, 0o775)
+        me, gid = __import__("pwd").getpwuid(os.getuid()).pw_name, os.stat(d).st_gid
+        tg.group_accounts = lambda g: {me}                                   # a group of one
+        self.assertEqual(tg.who_can_write(d), "")
+        tg.group_accounts = lambda g: {me, "second-name"}                     # family rule 28: an account is its
+        tg.account_ids = lambda n: (os.getuid(), {gid})                        # number; a second name for the person's
+        self.assertEqual(tg.who_can_write(d), "")                             # own number is the person
+        tg.group_accounts = lambda g: {me, "friend"}                          # a second member
+        tg.account_ids = lambda n: (os.getuid() + 54321, {gid})
+        self.assertEqual(tg.who_can_write(d), "the account friend (in the folder's group)")
+        os.chmod(self.home, 0o700)                                           # who cannot pass the home cannot reach it
+        self.assertEqual(tg.who_can_write(d), "")
+        os.chmod(self.home, 0o750)
+        def unreadable(g):
+            raise KeyError(g)
+        tg.group_accounts = unreadable                                        # membership that cannot be read is said
+        self.assertIsNone(tg.who_can_write(d))
+        # a Mac's "nobody" group is 4294967294, which os.getgrouplist refuses with OverflowError (seen on macOS 13 and
+        # 27, Python 3.9): passed as its negative form it answers; one account that still cannot be read is said
+        calls = []
+        def getgrouplist(name, gid):
+            calls.append(gid)
+            if gid > 2 ** 31 - 1:
+                raise OverflowError("Python int too large to convert to C int")
+            return [gid, gid % 2 ** 32 if gid < 0 else gid]
+        real_ggl, real_ids = os.getgrouplist, real_account_ids
+        try:
+            os.getgrouplist = getgrouplist
+            pwd_mod = __import__("pwd")
+            real_getpwnam = pwd_mod.getpwnam
+            pwd_mod.getpwnam = lambda n: type("P", (), {"pw_uid": os.getuid() + 777, "pw_gid": 4294967294})()
+            uid, gids = real_ids("nobody-group-user")
+            self.assertEqual(calls, [-2])
+            self.assertEqual(gids, {4294967294})
+            tg.group_accounts = lambda g: {me, "x"}
+            tg.account_ids = lambda n: (_ for _ in ()).throw(OverflowError("too large"))
+            self.assertIsNone(tg.who_can_write(d))                           # said, no traceback
+            tg.open_folders = lambda: [(d, tg.who_can_write(d))]
+            self.assertIn("could not be read", tg.open_folder_lines()[1])
+        finally:
+            os.getgrouplist = real_ggl
+            pwd_mod.getpwnam = real_getpwnam
+        # a folder another account owns: named with its owner, and no command, since the person cannot change it
+        tg.open_folders = lambda: [(d, "the account that owns it")]
+        lines = tg.open_folder_lines()
+        self.assertIn(f"1. {d} belongs to another account", lines[1])
+        self.assertIn("Only that account or an administrator can close it.", lines[1])
+        self.assertNotIn("chmod", " ".join(lines))
+        # a folder root owns that others can write: root named as its owner, and no command the person cannot run
+        tg.open_folders = lambda: [(d, "every account on this computer")]
+        tg.folder_owner = lambda x: 0
+        lines = tg.open_folder_lines()
+        self.assertIn(f"1. {d} belongs to root, the administrator, and every account on this computer can write it", lines[1])
+        self.assertIn("only an administrator can close it", lines[1])
+        self.assertNotIn("chmod", " ".join(lines))
+
+    def test_G5_15_the_suite_refuses_to_run_the_tool_outside_its_own_scratch_home(self):
+        # the suite's guard (T78, family rule 23): only T78's own test may run the tool with the test setting ignored,
+        # and no test may run it with a home outside its own folder; a refused program never starts
+        import pwd
+        real = pwd.getpwuid(os.getuid()).pw_dir
+        # the run's own home (the guard's first part): set before anything loaded the tool, handed to what the run
+        # starts, with no line to this account's desktop session or tmux server, and no git config of the account
+        self.assertEqual(os.environ["HOME"], os.path.join(RUN_HOME, "home"))
+        self.assertNotEqual(os.path.realpath(os.environ["HOME"]), os.path.realpath(real))
+        for k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX"):
+            self.assertNotIn(k, os.environ)
+        child = subprocess.run(["/bin/sh", "-c", 'echo "$HOME|$XDG_RUNTIME_DIR|$TMUX"'], capture_output=True, text=True)
+        self.assertEqual(child.stdout.strip(), os.path.join(RUN_HOME, "home") + "||")
+        git = subprocess.run(["git", "config", "--global", "--list"], capture_output=True, text=True)
+        self.assertEqual(git.stdout, "")
+        probe = os.path.join(self.tmp, "started")
+        refused = [
+            lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--version"], env=dict(self.env, HOME=real)),
+            lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--version"]),            # the runner's own HOME
+            lambda: subprocess.run(["/bin/sh", "-c", f"touch {probe}; exec python3 -I {SCRIPT} --version"],
+                                   env=dict(self.env, HOME=real)),
+            lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--version"], env=dict(self.env, TARDIGRADE_TESTING="0")),
+            lambda: importlib.util.spec_from_file_location("tardigrade", SCRIPT).loader.exec_module(
+                importlib.util.module_from_spec(importlib.util.spec_from_file_location("tardigrade", SCRIPT))),
+        ]
+        for i, run in enumerate(refused):
+            with self.assertRaises(GuardRefused, msg=i):
+                run()
+        self.assertFalse(os.path.exists(probe))                    # refused before it started
+        mark = os.path.join(self.home, "tardigrade-test-home")
+        os.rename(mark, mark + ".off")                              # the setting with no marker: ignored, so refused
+        with self.assertRaises(GuardRefused):
+            self.tg("--version")
+        os.rename(mark + ".off", mark)
+        tmp = GUARD["tmp"]
+        GUARD["tmp"] = None                                          # outside a test that made its own folder
+        with self.assertRaises(GuardRefused):
+            self.tg("--version")
+        GUARD["tmp"] = tmp
+        rc, out = self.tg("--version")                              # this test's own home, marker and setting: runs
+        self.assertEqual((rc, out.strip()), (0, re.search(r'^VERSION = "([0-9.]+)"', fread(SCRIPT), re.M).group(1)))
+        self.assertTrue(self.load_tool().TESTING)
+        self.assertEqual(len(GUARD["caught"]), 7)
+        GUARD["caught"].clear()                                      # made on purpose, so they do not fail this test
+
+    def test_G5_15_the_testing_setting_alone_changes_nothing_and_says_so(self):
+        # T78, family rule 27: two keys for test mode, the setting AND the marker the suite writes in its scratch home
+        self.stand_in_services()
+        mark = os.path.join(self.home, "tardigrade-test-home")
+        # with the marker: the test behaviour (a stand-in fact: this boot's id)
+        rc, out = self.tg("setup", TARDIGRADE_FAKE_BOOT_ID="boot-marked")
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(os.path.exists(self.state("revived-boot-marked")), out)
+        self.assertNotIn("ignored it", out)
+        # the setting alone: no stand-in fact, and the first line of the run says it was found and ignored
+        os.remove(mark)
+        r = subprocess.run([sys.executable, "-I", SCRIPT, "census", "--json"], capture_output=True, text=True,
+                           env=dict(self.env, TARDIGRADE_FAKE_BOOT_ID="boot-unmarked"), timeout=240)
+        self.assertTrue(r.stderr.startswith("found TARDIGRADE_TESTING and ignored it: there is no test marker"), r.stderr)
+        json.loads(r.stdout)                                    # the JSON stays whole
+        self.assertIn("found TARDIGRADE_TESTING and ignored it", fread(self.state("tardigrade.log")))
+        rc, out = self.tg("setup", TARDIGRADE_FAKE_BOOT_ID="boot-unmarked")
+        self.assertFalse(os.path.exists(self.state("revived-boot-unmarked")), out)
+        with open("/proc/sys/kernel/random/boot_id") as f:
+            self.assertTrue(os.path.exists(self.state("revived-" + f.read().strip())), out)
+        # and nothing hands it on: not to a tmux server, not to a session's start file
+        import importlib.util
+        old = dict(os.environ)
+        try:
+            os.environ.update(HOME=self.home, TARDIGRADE_TESTING="1")
+            for marked in (False, True):
+                if marked:
+                    with open(mark, "w") as f:
+                        f.write(MARK_TEXT + "\n")
+                spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+                tg = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(tg)
+                tg.load_cfg()
+                self.assertEqual(tg.TESTING, marked)
+                self.assertEqual("TARDIGRADE_TESTING" in tg.clean_env(), marked)
+                self.assertEqual("TARDIGRADE_TESTING" in tg.server_env(), marked)
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+        # a marker that is not the suite's (a link, or other words) is no key
+        os.remove(mark)
+        os.symlink(os.path.join(self.tmp, "elsewhere"), mark)
+        with open(os.path.join(self.tmp, "elsewhere"), "w") as f:
+            f.write(MARK_TEXT + "\n")
+        self.assertIn("ignored it", self.tg("census")[1])
+        os.remove(mark)
+        with open(mark, "w") as f:
+            f.write("something else\n")
+        self.assertIn("ignored it", self.tg("census")[1])
+
     def test_G5_2_setup_dry_run_installs_nothing(self):
         rc, out = self.tg("setup", "--dry-run")
         self.assertIn("would copy", out)
@@ -2353,9 +2916,7 @@ class Setup(Base):
 
     def test_G5_3_setup_and_census_say_who_has_to_log_in_on_a_mac(self):
         import importlib.util
-        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
-        tg = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tg)
+        tg = self.load_tool()
         short, lines = tg.mac_story("FileVault is On.", "me", "me")
         self.assertIn("unlocks this Mac (FileVault)", short)
         self.assertIn("NOTHING comes back", lines[0])
@@ -2855,7 +3416,24 @@ class Tests(unittest.TestCase):
                         except OSError:
                             pass
             return found
-        self.assertEqual(gone_soon(left), [], "processes of the stopped run are still alive")
+        def named(pids):
+            # a failure names what it found, so a second one explains itself, in CI too: pid, parent, state, age,
+            # command line (seen twice on a loaded machine: 2 and 3 processes still there after the wait)
+            tick, rows = os.sysconf("SC_CLK_TCK"), []
+            with open("/proc/uptime") as f:
+                up = float(f.read().split()[0])
+            for pid in pids:
+                try:
+                    with open(f"/proc/{pid}/stat") as f:
+                        st = f.read().rsplit(")", 1)[1].split()
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        cmd = f.read().replace(b"\0", b" ").decode(errors="replace").strip()
+                    rows.append(f"pid {pid} parent {st[1]} state {st[0]} age {up - int(st[19]) / tick:.1f}s: {cmd[:200]}")
+                except (OSError, IndexError, ValueError):
+                    rows.append(f"pid {pid}: gone while being read")
+            return "processes of the stopped run are still alive:\n" + "\n".join(rows)
+        still = gone_soon(left)
+        self.assertEqual(still, [], named(still))
         self.assertEqual(os.listdir(parent), [], "the stopped run left its folder behind")
         time.sleep(3)                                       # and nothing comes back to write in it later
         self.assertEqual(left(), [], "a process of the stopped run came back")
@@ -2888,6 +3466,81 @@ class Tests(unittest.TestCase):
         self.assertGreaterEqual(time.time() - t, 1.0)
         stays.kill()
         stays.wait()
+
+    def test_G7_10_the_cleanup_of_a_stopped_run_ends_what_its_run_in_flight_starts_as_it_is_stopped(self):
+        # T84: G7.1 failed under load (and once alone) on a session the tool's revive brought back while the run was
+        # being stopped: its tmux server was started after the cleanup's one scan. Planted here without the tool: a
+        # process of the test's (its folder only in its HOME, as a tardigrade run in flight) that, told to end, starts
+        # one more process naming the folder and only then exits.
+        tmp = tempfile.mkdtemp(prefix="tg")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        late = os.path.join(tmp, "late")
+        code = ("import os, signal, subprocess, sys, time\n"
+                "def stop(*_):\n"
+                "    subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', sys.argv[1]],\n"
+                "                     start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                "    time.sleep(0.3)\n"
+                "    os._exit(0)\n"
+                "signal.signal(signal.SIGTERM, stop)\n"
+                "open(sys.argv[2], 'w').close()\n"
+                "while True:\n"
+                "    time.sleep(1)\n")
+        ready = os.path.join(tempfile.mkdtemp(prefix="g710"), "ready")
+        self.addCleanup(shutil.rmtree, os.path.dirname(ready), True)
+        run = subprocess.Popen([sys.executable, "-c", code, late, ready], env=dict(os.environ, HOME=os.path.join(tmp, "h")))
+        self.addCleanup(lambda: run.poll() is None and run.kill())
+        end = time.time() + 10
+        while not os.path.exists(ready) and time.time() < end:
+            time.sleep(0.05)
+        test = Base("run")
+        test.tmp = tmp
+        find = test.processes_of_this_test
+        self.assertEqual(find(), [run.pid])                       # found by its HOME alone
+        stop = os.path.join(os.path.dirname(ready), "stop")
+        try:
+            self.assertEqual(test.end_mine(), [])
+            self.assertEqual(gone_soon(find, within=1.0), [], "what it started as it was stopped is still there")
+            run.wait(timeout=5)
+            # the bound: a process that starts a new copy of itself each time it is told to end is still there when
+            # the time is up; the cleanup then fails the test and names it, and never ends anything wider than a pid
+            # Each copy starts with SIGTERM blocked and unblocks it once its handler is in: a SIGTERM sent while
+            # Python is still starting waits for the handler instead of ending the chain early (CI on 11bd6c4 failed
+            # so on all four jobs; a sleep of 0.5 s before the handler fails it here 3 of 3).
+            chain = ("import os, signal, subprocess, sys, time\n"
+                     "def masked():\n"
+                     "    signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])\n"
+                     "def again(*_):\n"
+                     "    if not os.path.exists(sys.argv[2]):\n"
+                     "        subprocess.Popen([sys.executable, '-c', sys.argv[3]] + sys.argv[1:], start_new_session=True,\n"
+                     "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=masked)\n"
+                     "    os._exit(0)\n"
+                     "signal.signal(signal.SIGTERM, again)\n"
+                     "signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGTERM])\n"
+                     "while True:\n"
+                     "    time.sleep(1)\n")
+            first = subprocess.Popen([sys.executable, "-c", chain, os.path.join(tmp, "chain"), stop, chain],
+                                     preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM]))
+            self.addCleanup(lambda: first.poll() is None and first.kill())
+            gone_soon(lambda: [] if find() else ["none yet"], within=5.0)
+            test.home, test.pids, test.loose, test.cleanup_bound = os.path.join(tmp, "h"), [], [], 1.5
+            LIVE.append(test)
+            t = time.time()
+            with self.assertRaisesRegex(AssertionError, r"(?s)bound was reached.*pid \d+: \S*python\S* -c import os"):
+                test.end_all()
+            self.assertLess(time.time() - t, 10)
+            self.assertNotIn(test, LIVE)
+        finally:
+            open(stop, "w").close()                                  # the chain ends at its next copy
+            for _ in range(50):                                      # a failed run of this test leaves nothing either
+                left = find()
+                if not left:
+                    break
+                for pid in left:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                time.sleep(0.1)
 
 
 class Invariants(unittest.TestCase):
@@ -2923,10 +3576,75 @@ class Invariants(unittest.TestCase):
     def test_INV6_standard_library_only_and_no_network(self):
         import re
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
-        self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
+        self.assertLessEqual(mods, {"glob", "grp", "hashlib", "pwd", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
                                     "signal", "termios", "select",    # the waiting screen (G4.4): standard, no network
                                     "ctypes",    # macOS only: a process's own argument list from the kernel (G2.39)
                                     "zoneinfo"})  # the zone a limit reply names, to read when it resets (G2.48)
+
+
+    def test_G5_15_every_environment_read_is_on_one_list(self):
+        # T78, family rule 27: every setting the released tool reads has an owner (a person's, a fact from the host,
+        # our own marker); test settings take two keys. environment.json holds the lists; this reads the code.
+        tree = ast.parse(fread(SCRIPT))
+
+        def environ(n):
+            return (isinstance(n, ast.Attribute) and n.attr == "environ" and isinstance(n.value, ast.Name)
+                    and n.value.id == "os")
+
+        def strs(n):
+            return [x.value for x in ast.walk(n) if isinstance(x, ast.Constant) and isinstance(x.value, str)]
+        found, loose = set(), []
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                f = n.func
+                if (f.attr == "get" and environ(f.value)) or (f.attr == "getenv" and isinstance(f.value, ast.Name)
+                                                              and f.value.id == "os"):
+                    a = n.args[0] if n.args else None
+                    if isinstance(a, ast.Constant):
+                        found.add(a.value)
+                    else:
+                        loose.append(n.lineno)
+                if f.attr == "expanduser" and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value.startswith("~"):
+                    found.add("HOME")
+            if isinstance(n, ast.Subscript) and environ(n.value):
+                if isinstance(n.slice, ast.Constant):
+                    found.add(n.slice.value)
+                else:
+                    loose.append(n.lineno)
+            if isinstance(n, ast.Compare) and any(environ(c) for c in n.comparators) and isinstance(n.left, ast.Constant):
+                found.add(n.left.value)
+            if (isinstance(n, ast.For) and isinstance(n.target, ast.Name)
+                    and not any(isinstance(x, (ast.Call, ast.Attribute)) for x in ast.walk(n.iter))
+                    and any(isinstance(x, ast.Name) and x.id == n.target.id for b in n.body for y in ast.walk(b)
+                            if (isinstance(y, ast.Call) and isinstance(y.func, ast.Attribute) and environ(y.func.value))
+                            or (isinstance(y, ast.Subscript) and environ(y.value)) for x in ast.walk(y))):
+                found.update(strs(n.iter))      # for k in ("A", "B"): ... os.environ.get(k)
+        # a read by a name held in a variable must sit in a loop over names written out, read above
+        loops = {x.lineno for n in ast.walk(tree) if isinstance(n, ast.For) for x in ast.walk(n) if hasattr(x, "lineno")}
+        self.assertEqual([ln for ln in loose if ln not in loops], [], "an environment read by a name the test cannot see")
+        e = jload(os.path.join(ROOT, "environment.json"))
+        listed = {}
+        for kind in ("person", "host", "markers", "test_two_key"):
+            for x in e[kind]:
+                self.assertNotIn(x["name"], listed, f"{x['name']} is on two lists")
+                listed[x["name"]] = kind
+        self.assertEqual(sorted(found - set(listed)), [], "read by the tool, on no list")
+        self.assertEqual(sorted(set(listed) - found), [], "on a list, no longer read by the tool")
+        for x in e["person"]:
+            self.assertTrue(x.get("read_about") and x.get("said"), x["name"])
+        for x in e["host"]:
+            self.assertTrue(x.get("read") and x.get("not_there") and x.get("could_not_be_read"), x["name"])
+        for n in found:              # a test setting is read only behind both keys
+            if n.startswith("TARDIGRADE_FAKE_"):
+                self.assertEqual(listed[n], "test_two_key", n)
+        import re
+        src = fread(SCRIPT)
+        for m in re.finditer(r'os\.environ(?:\.get\(|\[)"(TARDIGRADE_FAKE_[A-Z0-9_]+)"', src):
+            start = src.rindex("\n", 0, m.start()) + 1
+            line = src[start:src.index("\n", m.end())]
+            above = src[src.rindex("\n", 0, start - 1) + 1:start]        # the guard may be the line above
+            self.assertTrue("TESTING" in line or ("TESTING" in above and above.strip().startswith("if ")),
+                            f"{m.group(1)} read without the two keys: {line.strip()}")
 
 
 class Promises(unittest.TestCase):
@@ -3036,13 +3754,41 @@ class Strand(unittest.TestCase):
             if m:
                 said[os.path.relpath(f, ROOT)] = m.group(1)
         said["CHANGELOG.md top entry"] = re.search(r"^## (\S+)", fread(os.path.join(ROOT, "CHANGELOG.md")), re.M).group(1)
+        # G7.9 (T76): every clone line in the README names this version's tag, never the default branch
+        for i, tag in enumerate(clone_tags(fread(os.path.join(ROOT, "README.md"))), 1):
+            said[f"README.md clone line {i}"] = tag[1:] if tag.startswith("v") else tag
         self.assertEqual({k: x for k, x in said.items() if x != v}, {}, f"the script says {v}")
+        # the clone line check itself: a bare clone, a branch and an older tag are each caught
+        self.assertEqual(clone_tags("git clone https://example/x\n  git clone --branch main https://example/x\n"
+                                    "git clone --depth 1 --branch v0.1.8 https://example/x\n"),
+                         ["(no --branch: the default branch)", "main", "v0.1.8"])
+
+    def test_G5_16_no_shown_text_removes_the_plugin_catalog(self):
+        """T77: Claude Code's `plugin marketplace remove` also uninstalls every plugin from that catalog and deletes
+        their saved options and data; the code and every text shown to a person never run it or give it as a step"""
+        import glob, re
+        places = [os.path.join(ROOT, "scripts", "tardigrade.py"), os.path.join(ROOT, "README.md"),
+                  os.path.join(ROOT, "CHANGELOG.md")] + glob.glob(os.path.join(ROOT, "skills", "*", "SKILL.md"))
+        said = {os.path.relpath(f, ROOT): n for f in places
+                for n, line in enumerate(fread(f).splitlines(), 1) if re.search(r"marketplace\s+(remove|rm)\b", line)}
+        self.assertEqual(said, {}, "a shown text or the code removes the catalog")
 
     def test_no_codon_is_used_twice_in_the_plan(self):
         import re, collections
         plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
         seen = collections.Counter(re.findall(r"^\| ((?:G|INV)[0-9.]+) \|", plan, re.M))
         self.assertEqual([c for c, n in seen.items() if n > 1], [], "a codon is used for two claims")
+
+
+def clone_tags(text):
+    """the tag or branch each `git clone` line names (G7.9, T76); a line without --branch clones the default branch"""
+    import re
+    out = []
+    for line in text.splitlines():
+        if re.match(r"\s*git clone\b", line):
+            m = re.search(r"(?:--branch|-b)[ =](\S+)", line)
+            out.append(m.group(1) if m else "(no --branch: the default branch)")
+    return out
 
 
 # ---------- the gate: a test named for a claim must be one the runner runs (G7.3, T49) ----------
