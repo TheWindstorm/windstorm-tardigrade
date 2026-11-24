@@ -101,6 +101,12 @@ class Base(unittest.TestCase):
         os.makedirs(os.path.join(self.tmp, "x11"))
         with open(os.path.join(self.tmp, "x11", "X10"), "w") as f:      # this "machine" has a desktop on display :10
             f.write("")
+        # G5.14 (T75), family rule 25: a suite run under the family's clock shift hands it on to every program it starts;
+        # the tool's clean environment does not carry it, so the stand-in takes it from HOME/clockshift
+        if os.environ.get("LD_PRELOAD") and os.environ.get("SHIFT_SECONDS"):
+            self.env.update(LD_PRELOAD=os.environ["LD_PRELOAD"], SHIFT_SECONDS=os.environ["SHIFT_SECONDS"])
+            with open(os.path.join(self.home, "clockshift"), "w") as f:
+                f.write(os.environ["LD_PRELOAD"] + "\n" + os.environ["SHIFT_SECONDS"] + "\n")
         self.cfg({"path": self.path, "shell": "bash", "stagger_s": 0, "settle_s": 2, "retry_min": 1, "retry_gap_s": 1,
                   "herdr_tabs": False, "tmux": TMUX, "watch_min": 0.1})
         self.sock = os.path.join(self.tmp, f"tmux-{os.getuid()}", "default")
@@ -682,6 +688,37 @@ class Revive(Base):
         self.tg("record", "--force")
         self.reboot()
         return sid
+
+    def test_G5_14_the_family_clock_shift_reaches_what_the_tests_start_and_the_tool_has_no_offset(self):
+        # T75, family rule 25: before each tag the suite runs at 0, +1, +7 and +30 days under the family's clock shift.
+        # The tool gets no clock offset of its own; its clean environment hands on only its own list.
+        src = fread(SCRIPT)
+        for word in ("SHIFT_SECONDS", "LD_PRELOAD", "FAKE_NOW", "FAKE_TIME", "CLOCK_OFFSET"):
+            self.assertNotIn(word, src)
+        ce = src[src.index("def clean_env():"):src.index("def login_print(")]
+        self.assertIn('for k in ("TMPDIR", "XDG_RUNTIME_DIR", "TARDIGRADE_TESTING"):', ce)
+        # a session the tool starts gets none of the tool's other variables, and the shift only by the stand-in
+        self.recorded_then_rebooted()
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TG_NOT_HANDED="1")
+        self.assertEqual(rc, 0, out)
+        new = self.wait_launches(n + 1)[-1]
+        self.assertNotIn("TG_NOT_HANDED", new["seen"])
+        self.assertEqual(new["seen"].get("SHIFT_SECONDS"), os.environ.get("SHIFT_SECONDS") if
+                         os.environ.get("LD_PRELOAD") else None)
+        self.assertLess(abs(new["now"] - time.time()), 600)      # the session's clock is the test's, shifted or not
+        # a record that really is days old, its time set by the test: a down row past down_keep_days (14) is
+        # forgotten at the next record, one inside it is kept
+        t = self.table()
+        now = int(time.time())
+        old = dict(t["lanes"][0], session_id=str(uuid.uuid4()), name="Old Lane", tmux_session="old")
+        t["down"] = [dict(old, down_since=now - 15 * 86400),
+                     dict(old, session_id=str(uuid.uuid4()), name="Recent Lane", down_since=now - 13 * 86400)]
+        with open(os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"), "w") as f:
+            json.dump(t, f)
+        self.tg("record")
+        self.assertEqual([d["name"] for d in self.table()["down"] if d["name"] in ("Old Lane", "Recent Lane")],
+                         ["Recent Lane"])
 
     def test_G2_1_revive_brings_a_session_back_as_itself(self):
         sid = self.recorded_then_rebooted()
