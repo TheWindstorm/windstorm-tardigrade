@@ -1083,7 +1083,7 @@
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.10",
    "test": "test_G3_28_setup_revive_and_uninstall_touch_only_what_tardigrade_wrote",
-   "proven": "",
+   "proven": "2026-11-24, on a stock Ubuntu 24.04.5 VM, in a new account (home 750, umask 0002, lingering on), with the release head 8e8da59's script, every step started by hand: setup with a person's own tardigrade.py at the copy's place stopped (exit 1), named the file, and the home differed from before only by the tool's three empty folders (~/.config, the settings and the state folder), which its line now says; with the file moved, setup exit 0. A revive with a person's folder named lock (holding diary.txt, three days old) said it is theirs and started nothing (exit 1); with the folder moved, revive exit 0, and the launch folder held only the person's my-start.sh (the tool's own gone-session.sh removed). Uninstall: exit 0, units and copy gone, Python's cache of the script gone, and kept and named: a person's file in __pycache__, the folders holding a person's files, the record, log and settings; last line \"Tardigrade is off this computer\". All eight of the person's files were still there (my-script.py, the lock's diary.txt, notes.txt and mine.txt beside the copy, a unit of their own, a start file of their own, a file in the state folder and one in the settings folder); no Tardigrade unit was left.",
    "issue": 83,
    "moved_why": "",
    "moved_by_person": ""
@@ -1097,7 +1097,7 @@
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.10",
    "test": "test_G7_4_every_place_that_states_the_version_says_the_same_one",
-   "proven": "",
+   "proven": "2026-11-24, on a stock Ubuntu 24.04.5 VM (Python 3.12.3, tmux 3.4, home 750, umask 0002, lingering on), the two README lines of 0.1.9, started by hand exactly as printed: git clone --depth 1 --branch v0.1.9 https://github.com/TheWindstorm/windstorm-tardigrade, exit 0, the clone at f083567 (v0.1.9); python3 -I windstorm-tardigrade/scripts/tardigrade.py setup, exit 0; the clone's script and the installed copy had the same sha256 (2efd6fa4cb7b557a), the boot service enabled and the record timer active. The 0.1.10 lines are run the same way after the tag, on a new stock machine; that run is on 0.1.10's release list.",
    "issue": 84,
    "moved_why": "",
    "moved_by_person": ""
@@ -1125,7 +1125,7 @@
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.10",
    "test": "test_G3_29_nothing_setup_makes_is_writable_by_another_account_whatever_the_umask",
-   "proven": "",
+   "proven": "2026-11-24, on a stock Ubuntu 24.04.5 VM, in a new account (home 750, login umask 0002), every step started by hand: 0.1.9 cloned by its README line and set up under umask 000 left the copy and the units at 666 and ~/.local, ~/.local/share, ~/.local/state, ~/.config, ~/.config/systemd, ~/.config/systemd/user and the install folder at 777; the release head ea2330f's setup (exit 0) closed its own copy and units to 644 and the install folder to 755 and changed no other folder. Census named nothing while the home was 750 (no other account can pass it). With the home opened to 755 it named six folders, each with its command, ~/.local/state among them (the walk from the state folder, added on this run's evidence after cc86688 did not name it); the person ran the six commands as printed (each exit 0) and census then named none (open_folders: []). On two Macs, in test accounts (macOS 13.7.8 on Intel and macOS 27.2.1 on Apple silicon, /usr/bin/python3 3.9.6, home 700), the release head 8e8da59: setup --dry-run exit 0, census exit 0 naming no folder; with the home opened to 755 and ~/.config to 775 in the group every Mac account is in, census named ~/.config as writable by another account of that group, with its command, and no traceback; both accounts were put back as found. Not seen on a Mac: a real setup, so the walk over the launch agents' folder.",
    "issue": 86,
    "moved_why": "",
    "moved_by_person": ""
