@@ -2546,6 +2546,79 @@ class Setup(Base):
         for rel in opened:
             self.assertEqual(os.stat(os.path.join(self.home, rel)).st_mode & 0o022, 0, rel)
 
+    def test_G3_29_the_folders_above_what_runs_are_named_with_their_command_and_not_changed(self):
+        # family rule 28, A FILE IS ONLY AS CLOSED AS THE FOLDERS ABOVE IT: 0.1.9's setup under umask 000 made the
+        # folders above its units and copy 777; in such a folder a closed file is replaced by deleting it
+        self.stand_in_services()
+        os.chmod(self.tmp, 0o755)                             # a home other accounts can pass into, as most are
+        for d, dirs, _ in os.walk(self.home):                 # a home with nothing open, as a person's would be
+            for x in [d] + [os.path.join(d, n) for n in dirs]:
+                os.chmod(x, os.stat(x).st_mode & ~0o022)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("another account can write", out)
+        # the home 0.1.9's setup left when started under umask 000 (seen 2026-11-23 in a scratch home)
+        above = [".local", ".local/share", ".config", ".config/systemd", ".config/systemd/user"]   # the copy's, then the units
+        for rel in above + [".local/share/windstorm-tardigrade"]:
+            os.chmod(os.path.join(self.home, rel), 0o777)
+        for rel in (".local/share/windstorm-tardigrade/tardigrade.py", ".config/systemd/user/windstorm-tardigrade-revive.service",
+                    ".config/systemd/user/windstorm-tardigrade-record.service",
+                    ".config/systemd/user/windstorm-tardigrade-record.timer"):
+            os.chmod(os.path.join(self.home, rel), 0o666)
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        for i, rel in enumerate(above, 1):
+            p = os.path.join(self.home, rel)
+            self.assertIn(f"{i}. {p} can be written by every account on this computer: anything in it, Tardigrade's "
+                          f"own units and copy included, can be replaced by another account. To close it: chmod go-w {p}", out)
+            self.assertEqual(os.stat(p).st_mode & 0o777, 0o777, rel)      # not ours to change: named, left as it is
+        self.assertNotIn(f"{os.path.join(self.home, '.local/share/windstorm-tardigrade')} can be written", out)
+        self.assertEqual(os.stat(os.path.join(self.home, ".local/share/windstorm-tardigrade")).st_mode & 0o022, 0)
+        rc, out = self.tg("census")
+        self.assertIn(f"5. {os.path.join(self.home, '.config/systemd/user')} can be written by every account", out)
+        rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, TARDIGRADE_FAKE_BOOT_ID="boot-b")
+        self.assertIn(f"revive --boot: 1. {os.path.join(self.home, '.local')} can be written", out)
+        # the person runs the one command each line gives; then nothing more is said
+        for rel in above:
+            r = subprocess.run(["/bin/sh", "-c", f"chmod go-w {os.path.join(self.home, rel)}"])
+            self.assertEqual(r.returncode, 0)
+        rc, out = self.tg("census")
+        self.assertNotIn("another account can write", out)
+        self.assertIn('"open_folders": []', self.tg("census", "--json")[1])
+        # reach: a home at 700 keeps every other account out, so nothing under it is named, open or not
+        os.chmod(os.path.join(self.home, ".local"), 0o777)
+        os.chmod(self.home, 0o700)
+        self.assertNotIn("another account can write", self.tg("census")[1])
+        os.chmod(self.home, 0o755)
+        self.assertIn(f"1. {os.path.join(self.home, '.local')} can be written by every account", self.tg("census")[1])
+        os.chmod(os.path.join(self.home, ".local"), 0o755)
+
+    def test_G3_29_a_group_folder_is_named_only_when_another_member_can_reach_it(self):
+        # family rule 28, WHEN A PERSON'S FOLDER IS NAMED: a 775 folder in the person's own group with nobody else in
+        # it is the ordinary state of a Linux home; a second member who can pass the home makes it open
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tardigrade", SCRIPT)
+        tg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tg)
+        os.chmod(self.tmp, 0o755)
+        d = os.path.join(self.home, ".local")
+        os.makedirs(d, exist_ok=True)
+        os.chmod(self.home, 0o750)
+        os.chmod(d, 0o775)
+        me, gid = __import__("pwd").getpwuid(os.getuid()).pw_name, os.stat(d).st_gid
+        tg.group_accounts = lambda g: {me}                                   # a group of one
+        self.assertEqual(tg.who_can_write(d), "")
+        tg.group_accounts = lambda g: {me, "friend"}                          # a second member
+        tg.account_ids = lambda n: (os.getuid() + 54321, {gid})
+        self.assertEqual(tg.who_can_write(d), "the account friend (in the folder's group)")
+        os.chmod(self.home, 0o700)                                           # who cannot pass the home cannot reach it
+        self.assertEqual(tg.who_can_write(d), "")
+        os.chmod(self.home, 0o750)
+        def unreadable(g):
+            raise KeyError(g)
+        tg.group_accounts = unreadable                                        # membership that cannot be read is said
+        self.assertIsNone(tg.who_can_write(d))
+
     def test_G5_2_setup_dry_run_installs_nothing(self):
         rc, out = self.tg("setup", "--dry-run")
         self.assertIn("would copy", out)
@@ -3124,7 +3197,7 @@ class Invariants(unittest.TestCase):
     def test_INV6_standard_library_only_and_no_network(self):
         import re
         mods = set(re.findall(r"^\s*import (\w+)", self.src, re.M)) | set(re.findall(r"^\s*from (\w+) import", self.src, re.M))
-        self.assertLessEqual(mods, {"glob", "hashlib", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
+        self.assertLessEqual(mods, {"glob", "grp", "hashlib", "pwd", "json", "os", "re", "shlex", "shutil", "stat", "subprocess", "sys", "time", "datetime",
                                     "signal", "termios", "select",    # the waiting screen (G4.4): standard, no network
                                     "ctypes",    # macOS only: a process's own argument list from the kernel (G2.39)
                                     "zoneinfo"})  # the zone a limit reply names, to read when it resets (G2.48)

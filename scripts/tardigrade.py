@@ -2235,6 +2235,9 @@ def free_lock(lock):
 
 
 def _revive(boot):
+    if boot:      # G3.29: the boot run says it too, in its log, until the person closes the folder
+        for line in open_folder_lines():
+            log("revive --boot: " + line)
     if not CFG["tmux"]:
         log("revive: tmux is not installed; nothing can be started. Install tmux, then run setup again.")
         return 1
@@ -3019,6 +3022,8 @@ def cannot_tell_text(why):
 
 def census():
     d = census_data()
+    folders = open_folder_lines()
+    d["open_folders"] = folders[1:]
     if d.get("cannot_tell"):
         if "--json" in ARGS:
             print(json.dumps(d, indent=1, sort_keys=True))
@@ -3027,6 +3032,8 @@ def census():
             print(cannot_tell_text(d["cannot_tell"]))
             if d.get("record_not_written"):
                 print(record_not_written_text(d["record_not_written"]))
+            for line in folders:
+                print(line)
         return 1
     if "--json" in ARGS:
         print(json.dumps(d, indent=1, sort_keys=True))
@@ -3043,6 +3050,8 @@ def census():
         print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
+    for line in folders:
+        print(line)
     if d.get("record_not_written"):
         print(record_not_written_text(d["record_not_written"]))
     pr = d["restore"]
@@ -3385,6 +3394,8 @@ def setup():
     print("\nWindstorm Tardigrade is set up. After a restart, your sessions come back by themselves.")
     for line in who_logs_in():
         print(line)
+    for line in open_folder_lines():
+        print(line)
     return 0
 
 
@@ -3455,6 +3466,110 @@ def our_places(script):
         ud = os.path.join(HOME, ".config", "systemd", "user")
         units_at = [(os.path.join(ud, name), "unit") for name in units("", "")]
     return [(script, "copy")] + units_at
+
+
+def group_accounts(gid):
+    """every account in group gid: its member list, and every account whose primary group it is (raises when it
+    cannot be read)"""
+    import grp
+    import pwd          # here, not at the top: neither exists on Windows, where setup says it is not supported
+    return set(grp.getgrgid(gid).gr_mem) | {u.pw_name for u in pwd.getpwall() if u.pw_gid == gid}
+
+
+def account_ids(name):
+    """(uid, the set of its group ids) of the account name (raises when it cannot be read)"""
+    import pwd
+    u = pwd.getpwnam(name)
+    return u.pw_uid, set(os.getgrouplist(name, u.pw_gid))
+
+
+def may(st, uid, gids, bit):
+    """whether the account (uid, gids) has bit (4 read, 2 write, 1 pass) on a file with this stat"""
+    if st.st_uid == uid:
+        return bool(st.st_mode >> 6 & bit)
+    if st.st_gid in gids:
+        return bool(st.st_mode >> 3 & bit)
+    return bool(st.st_mode & bit)
+
+
+def who_can_write(d):
+    """Another account that can really REACH and WRITE the folder d (family rule 28, WHEN A PERSON'S FOLDER IS
+    NAMED): '' for none, None when it could not be read, else who. Write: writable by others, or by its group when
+    that group has a member other than the owner, or owned by another account. Reach: every folder from / down to
+    d lets that same account pass. (G3.29)"""
+    chain, x = [], d
+    while True:
+        chain.append(x)
+        if x == os.path.dirname(x):
+            break
+        x = os.path.dirname(x)
+    try:
+        sts = [os.stat(x) for x in reversed(chain)]
+    except OSError:
+        return None
+    st, me = sts[-1], os.getuid()
+    cands = []          # (who, uid, gids)
+    if st.st_uid not in (me, 0):
+        cands.append(("the account that owns it", st.st_uid, set()))
+    if st.st_mode & 0o002:
+        cands.append(("every account on this computer", -1, set()))
+    if st.st_mode & 0o020:
+        try:
+            import pwd
+            mine = pwd.getpwuid(me).pw_name
+            names = sorted(group_accounts(st.st_gid) - {mine})
+            for n in names:
+                uid, gids = account_ids(n)
+                cands.append((f"the account {n} (in the folder's group)", uid, gids))
+        except (KeyError, OSError):
+            return None
+    for who, uid, gids in cands:
+        if uid == me:
+            continue
+        if all(may(s, uid, gids, 1) for s in sts) and may(st, uid, gids, 2):
+            return who
+    return ""
+
+
+def open_folders():
+    """[(folder, who)] for every folder from the home down to each thing of ours that runs (the installed copy, the
+    units or plists) that another account can write, or that could not be read (who None)"""
+    seen, out = set(), []
+    for p, _ in our_places(os.path.join(INSTALL_DIR, "tardigrade.py")):
+        if not os.path.lexists(p):
+            continue
+        chain, d = [], os.path.dirname(p)
+        while True:
+            chain.append(d)
+            if d == HOME or d == os.path.dirname(d):
+                break
+            d = os.path.dirname(d)
+        for d in reversed(chain):
+            if d not in seen:
+                seen.add(d)
+                who = who_can_write(d)
+                if who != "":
+                    out.append((d, who))
+    return out
+
+
+def open_folder_lines():
+    """the numbered lines for the person, one per open folder, each with the one command that closes it"""
+    lines = []
+    for i, (d, who) in enumerate(open_folders(), 1):
+        if who is None:
+            lines.append(f"{i}. {d}: who can write it could not be read (the folder, a folder above it, or its group's "
+                         "members), so Tardigrade cannot tell whether another account can replace what is in it.")
+        elif who == "the account that owns it":
+            lines.append(f"{i}. {d} belongs to another account: that account can replace anything in it, Tardigrade's "
+                         "own units and copy included. Only that account or an administrator can close it.")
+        else:
+            lines.append(f"{i}. {d} can be written by {who}: anything in it, Tardigrade's own units and copy included, "
+                         f"can be replaced by another account. To close it: chmod go-w {shlex.quote(d)}")
+    if lines:
+        lines.insert(0, "On the way to what runs at boot, another account can write these folders (Tardigrade does not "
+                        "change a folder it cannot know it made):")
+    return lines
 
 
 def remove_ours(path, kind, kept, failed):
