@@ -1395,6 +1395,20 @@
    "issue": 106,
    "moved_why": "moved earlier, from 0.1.12, on the maintainer's ruling of 2026-11-24: the line this row corrects ships in 0.1.11 (T51), and it would say \"same\" beside an enabled older plugin from the day it ships; two rows can be made today by anyone with a second catalog and the plugin's bare name.",
    "moved_by_person": ""
+  },
+  {
+   "id": "T100",
+   "seen": "2026-11-24, read in the code, after the family's rule that nothing of ours names a plugin cache version folder (Claude Code's documentation says it removes a plugin's older version folder 14 days after an update; the removal is not seen by us yet): of everything setup writes, the two units, the timer and the two launchd files name only the installed copy and the Python that ran setup. One file does name such a path: setup's own list of the folders it made keeps \"from\", the script setup ran from, whole, and when setup ran from the plugin that is a path inside a cache version folder. The tool uses only the part above /plugins/cache/ (to know that the copy came from a plugin, and where Claude Code's folder is) and never opens the path, so a removed folder breaks nothing today. Also seen, and kept nowhere: a waiting screen runs the script revive was called from, so a revive typed from the plugin's own folder leaves that path on a pane's command line for the minutes the screen lives; that needs no row.",
+   "promise": "nothing setup writes names a path inside a plugin cache version folder: when setup ran from a plugin, the list of made folders keeps only the part up to /plugins/cache (a clone's path stays whole); a list written by an older version is read as before, and the plugin line (G3.19, G5.10, G5.24) answers the same from both. A test reads everything setup writes, on Linux and with the Mac stand-in, for a path below a cache folder, and is seen red first.",
+   "codon": "G5.25",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 108,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

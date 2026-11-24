@@ -305,6 +305,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G5.22 | Due in 0.1.11 (T95). On Linux, before its first write, setup asks the user manager; with no user manager (stdout empty, "Failed to connect to bus") it stops having made nothing, naming what systemd answered and the one next step; any other answer goes on as before. | Not built yet. |
 | G5.23 | Due in 0.1.11 (T96). Setup writes the person's config.json only when a value changes; a test holds a hand-laid file byte for byte through a setup that changes nothing. | Not built yet. |
 | G5.24 | Due in 0.1.11 (T99), moved earlier with T51. The census and the boot report read every row Claude Code keeps for the plugin, from whichever catalog: each row whose version differs from the installed copy's is named with its catalog, "same" is said only when every row is the same, and two rows are named once with the one next step. | Not built yet. |
+| G5.25 | Due in 0.1.11 (T100). Nothing setup writes names a path inside a plugin cache version folder: its list of made folders keeps only the part up to /plugins/cache, an older list is read as before, and a test reads everything setup writes for such a path. | Not built yet. |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
 ### G7 Tests
