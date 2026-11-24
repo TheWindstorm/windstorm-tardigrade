@@ -1297,6 +1297,20 @@
    "issue": 99,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T93",
+   "seen": "2026-11-24, on 0.1.10 (script sha256 c440b10f403efc1e). On a stock Ubuntu 24.04.5 VM an uninstall killed part way (SIGKILL at 0.12 to 0.28 s) left half states with the setting auto_revive still on: the timer and the boot service off with the units and the copy still there, and the units gone with the copy still there. In a scratch home on Linux with lingering on, with auto_revive on and no units and no installed copy at all, `census` printed \"Comes back after a reboot: yes, by itself\". Its answer is read from the setting and from lingering alone, never from the boot service: the same would come for a person who switched the boot service off by hand, or a home copied to another machine without its units.",
+   "promise": "the census says \"yes\" only when what a boot revive needs is there now (on Linux the boot service enabled, the timer active and the installed copy they run present; on a Mac both jobs loaded and the copy present); otherwise it says NO, names what is missing, and says to run setup. A test holds each of the three answers: yes, no, and could not be read (systemctl or launchctl gave no answer).",
+   "codon": "G3.33",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 100,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

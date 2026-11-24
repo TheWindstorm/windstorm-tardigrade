@@ -260,6 +260,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G3.30 | Due in 0.1.11 (T81). A command that only reads (census, a dry run, a refused setup) makes no folder and no file. | Not built yet. |
 | G3.31 | Due in 0.1.11 (T82). Uninstall leaves the home as setup found it: names only what is there, says its switch-off setting stays and why, removes by setup's record (T73) the empty folders it made; every difference from the listing before setup is a line it printed. | Not built yet. |
 | G3.32 | Due in 0.1.11 (T92). After an uninstall that keeps something, its last lines and the census say what a setup after it does with each kept thing; a test holds the lines to what setup then does. | Not built yet. |
+| G3.33 | Due in 0.1.11 (T93). The census says a reboot brings sessions back only when the boot service, the timer and the copy they run are there now, never from the setting alone; else NO, what is missing, and run setup. | Not built yet. |
 
 ### G4 Windows and tabs
 
