@@ -59,6 +59,14 @@ def running(pid):
         return False
 
 
+def cmdline_of(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().replace(b"\0", b" ").decode(errors="replace").strip()[:200]
+    except OSError:
+        return "(gone while being read)"
+
+
 def gone_soon(find, within=5.0):
     """What find() still lists after waiting up to `within` seconds for it to list nothing (G7.2). A process that was
     told to end exits a moment later, so a test that reads once can see it still there; one that stays is still caught."""
@@ -87,7 +95,10 @@ LIVE = []
 
 def _end_live(*_):
     for t in list(LIVE):
-        t.end_all()
+        try:
+            t.end_all()
+        except AssertionError as e:                 # stopped or exiting: each test's cleanup still runs, and says so
+            sys.stderr.write(f"{e}\n")
     _end_run_home()
 
 
@@ -261,8 +272,13 @@ class Base(unittest.TestCase):
                 pass
         # anything else of this test's still running: a tardigrade run in flight when the run was stopped carries
         # the test's folder only in its HOME, not on its command line. Each is ended by its exact process id.
-        self.end_mine()
+        left = self.end_mine(within=self.cleanup_bound)
         shutil.rmtree(self.tmp, ignore_errors=True)
+        if left:        # the bound was reached: the test fails and names what stayed; nothing wider than exact pids
+            raise AssertionError("the cleanup's bound was reached and these processes of the test are still there:\n"
+                                 + "\n".join(f"pid {p}: {cmdline_of(p)}" for p in left))
+
+    cleanup_bound = 10.0
 
     def end_mine(self, within=10.0):
         """end every process of this test by its exact id, then scan again once those have exited, until a scan finds
@@ -3480,13 +3496,44 @@ class Tests(unittest.TestCase):
         test.tmp = tmp
         find = test.processes_of_this_test
         self.assertEqual(find(), [run.pid])                       # found by its HOME alone
+        stop = os.path.join(os.path.dirname(ready), "stop")
         try:
             self.assertEqual(test.end_mine(), [])
             self.assertEqual(gone_soon(find, within=1.0), [], "what it started as it was stopped is still there")
             run.wait(timeout=5)
+            # the bound: a process that starts a new copy of itself each time it is told to end is still there when
+            # the time is up; the cleanup then fails the test and names it, and never ends anything wider than a pid
+            chain = ("import os, signal, subprocess, sys, time\n"
+                     "def again(*_):\n"
+                     "    if not os.path.exists(sys.argv[2]):\n"
+                     "        subprocess.Popen([sys.executable, '-c', sys.argv[3]] + sys.argv[1:], start_new_session=True,\n"
+                     "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                     "    os._exit(0)\n"
+                     "signal.signal(signal.SIGTERM, again)\n"
+                     "while True:\n"
+                     "    time.sleep(1)\n")
+            first = subprocess.Popen([sys.executable, "-c", chain, os.path.join(tmp, "chain"), stop, chain])
+            self.addCleanup(lambda: first.poll() is None and first.kill())
+            gone_soon(lambda: [] if find() else ["none yet"], within=5.0)
+            test.home, test.pids, test.loose, test.cleanup_bound = os.path.join(tmp, "h"), [], [], 1.5
+            LIVE.append(test)
+            t = time.time()
+            with self.assertRaisesRegex(AssertionError, r"(?s)bound was reached.*pid \d+: \S*python\S* -c import os"):
+                test.end_all()
+            self.assertLess(time.time() - t, 10)
+            self.assertNotIn(test, LIVE)
         finally:
-            for pid in find():                                     # a failed run of this test leaves nothing either
-                os.kill(pid, signal.SIGKILL)
+            open(stop, "w").close()                                  # the chain ends at its next copy
+            for _ in range(50):                                      # a failed run of this test leaves nothing either
+                left = find()
+                if not left:
+                    break
+                for pid in left:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                time.sleep(0.1)
 
 
 class Invariants(unittest.TestCase):
