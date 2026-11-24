@@ -116,6 +116,10 @@
   {
    "name": "TARDIGRADE_FAKE_ENV_UNREAD",
    "note": "read only with both keys; every read of a session's environment in that run answers 'not read', for the test of a failed read"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_SYSTEM_PYTHON",
+   "note": "read only with both keys; stands for /usr/bin/python3 in that run, for the test of a system python that is too old or not there"
   }
  ]
 }
