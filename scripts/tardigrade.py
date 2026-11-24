@@ -5057,6 +5057,24 @@ def kept_lines():
     return lines
 
 
+def marked_sessions():
+    """G5.19 (T88): how many running tmux sessions carry the mark of the session this tool made them for, asked of
+    every tmux server in this user's tmux folder. -> (how many, why for each server that could not be read). A
+    socket nobody listens on (a server gone at a reboot) is not a failed read. Read only."""
+    n, unread = 0, []
+    for s in sockets():
+        if not CFG["tmux"]:
+            unread.append(f"tmux was not found, and a tmux socket is there ({s})")
+            continue
+        rc, out, err = run_err([CFG["tmux"], "-S", s, "list-sessions", "-F", "#{" + OURS_MARK + "}"], timeout=6)
+        if rc == 0:
+            n += sum(1 for line in out.splitlines() if line.strip())
+        elif rc == 99 or not ("no server running" in err or "error connecting to" in err):
+            unread.append(f"the tmux server at {s} did not list its sessions ("
+                          + ("no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})"))
+    return n, unread
+
+
 def uninstall():
     if DRY:
         print("would remove the boot service, the record timer and the installed copy; the record and the log stay")
@@ -5173,6 +5191,19 @@ def uninstall():
         print(f"Automatic revive is switched off in your settings now (auto_revive false in {cfgf}). That line stays: "
               "with it, a record made by hand does not wait for a boot revive that no longer runs.")
     print("Running sessions were not touched.")
+    # G5.19, family rule 8: the mark on a tmux session the tool made stays (uninstall touches no session), and a
+    # later setup reads it. So it is named here: a count, or that it could not be read, never "none" for that.
+    marked, mark_unread = marked_sessions()
+    if mark_unread:
+        print(f"Whether a running tmux session still carries Tardigrade's mark (the tmux option {OURS_MARK}) could "
+              "not be read: " + "; ".join(mark_unread) + ". Uninstall touches no session; a mark ends with its tmux "
+              "session.")
+    elif marked:
+        one = marked == 1
+        print(f"{marked} tmux session{'' if one else 's'} that Tardigrade made still carr{'ies' if one else 'y'} its "
+              f"mark (the tmux option {OURS_MARK}: the id of the session {'it' if one else 'each'} was made for). "
+              "Uninstall touches no session, so the mark is not taken off; it ends with "
+              f"{'that' if one else 'each'} tmux session.")
     if failed:
         print("These are Tardigrade's, but they could not be removed:")
         for x in failed:

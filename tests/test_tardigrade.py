@@ -2142,6 +2142,38 @@ class Revive(Base):
         self.assertIn("revive: 0 started, 2 already running, 0 failed, 0 need you\n", out)
         self.assertEqual(len(self.launches()), n + 1, "and none after the record")
 
+    def test_G5_19_uninstall_says_how_many_tmux_sessions_keep_the_mark_and_says_so_when_it_could_not_read(self):
+        """The mark stays on a tmux session the tool made, and uninstall touches no session. A later setup reads the
+        mark, so it is a thing of the tool's left on the computer, and uninstall's last words name it: how many
+        running tmux sessions carry it, and that it ends with each. Three answers: a count; no word of it where no
+        session carries it; and where tmux could not be read, that is said, never taken for none."""
+        # systemd answers for the units (not there, not running), so each uninstall here ends as "off"
+        self.script("systemctl", '#!/bin/sh\ncase "$*" in *is-active*) echo inactive; exit 3;; '
+                    '*is-enabled*) echo not-found; exit 4;; esac\nexit 0\n')
+        rc, out = self.tg("uninstall")                      # no tmux server at all: none carries it
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Running sessions were not touched.\n", out)
+        self.assertNotIn("mark", out)
+        sid, row = self.brought_back()                      # two tmux sessions run; the tool made one of them
+        self.assertEqual(self.mark("beta"), "", "the session the person started carries none")
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Running sessions were not touched.\n1 tmux session that Tardigrade made still carries its mark "
+                      "(the tmux option @tardigrade_session: the id of the session it was made for). Uninstall "
+                      "touches no session, so the mark is not taken off; it ends with that tmux session.\n", out)
+        self.assertEqual((self.mark(), running(row["pid"])), (sid, True), "nothing of the session was touched")
+        # tmux gives no answer about a server that is there: said as that, and no count beside it
+        self.cfg({"tmux": self.script("tmux-broken", "#!/bin/sh\necho 'lost server' >&2\nexit 1\n")})
+        rc, out = self.tg("uninstall")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Running sessions were not touched.\nWhether a running tmux session still carries Tardigrade's "
+                      "mark (the tmux option @tardigrade_session) could not be read: the tmux server at "
+                      f"{self.sock} did not list its sessions (tmux ended with code 1). Uninstall touches no session; "
+                      "a mark ends with its tmux session.\n", out)
+        self.assertNotIn("that Tardigrade made", out)
+        self.cfg({"tmux": TMUX})
+        self.assertEqual((self.mark(), running(row["pid"])), (sid, True))
+
     def test_G5_19_the_line_names_the_start_files_of_the_shell_the_tool_starts_and_no_file_where_it_has_no_list(self):
         """The line that sends a person to a start file names the files of the shell the tool itself starts the
         session with (its `shell` setting, else the login shell): the ones zsh reads for zsh, never a ~/.bashrc
