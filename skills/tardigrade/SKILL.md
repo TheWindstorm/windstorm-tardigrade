@@ -106,6 +106,10 @@ says Tardigrade is off this computer.
 Never delete, and never offer to delete, anything the uninstall kept (the person's files, the record, the log, the
 settings, a folder that stayed) unless the person asks for it in their own words in this conversation.
 
+Never run `systemctl --user stop`, `restart` or `kill` on `windstorm-tardigrade-revive.service`, before or after an
+uninstall, and never tidy it away: a stop can end the person's tmux server and every session in it. The only hand
+command for a boot service listed as failed is `systemctl --user reset-failed windstorm-tardigrade-revive.service`.
+
 ## What it never does
 
 - It never starts a second copy of a running session.

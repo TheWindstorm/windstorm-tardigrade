@@ -56,16 +56,27 @@ boot service still brings your sessions back after a restart, and the 5-minute r
 the copy in `~/.local/share/windstorm-tardigrade/`. To take them off, run
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall`. Your settings, record and log stay.
 
+Do not stop or restart the boot service by hand (`systemctl --user stop windstorm-tardigrade-revive.service`), ever.
+Where a restart brought your sessions back and Tardigrade had to start the tmux server, that server runs in the boot
+service's group, and a stop of the service can end the tmux server and every session in it. Tardigrade itself never
+sends one. After an uninstall the ended boot service can stay on systemd's list for as long as your account's
+systemd runs (with lingering on, until a restart); it does nothing more, and it is safe to leave. How it was seen:
+on an Arch Linux machine (systemd 262) with a throwaway service of the same shape. With its unit file removed, a
+stop ended the tmux server twice of two, and so did the service ending by itself after a restart into its wait.
+With the file in place a stop left the server running in the first two tries and ended it in the next six. Left
+alone, with the file removed, the server ran on. Not tried with Tardigrade's own service.
+
 Known edge until 0.1.11 (T107), on Linux: an uninstall run while the boot service is in its wait (`boot_wait_s`, 45
 seconds, between the start of the boot service and its revive) says "Tardigrade is off this computer" while systemd
 still holds that service as activating. When the wait ends, systemd finds the unit gone, starts nothing and lists
 `windstorm-tardigrade-revive.service` as failed. Nothing is started and no session is touched.
-`systemctl --user reset-failed windstorm-tardigrade-revive.service` takes it off that list. A setup run before
+`systemctl --user reset-failed windstorm-tardigrade-revive.service` takes it off that list. Use only that command
+on it: see the warning under the uninstall line. A setup run before
 that says "is set up" while the service is still listed as failed from before; the same command clears it then
 too. How it was seen: with 0.1.10.1 on a stock Ubuntu 24.04 virtual machine (systemd 255) and on an Arch Linux
-machine (systemd 262), with the boot service's wait started by hand (`systemctl --user restart --no-block`). That
-stands for the wait after a boot or a first login, which was not itself the sighting. The clearing was seen on the
-Arch machine only.
+machine (systemd 262), with the boot service's wait started by hand (`systemctl --user restart --no-block`; do not
+repeat this on a machine with sessions: see the warning under the uninstall line). That stands for the wait after a
+boot or a first login, which was not itself the sighting. The clearing was seen on the Arch machine only.
 
 What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
