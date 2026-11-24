@@ -302,6 +302,7 @@ The tests run on a person's own machine, so they must leave it as they found it.
 | G7.6 | Due in 0.1.10 (T62). The validator step fails when it cannot run; it passes only on the validator's own pass; a test reads the workflow for it. | Not built yet. |
 | G7.7 | Due in 0.1.10 (T63). The README's status line names the script's version, and T50's test fails when it differs. | Not built yet. |
 | G7.8 | Due in 0.1.11 (T67). The real rounds are written as eval cases in the skill-creator style (what the person says, what the agent must run and say), and they run before a release. | Not built yet. |
+| G7.9 | Due in 0.1.10 (T76). Every `git clone` line in the README names the release tag (`--depth 1 --branch v<version>`), never the default branch; the version test reads every clone line and fails on a bare clone, a branch or another tag. | `test_G7_4_every_place_that_states_the_version_says_the_same_one` |
 
 ### Planned: what the hundred-session reboot asked for
 

@@ -36,7 +36,7 @@ changed, as it has in 0.1.9), then set up again: setup is what refreshes the cop
 Without the plugin system, it is one file:
 
 ```bash
-git clone https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.9 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 

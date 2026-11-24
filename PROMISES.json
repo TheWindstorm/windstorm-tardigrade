@@ -1087,6 +1087,20 @@
    "issue": 83,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T76",
+   "seen": "2026-11-23, a read of the public README on main: the one-file road said `git clone https://github.com/TheWindstorm/windstorm-tardigrade`, which hands a person whatever the default branch holds, not the release. Main carried no code that 0.1.9 did not (the diff of scripts/, skills/ and the plugin manifest between v0.1.9 and main was empty), so it was latent: everyone who took that road since 0.1.9's tag got 0.1.9's script.",
+   "promise": "every `git clone` line in the README names the release tag (`git clone --depth 1 --branch v<version> https://github.com/TheWindstorm/windstorm-tardigrade`); main's README gets the new tag by the pin commit after each tag. The version test reads every clone line against the script's version and fails on a bare clone, a branch, or another tag; it checks itself on those three. The two lines are run once exactly as printed on a stock machine, setup after them.",
+   "codon": "G7.9",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10",
+   "ship_in": "0.1.10",
+   "test": "test_G7_4_every_place_that_states_the_version_says_the_same_one",
+   "proven": "",
+   "issue": 84,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [

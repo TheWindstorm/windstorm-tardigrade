@@ -3036,13 +3036,31 @@ class Strand(unittest.TestCase):
             if m:
                 said[os.path.relpath(f, ROOT)] = m.group(1)
         said["CHANGELOG.md top entry"] = re.search(r"^## (\S+)", fread(os.path.join(ROOT, "CHANGELOG.md")), re.M).group(1)
+        # G7.9 (T76): every clone line in the README names this version's tag, never the default branch
+        for i, tag in enumerate(clone_tags(fread(os.path.join(ROOT, "README.md"))), 1):
+            said[f"README.md clone line {i}"] = tag[1:] if tag.startswith("v") else tag
         self.assertEqual({k: x for k, x in said.items() if x != v}, {}, f"the script says {v}")
+        # the clone line check itself: a bare clone, a branch and an older tag are each caught
+        self.assertEqual(clone_tags("git clone https://example/x\n  git clone --branch main https://example/x\n"
+                                    "git clone --depth 1 --branch v0.1.8 https://example/x\n"),
+                         ["(no --branch: the default branch)", "main", "v0.1.8"])
 
     def test_no_codon_is_used_twice_in_the_plan(self):
         import re, collections
         plan = fread(os.path.join(ROOT, "DNA-STRAND-MASTER-PLAN.md"))
         seen = collections.Counter(re.findall(r"^\| ((?:G|INV)[0-9.]+) \|", plan, re.M))
         self.assertEqual([c for c, n in seen.items() if n > 1], [], "a codon is used for two claims")
+
+
+def clone_tags(text):
+    """the tag or branch each `git clone` line names (G7.9, T76); a line without --branch clones the default branch"""
+    import re
+    out = []
+    for line in text.splitlines():
+        if re.match(r"\s*git clone\b", line):
+            m = re.search(r"(?:--branch|-b)[ =](\S+)", line)
+            out.append(m.group(1) if m else "(no --branch: the default branch)")
+    return out
 
 
 # ---------- the gate: a test named for a claim must be one the runner runs (G7.3, T49) ----------
