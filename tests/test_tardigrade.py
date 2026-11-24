@@ -3503,16 +3503,23 @@ class Tests(unittest.TestCase):
             run.wait(timeout=5)
             # the bound: a process that starts a new copy of itself each time it is told to end is still there when
             # the time is up; the cleanup then fails the test and names it, and never ends anything wider than a pid
+            # Each copy starts with SIGTERM blocked and unblocks it once its handler is in: a SIGTERM sent while
+            # Python is still starting waits for the handler instead of ending the chain early (CI on 11bd6c4 failed
+            # so on all four jobs; a sleep of 0.5 s before the handler fails it here 3 of 3).
             chain = ("import os, signal, subprocess, sys, time\n"
+                     "def masked():\n"
+                     "    signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])\n"
                      "def again(*_):\n"
                      "    if not os.path.exists(sys.argv[2]):\n"
                      "        subprocess.Popen([sys.executable, '-c', sys.argv[3]] + sys.argv[1:], start_new_session=True,\n"
-                     "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                     "                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=masked)\n"
                      "    os._exit(0)\n"
                      "signal.signal(signal.SIGTERM, again)\n"
+                     "signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGTERM])\n"
                      "while True:\n"
                      "    time.sleep(1)\n")
-            first = subprocess.Popen([sys.executable, "-c", chain, os.path.join(tmp, "chain"), stop, chain])
+            first = subprocess.Popen([sys.executable, "-c", chain, os.path.join(tmp, "chain"), stop, chain],
+                                     preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM]))
             self.addCleanup(lambda: first.poll() is None and first.kill())
             gone_soon(lambda: [] if find() else ["none yet"], within=5.0)
             test.home, test.pids, test.loose, test.cleanup_bound = os.path.join(tmp, "h"), [], [], 1.5
