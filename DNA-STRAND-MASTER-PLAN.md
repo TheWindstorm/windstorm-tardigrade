@@ -260,7 +260,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G3.30 | Due in 0.1.11 (T81). A command that only reads (census, a dry run, a refused setup) makes no folder and no file. | Not built yet. |
 | G3.31 | Due in 0.1.11 (T82). Uninstall leaves the home as setup found it: names only what is there, says its switch-off setting stays and why, removes by setup's record (T73) the empty folders it made; every difference from the listing before setup is a line it printed. | Not built yet. |
 | G3.32 | Due in 0.1.11 (T92). After an uninstall that keeps something, its last lines and the census say what a setup after it does with each kept thing; a test holds the lines to what setup then does. | Not built yet. |
-| G3.33 | Due in 0.1.10.1 (T93), alone. The census says a reboot brings sessions back only when the boot service, the timer and the copy they run are there now, never from the setting alone; else NO, what is missing, and run setup. | Not built yet. |
+| G3.33 | Due in 0.1.10.1 (T93), alone. The census says a reboot brings sessions back only when the boot service, the timer and the copy they run are there now, never from the setting alone; else NO with what is missing and run setup, or "could not be read" when systemctl or launchctl gives no answer. Setup's "is set up" is the same read, as its last act (exit 0, 1, or 3 when it could not be read). | `test_G3_33_census_says_a_reboot_brings_sessions_back_only_from_what_is_there_now`, `test_G3_33_setup_says_set_up_only_when_the_same_read_passes` |
 
 ### G4 Windows and tabs
 
