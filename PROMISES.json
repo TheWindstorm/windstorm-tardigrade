@@ -1083,7 +1083,7 @@
    "first_ship_in": "0.1.10",
    "ship_in": "0.1.10",
    "test": "test_G3_28_setup_revive_and_uninstall_touch_only_what_tardigrade_wrote",
-   "proven": "2026-11-24, on a stock Ubuntu 24.04.5 VM, in a new account (home 750, umask 0002, lingering on), with the release head 8e8da59's script, every step started by hand: setup with a person's own tardigrade.py at the copy's place stopped (exit 1), named the file, and the home differed from before only by the tool's three empty folders (~/.config, the settings and the state folder), which its line now says; with the file moved, setup exit 0. A revive with a person's folder named lock (holding diary.txt, three days old) said it is theirs and started nothing (exit 1); with the folder moved, revive exit 0, and the launch folder held only the person's my-start.sh (the tool's own gone-session.sh removed). Uninstall: exit 0, units and copy gone, Python's cache of the script gone, and kept and named: a person's file in __pycache__, the folders holding a person's files, the record, log and settings; last line \"Tardigrade is off this computer\". All eight of the person's files were still there (my-script.py, the lock's diary.txt, notes.txt and mine.txt beside the copy, a unit of their own, a start file of their own, a file in the state folder and one in the settings folder); no Tardigrade unit was left. Over an older install: 2026-11-24 07:47Z, on a stock Ubuntu 24.04.5 VM in a new account (home 750, umask 0002, lingering on), with one stand-in session in tmux: 0.1.7 cloned by its tag and set up (exit 0), then the release branch at f895bc7 (tool sha256 c440b10f403efc1e, the tag's) cloned and set up over it: exit 0, no refusal, the copy replaced (0.1.7 to 0.1.10), the three units' sha256 the same before and after, the record's one row kept. After a reboot with nobody logged in, the boot run brought the session back (started=1 LOADED=1).",
+   "proven": "2026-11-24, on a stock Ubuntu 24.04.5 VM, in a new account (home 750, umask 0002, lingering on), with the release head 8e8da59's script, every step started by hand: setup with a person's own tardigrade.py at the copy's place stopped (exit 1), named the file, and the home differed from before only by the tool's three empty folders (~/.config, the settings and the state folder), which its line now says; with the file moved, setup exit 0. A revive with a person's folder named lock (holding diary.txt, three days old) said it is theirs and started nothing (exit 1); with the folder moved, revive exit 0, and the launch folder held only the person's my-start.sh (the tool's own gone-session.sh removed). Uninstall: exit 0, units and copy gone, Python's cache of the script gone, and kept and named: a person's file in __pycache__, the folders holding a person's files, the record, log and settings; last line \"Tardigrade is off this computer\". All eight of the person's files were still there (my-script.py, the lock's diary.txt, notes.txt and mine.txt beside the copy, a unit of their own, a start file of their own, a file in the state folder and one in the settings folder); no Tardigrade unit was left. Over an older install: 2026-11-24 07:47Z, on a stock Ubuntu 24.04.5 VM in a new account (home 750, umask 0002, lingering on), with one stand-in session in tmux: 0.1.7 cloned by its tag and set up (exit 0), then the release branch at f895bc7 (tool sha256 c440b10f403efc1e, the tag's) cloned and set up over it: exit 0, no refusal, the copy replaced (0.1.7 to 0.1.10), the three units' sha256 the same before and after, the record's one row kept. After a reboot with nobody logged in, the boot run brought the session back (started=1 LOADED=1). On a Mac: 2026-11-24 08:18Z, in a clean test account on a fleet Mac, logged in at the screen (macOS 27.2.1), one stand-in session (a small program named claude) in tmux: 0.1.7 cloned by its tag and set up (exit 0), then v0.1.10 cloned by the README's line and set up over it: exit 0, no refusal, the copy replaced (0.1.7 to 0.1.10, sha256 c440b10f403efc1e), both launchd jobs at the same paths with the same programs, the record's one row kept, the stand-in's process the same throughout; 0.1.7's setup run again put the copy back to 0.1.7 (exit 0). A log-out and log-in NOT seen.",
    "issue": 83,
    "moved_why": "",
    "moved_by_person": ""
@@ -1253,6 +1253,20 @@
    "test": "",
    "proven": "",
    "issue": 96,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T90",
+   "seen": "2026-11-24, on a Mac with git 2.55 (from Homebrew): the README's own line `git clone --depth 1 --branch v0.1.10 https://github.com/TheWindstorm/windstorm-tardigrade`, run exactly as printed, printed \"warning: refs/tags/v0.1.10 78908ad... is not a commit!\" before it switched to the tag; the same for v0.1.7. The clone was right (exit 0, at the tag's commit 3fdb74e). On Ubuntu with git 2.43 the same line printed no warning. A person, or an agent starting cold, reads \"warning ... not a commit\" as a failed clone.",
+   "promise": "the README says, in one sentence next to its clone line, that some git versions print this warning for that line and that the clone is still right (exit 0, the script there). A test reads that the sentence stands next to every clone line in the README.",
+   "codon": "G5.20",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 97,
    "moved_why": "",
    "moved_by_person": ""
   }

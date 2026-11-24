@@ -295,6 +295,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G5.17 | Due in 0.1.11 (T83). When launchd does not take a job, setup's stop line says what is on disk, what happens at the next screen login, and the one next step; census says what is true in that state (after a read of whether the file loads at login). | Not built yet. |
 | G5.18 | Due in 0.1.11 (T87). The guard's remaining parts: loud stand-ins first on PATH, a hook counting opens in the real home, children handed it and real programs found, the count failing the test, and a gate test that plants each kind; the row names what the hook cannot see. | Not built yet. |
 | G5.19 | Due in 0.1.11 (T88). What the tool starts as its own gets an environment it built; the person's settings cannot move what it runs without the tool saying so; one lived-in round before the tag, after the stock one. | Not built yet. |
+| G5.20 | Due in 0.1.11 (T90). The README says, next to its clone line, that some git versions print "is not a commit!" for it and that the clone is still right; a test reads that sentence beside every clone line. | Not built yet. |
 | G5.4 | `uninstall` removes the service and the timer and touches no running session and no record. | Not verified by a test. |
 
 ### G7 Tests
