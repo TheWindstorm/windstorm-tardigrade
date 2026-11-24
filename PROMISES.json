@@ -1437,6 +1437,34 @@
    "issue": 110,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T103",
+   "seen": "2026-11-24, in the 0.1.11 build and read in the released code (0.1.10.1 has it): a session that a revive was starting and that did not come up is, to the record, a session that is no longer running. With other sessions up, the first record pass after the run (the timer runs one every 5 minutes) moves its row to the down list, and a revive reads only the other list: `tardigrade revive` then does not look at it, and the census shows it as down with no step. The same holds for a run that ended half way. Only where 3 or more went together and more than half of the record, or where nothing at all runs, does the row stay.",
+   "promise": "a row that a revive was starting, and that has not been seen running since that run began, stays on the list a revive reads: it is not taken as ended by the person. It stays until it is seen running, its owner ends it with /exit, another session takes its place, or `tardigrade record --force` says that what runs now is the truth; no clock ends it, so the step the census prints for it stays true. The record reads this from the run's own progress file, with three answers: not there, read, could not be read (then every row it might name is kept and the log says so). Such a row is not counted into sessions that vanished together. Each test takes its step after a plain record pass, as the timer would have run one.",
+   "codon": "G1.20",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 111,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T104",
+   "seen": "2026-11-24, read in the released code (0.1.10.1 has it): the census lists a row of the down list under \"DOWN: on the record, not running now\", and `tardigrade revive --only NAME` for that same row answers \"no session on the record is named NAME\", ends with exit code 1 and starts nothing; `revive --dry-run --all` prints no line for it. Both read only the list of sessions a revive brings back.",
+   "promise": "a person who names a session the census shows is never told that it is not on the record: `tardigrade revive --only NAME` finds a row of the down list too, and either starts it or says in one line why not (its owner ended it, it is a print-mode run) with the one next step; the census names that step under a down row that a plain revive does not start. A test takes each step as printed.",
+   "codon": "G2.55",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 112,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
