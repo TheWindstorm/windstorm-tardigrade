@@ -1479,6 +1479,20 @@
    "issue": 113,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T106",
+   "seen": "2026-11-24, in the 0.1.11 build, before any push of it: a test put a made-up secret into a `claude_command` setting that begins with `VAR=value` and found the value in a new failure line, which named the command by its first word (cured in the build: the program is named). The same value is still printed whole by `revive --dry-run`, by design and since before this build: the dry run prints each session's start line as it will run. The skill tells an agent to run the dry run and show it, so a key a person put into `claude_command` or `account_command` lands in the agent's conversation and its transcript. Read in the code and seen with the stand-in; not seen on a person's machine.",
+   "promise": "every start line the tool prints or logs shows a `VAR=value` word that stands before the program as `VAR=(set)`; the session's start file and the person's own settings file keep the real value, and nothing else of the tool holds it. The dry run says once that values are not shown. The test with the made-up secret reads the dry run too, and its only exceptions are those two files.",
+   "codon": "G2.56",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 114,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
