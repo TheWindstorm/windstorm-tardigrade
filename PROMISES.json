@@ -1204,7 +1204,7 @@
   {
    "id": "T86",
    "seen": "2026-11-24, a scratch run of 12 tests that load the tool in their own process, with an audit hook: the suite's cleanups sent 88 signals (all SIGTERM): 50 to the test's own processes and 38 to pids the hook could not show as the run's own (gone, or alive and not the run's; the log does not say which). The hook refused each of the 38, so in that run none was delivered; a run without the hook would have sent them. With a pid range of 4194304 a pid reused within a run is unlikely, not impossible; a reused pid would be another program's.",
-   "promise": "the suite signals a remembered pid only after showing it is still the test's: the test's folder in its command line or environment, or its start time unchanged since it was remembered, or it is the suite's own child whose exit has not been read yet (the kernel keeps that number for its parent). The guard's hook (T87) fails a test that signals a pid it cannot show as its own. In the tests only; the tool file does not change.",
+   "promise": "the suite signals a remembered pid only after showing it is still the test's: the test's folder in its command line or environment, or its start time unchanged since it was remembered, or it is the suite's own child, and only while its exit has not been read (the kernel keeps that number for its parent until then); a child whose exit has been read is shown no more than any other number. The guard's hook (T87) fails a test that signals a pid it cannot show as its own. In the tests only; the tool file does not change.",
    "codon": "G7.11",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",

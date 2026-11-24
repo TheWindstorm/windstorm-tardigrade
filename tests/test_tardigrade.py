@@ -5119,8 +5119,15 @@ class Signals(Base):
         self.until(lambda: not running(child.pid), "the child to end")
         self.assertIsNotNone(start_time(child.pid), "ended and not yet read: its number is still held")
         self.assertFalse(self.kill(child.pid))
+        self.assertEqual(shown_mine(child.pid, self.tmp), "this process's own child", "held for us while it is not read")
         child.wait(timeout=5)
+        # the other half: once its exit has been read the number is free again, and it is ours no more
         self.assertEqual(forget(), 0)
+        self.assertEqual(shown_mine(child.pid, self.tmp), "")
+        self.assertFalse(self.kill(child.pid))
+        with self.assertRaisesRegex(GuardRefused, f"asked to signal pid {child.pid} "):
+            os.kill(child.pid, signal.SIGTERM)
+        self.assertEqual(forget(), 1)
         # (5) with the hook taken out the same signal is delivered: the hook is what refused it
         loose, born = self.orphan(nap, clean)
         _SIGNAL["on"] = False
