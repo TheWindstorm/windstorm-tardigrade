@@ -34,6 +34,28 @@ Rules it keeps:
 Standard library only. Record: ~/.config/windstorm-tardigrade/lanes.json
 Log: ~/.local/state/windstorm-tardigrade/tardigrade.log
 """
+import sys
+
+FLOOR = (3, 9)      # G5.11 (T58): the lowest Python this runs on (Apple's developer tools on macOS 13 bring 3.9.6)
+
+
+def too_old(found, floor=FLOOR):
+    """G5.11: the words for a Python below the floor; None at the floor or above. Asked before anything else is
+    loaded or made. The whole file keeps to Python 3.6's grammar, so that an older python3 gets as far as this
+    and says so, instead of a SyntaxError that names no cause."""
+    if tuple(found[:2]) >= tuple(floor):
+        return None
+    return ("Windstorm Tardigrade stopped before doing anything: it runs on Python %d.%d or newer, and this python3 "
+            "(%s) is Python %s. Nothing was made or changed. Next step: start it with a python3 that is %d.%d or "
+            "newer (`python3 --version` says which one a command line finds)."
+            % (floor[0], floor[1], sys.executable or "its path is not known", ".".join(str(x) for x in found[:3]),
+               floor[0], floor[1]))
+
+
+if too_old(sys.version_info):
+    sys.stderr.write(too_old(sys.version_info) + "\n")
+    sys.exit(2)
+
 import glob
 import hashlib
 import json
@@ -43,7 +65,6 @@ import shlex
 import shutil
 import stat
 import subprocess
-import sys
 import time
 
 VERSION = "0.1.10.1"
@@ -3326,12 +3347,14 @@ def census():
                 mark = "   STARTED BY HAND while its session was coming back" if r.get("by_hand") else ""
                 print(f"  {display(r):<34} {r['status'] or '?':<8} quiet {q:<8} {where_text(r):<30} {r['cwd']}{mark}")
 
-    if stopped := d["sessions"]["waiting_stopped"]:
+    stopped = d["sessions"]["waiting_stopped"]
+    if stopped:
         print(f"\nWAITING, STOPPED: a waiting screen holds its place, but no restore is running ({len(stopped)})."
               " Run `tardigrade revive` to bring them back.")
         for r in sorted(stopped, key=lambda x: display(x).lower()):
             print(f"  {display(r):<34} tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}")
-    if coming := d["sessions"]["coming_back"]:
+    coming = d["sessions"]["coming_back"]
+    if coming:
         print(f"\nCOMING BACK: a waiting screen holds its place ({len(coming)})")
         for r in sorted(coming, key=lambda x: display(x).lower()):
             print(f"  {display(r):<34} tmux {os.path.basename(r['tmux_socket'])}:{r['tmux_session']}")

@@ -1,23 +1,37 @@
 name: tests
-on: [push, pull_request]
+# G7.5 (T61): a pull request, and a push to main or to a release branch. A push to any other branch is run through
+# its pull request, once, not twice.
+on:
+  push:
+    branches: [main, "release-*"]
+  pull_request:
 permissions:
   contents: read
+# A newer push to a pull request ends that pull request's older run. A push to main or a release branch has a group
+# of its own (the run's id), so it is never ended by another and never waits for one.
+concurrency:
+  group: tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.13"]
+        python: ["3.9", "3.13"]     # G5.11 (T58): the floor, and the newest
     steps:
       - uses: actions/checkout@v4
+      # 3.8 is below the floor: the suite starts the tool with it and sees it stop, having made nothing. The last
+      # one named is the `python` the suite runs on.
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: |
+            3.8
+            ${{ matrix.python }}
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: python tests/test_tardigrade.py -v
   skill-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

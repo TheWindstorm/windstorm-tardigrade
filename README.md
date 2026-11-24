@@ -19,8 +19,10 @@ with no window open.
 
 ## Install
 
-You need Linux or macOS, Python 3, and [tmux](https://github.com/tmux/tmux/wiki) (`apt install tmux`,
+You need Linux or macOS, Python 3.9 or newer, and [tmux](https://github.com/tmux/tmux/wiki) (`apt install tmux`,
 `dnf install tmux` or `brew install tmux`).
+Python 3.9 is the lowest the tool runs on (the `python3` that comes with Apple's developer tools on macOS 13 is 3.9.6).
+On an older one every command stops at once, says which version it found, and makes nothing.
 
 ```bash
 claude plugin marketplace add TheWindstorm/windstorm-tardigrade
@@ -411,7 +413,8 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 150 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 153 tests on Linux with stand-ins for `claude` and `herdr`, run on every pull request and on every push to main or a release branch,
+  with Python 3.9 (the floor) and 3.13, on a runner image the workflow names.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
