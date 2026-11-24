@@ -11,7 +11,9 @@ sessions: after a restart each one comes back as itself, and `census` says what 
 
 The whole tool is one script: `scripts/tardigrade.py`, two levels above this skill's base directory
 (`<base>/../../scripts/tardigrade.py`). It uses only the Python standard library, talks to no network, and prints
-names, folders and counts, never message text. Run it with `python3 -I`. After setup, the installed copy is
+names, folders and counts, never message text. Run it with `python3 -I`. It runs on Python 3.9 or newer; on an
+older one every command stops at once, says the version it found, and makes nothing: show that line as it is.
+After setup, the installed copy is
 `~/.local/share/windstorm-tardigrade/tardigrade.py`.
 
 If neither file exists, this skill was installed without its plugin. Get the script with

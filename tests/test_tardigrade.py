@@ -3419,6 +3419,78 @@ sys.exit(rc)
                   os.path.join(self.home, ".local", "state", "windstorm-tardigrade")):
             self.assertEqual(os.stat(d).st_mode & 0o777, 0o700, d)
 
+    def test_G5_11_below_python_3_9_every_command_stops_first_names_the_version_and_makes_nothing(self):
+        """T58: on macOS 13 the python3 of Apple's developer tools is 3.9.6, and nothing said which Python the tool
+        needs; an older one got a SyntaxError at a line deep in the file"""
+        src = fread(SCRIPT)
+        tree = ast.parse(src)
+        self.assertIsInstance(tree.body[0], ast.Expr, "the file's own words first")
+        self.assertEqual([type(x).__name__ for x in tree.body[1:5]], ["Import", "Assign", "FunctionDef", "If"],
+                         "the check comes before anything else is loaded or made")
+        self.assertEqual([a.name for a in tree.body[1].names], ["sys"], "nothing but sys is loaded before the check")
+        self.assertEqual(ast.literal_eval(tree.body[2].value), (3, 9), "the floor")
+        self.assertEqual(tree.body[3].name, "too_old")
+        self.assertIn("sys.exit(2)", ast.get_source_segment(src, tree.body[4]))
+        ast.parse(src, feature_version=(3, 6))          # an older python3 can read the file as far as the check
+        self.assertNotIn(":=", src)
+        tg = self.load_tool()
+        self.assertIsNone(tg.too_old((3, 9, 0)))
+        self.assertIsNone(tg.too_old((3, 14, 5)))
+        self.assertIsNone(tg.too_old(sys.version_info))
+        for old in ((3, 8, 18), (3, 6, 9), (2, 7, 18)):
+            said = tg.too_old(old)
+            self.assertIn("Python " + ".".join(map(str, old)), said)
+            self.assertIn("Python 3.9 or newer", said)
+            self.assertIn("Nothing was made or changed", said)
+
+        def listing():
+            out = {}
+            for base, dirs, files in os.walk(self.tmp):
+                for n in dirs + files:
+                    q = os.path.join(base, n)
+                    st = os.lstat(q)
+                    out[os.path.relpath(q, self.tmp)] = (st.st_mode, st.st_size, st.st_mtime_ns)
+            return out
+
+        def every_command_stops(python, script, found, floor):
+            cmds = [[c] for c in sorted(tg.COMMANDS)] + [[], ["--version"], ["--help"], ["revive", "--boot"],
+                                                         ["setup", "--dry-run"], ["no-such-command"]]
+            for a in cmds:
+                before = listing()
+                r = subprocess.run([python, "-I", script, *a], capture_output=True, text=True, env=self.env, timeout=60)
+                self.assertEqual((r.returncode, r.stdout), (2, ""), f"{python} {a}: {r.stderr[-300:]}")
+                self.assertIn(f"is Python {found}", r.stderr, a)
+                self.assertIn(f"runs on Python {floor} or newer", r.stderr, a)
+                self.assertEqual(len(r.stderr.strip().splitlines()), 1, f"one line, nothing else: {r.stderr[-300:]}")
+                self.assertEqual(listing(), before, f"{python} {a}: something was made or changed")
+
+        # on every machine: this Python against a copy of the tool whose floor is above it, so the stop itself runs
+        above = os.path.join(self.tmp, "above", "tardigrade.py")
+        os.makedirs(os.path.dirname(above))
+        self.assertEqual(src.count("FLOOR = (3, 9)"), 1)
+        with open(above, "w") as f:
+            f.write(src.replace("FLOOR = (3, 9)", "FLOOR = (9, 9)"))
+        every_command_stops(sys.executable, above, ".".join(map(str, sys.version_info[:3])), "9.9")
+        # with a real older python3 where one is found; CI brings one, and must
+        older = os.environ.get("TARDIGRADE_TEST_OLDER_PYTHON") or next(
+            (w for w in (shutil.which(f"python3.{m}") for m in (8, 7, 6)) if w), None)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            self.assertTrue(older, "CI's own older python3 was not found: the stop was not seen on a real one")
+        if older:
+            v = subprocess.run([older, "-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+                               capture_output=True, text=True).stdout.strip()
+            self.assertLess(tuple(int(x) for x in v.split(".")[:2]), (3, 9), f"{older} is not an older one")
+            every_command_stops(older, SCRIPT, v, "3.9")
+        # said where a person and an agent read, and run in CI at the floor
+        self.assertIn("Python 3.9 or newer", fread(os.path.join(ROOT, "README.md")))
+        self.assertIn("Python 3.9 or newer", fread(os.path.join(ROOT, "skills", "tardigrade", "SKILL.md")))
+        wf = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+        matrix = re.findall(r'(?m)^        python: \[(.*?)\]', wf)
+        self.assertEqual(len(matrix), 1)
+        runs = [tuple(int(x) for x in v.strip().strip('"').split(".")) for v in matrix[0].split(",")]
+        self.assertEqual(min(runs), (3, 9), "CI runs the suite at the floor")
+        self.assertRegex(wf, r"python-version: \|\n\s+3\.8\n\s+\$\{\{ matrix\.python \}\}\n", "CI brings an older python3")
+
     def test_G2_52_setup_and_each_boot_run_make_every_marker_they_keep_private(self):
         # T69: seen on a real Mac upgraded to 0.1.9 and restarted: the markers it wrote were 0600, the three it kept
         # from earlier versions stayed readable by others (0644)
@@ -4830,6 +4902,29 @@ class Strand(unittest.TestCase):
             self.assertNotIn(soft, step, "a way for the step to pass without the validator's pass")
         self.assertNotIn("continue-on-error", wf)
 
+    def test_G7_5_the_workflow_names_its_runner_images_and_runs_once_per_pull_request_or_release_push(self):
+        """T61: `ubuntu-latest` moved under a sister skill and took a Python with it; a push to a branch with a pull
+        request open ran everything twice"""
+        wf = fread(os.path.join(ROOT, ".github", "workflows", "tests.yml"))
+        self.assertEqual(workflow_problems(wf), [])
+        # the check itself: each of these must be refused
+        bad = {"latest": wf.replace("runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", 1),
+               "an image from an expression": wf.replace("runs-on: ubuntu-24.04", "runs-on: ${{ matrix.os }}", 1),
+               "a job with no image": wf.replace("    runs-on: ubuntu-24.04\n", "", 1),
+               "every push": wf.replace('    branches: [main, "release-*"]\n', ""),
+               "another branch": wf.replace('[main, "release-*"]', '[main, "release-*", "build-*"]'),
+               "the old line": re.sub(r"(?ms)^on:\n.*?^permissions:", "on: [push, pull_request]\npermissions:", wf),
+               "no pull requests": wf.replace("  pull_request:\n", ""),
+               "no group": re.sub(r"(?m)^concurrency:\n(  .*\n)+", "", wf),
+               "one group for everything": re.sub(r"(?m)^  group: .*$", "  group: tests", wf),
+               "a group by branch": re.sub(r"(?m)^  group: .*$", "  group: tests-${{ github.ref }}", wf),
+               "ends runs everywhere": re.sub(r"(?m)^  cancel-in-progress: .*$", "  cancel-in-progress: true", wf),
+               "ends nothing": re.sub(r"(?m)^  cancel-in-progress: .*$", "  cancel-in-progress: false", wf),
+               "a Mac job": wf + "  mac:\n    runs-on: macos-14\n    steps:\n      - run: true\n"}
+        for what, text in bad.items():
+            self.assertNotEqual(text, wf, f"{what}: the stand-in workflow is the real one")
+            self.assertNotEqual(workflow_problems(text), [], f"{what} passed")
+
     def test_G7_4_every_place_that_states_the_version_says_the_same_one(self):
         """the plugin manifest said 0.1.7 for three releases while the script moved on (T50): the script, the plugin
         manifest, the marketplace entry and the skill file (if they carry a version) and the changelog's top entry"""
@@ -4966,6 +5061,43 @@ def catalog_entry_problems(entry, commit_of):
             out.append(f"where {ref} points could not be read: not a tag in this clone, and the remote did not say")
         elif at != sha:
             out.append(f"its sha {sha} is not the commit {ref} points to ({at})")
+    return out
+
+
+def workflow_problems(wf):
+    """what in a workflow breaks G7.5 (T61); read as text: the suite has no YAML reader and needs none"""
+    import re
+    out = []
+    jobs = re.split(r"(?m)^(?=  [A-Za-z_][\w-]*:\s*$)", wf.split("\njobs:\n", 1)[1]) if "\njobs:\n" in wf else []
+    jobs = [j for j in jobs if j.strip()]
+    if not jobs:
+        out.append("no jobs found")
+    for j in jobs:
+        name = j.split(":", 1)[0].strip()
+        images = re.findall(r"(?m)^    runs-on:\s*(.*?)\s*$", j)
+        if len(images) != 1 or not re.match(r"^[a-z]+-\d+(\.\d+)?$", images[0]):
+            out.append(f"job {name}: its runner image is {images or 'not named'}, not one named with its version")
+        if images and images[0].startswith("macos"):
+            out.append(f"job {name}: a Mac job. On a pull request it runs the floor's Python only, the full matrix on "
+                       "main and release-*: teach this check that rule with the job, it does not know one yet")
+    if "latest" in re.sub(r"(?m)#.*$", "", wf):
+        out.append("the word latest is in the workflow")
+    m = re.search(r"(?ms)^on:\n(.*?)^(?=\S)", wf)
+    on = re.sub(r"(?m)\s*#.*$", "", m.group(1)) if m else ""
+    if [x.strip() for x in on.splitlines() if x.strip()] != ["push:", 'branches: [main, "release-*"]', "pull_request:"]:
+        out.append(f"it does not run on pull requests and on pushes to main and release-* only: {on!r}")
+    m = re.search(r"(?m)^concurrency:\n  group: (.*)\n  cancel-in-progress: (.*)$", wf)
+    if not m:
+        out.append("no concurrency group at the top of the workflow")
+    else:
+        group, cancel = m.group(1).strip(), m.group(2).strip()
+        if group != ("tests-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)"
+                     " || github.run_id }}"):
+            out.append(f"the group is not one per pull request, and one per run otherwise: {group}")
+        if cancel != "${{ github.event_name == 'pull_request' }}":
+            out.append(f"an older run is ended somewhere other than in a pull request, or nowhere: {cancel}")
+    if len(re.findall(r"(?m)^concurrency:", wf)) + len(re.findall(r"(?m)^    concurrency:", wf)) != 1:
+        out.append("more than one concurrency group")
     return out
 
 
