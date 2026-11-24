@@ -709,7 +709,7 @@ class Revive(Base):
         self.assertEqual(rc, 0, out)
         new = self.wait_launches(n + 1)[-1]
         self.assertNotIn("TG_NOT_HANDED", new["seen"])
-        self.assertEqual(new["seen"].get("SHIFT_SECONDS"), os.environ.get("SHIFT_SECONDS") if
+        self.assertEqual(new["shift"], os.environ.get("SHIFT_SECONDS") if
                          os.environ.get("LD_PRELOAD") else None)
         self.assertLess(abs(new["now"] - time.time()), 600)      # the session's clock is the test's, shifted or not
         # a record that really is days old, its time set by the test: a down row past down_keep_days (14) is

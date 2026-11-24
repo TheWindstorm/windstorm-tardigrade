@@ -58,8 +58,11 @@ with open(os.path.join(home, "launches.jsonl"), "a") as f:
                         "child": "CLAUDE_CODE_CHILD_SESSION" in os.environ,
                         "claude_env": sorted(k for k in os.environ if k.startswith("CLAUDE")),
                         "path": os.environ.get("PATH", ""), "now": int(time.time()),
+                        # the family's clock shift is the suite's, handed on by this stand-in: kept out of "seen", which
+                        # holds what the tool handed on, so a shifted run compares the same "seen" as an unshifted one
+                        "shift": os.environ.get("SHIFT_SECONDS"),
                         "seen": {k: os.environ[k] for k in ("DISPLAY", "MY_SETTING", "MY_SECRET_TOKEN", "ACCT_NAME", "PWD", "INVOCATION_ID", "JOURNAL_STREAM",
-                                                           "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "SHIFT_SECONDS", "TG_NOT_HANDED")
+                                                           "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "TG_NOT_HANDED")
                                  if k in os.environ}}) + "\n")
 if listed("psfailon", sid) and os.environ.get("MY_SETTING") != "byhand":
     open(os.path.join(home, "psfail"), "w").close()
