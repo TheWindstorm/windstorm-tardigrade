@@ -18,6 +18,23 @@ import time
 import unittest
 import uuid
 
+# THE RUN'S OWN HOME (T78, the guard's first part): before anything here loads the tool, the whole run gets a
+# temporary home of its own and loses this account's lines to its desktop session and its tmux server; every program
+# the run starts inherits that. git finds no global config there (GIT_CONFIG_NOSYSTEM beside it: older git has no
+# GIT_CONFIG_GLOBAL, so the home is the base). Each test still makes its own home under its own folder (Base.setUp).
+RUN_HOME = tempfile.mkdtemp(prefix="tgrun", dir=os.environ.get("TARDIGRADE_TEST_TMP", "/tmp"))
+os.makedirs(os.path.join(RUN_HOME, "home"))
+os.environ["HOME"] = os.path.join(RUN_HOME, "home")
+os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
+for _k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX", "TMUX_PANE",
+           "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+    os.environ.pop(_k, None)
+
+
+def _end_run_home():
+    shutil.rmtree(RUN_HOME, True)
+
+
 def jload(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
@@ -62,6 +79,7 @@ LIVE = []
 def _end_live(*_):
     for t in list(LIVE):
         t.end_all()
+    _end_run_home()
 
 
 def _on_signal(signum, _frame):
@@ -2760,6 +2778,16 @@ class Setup(Base):
         # and no test may run it with a home outside its own folder; a refused program never starts
         import pwd
         real = pwd.getpwuid(os.getuid()).pw_dir
+        # the run's own home (the guard's first part): set before anything loaded the tool, handed to what the run
+        # starts, with no line to this account's desktop session or tmux server, and no git config of the account
+        self.assertEqual(os.environ["HOME"], os.path.join(RUN_HOME, "home"))
+        self.assertNotEqual(os.path.realpath(os.environ["HOME"]), os.path.realpath(real))
+        for k in ("XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMUX"):
+            self.assertNotIn(k, os.environ)
+        child = subprocess.run(["/bin/sh", "-c", 'echo "$HOME|$XDG_RUNTIME_DIR|$TMUX"'], capture_output=True, text=True)
+        self.assertEqual(child.stdout.strip(), os.path.join(RUN_HOME, "home") + "||")
+        git = subprocess.run(["git", "config", "--global", "--list"], capture_output=True, text=True)
+        self.assertEqual(git.stdout, "")
         probe = os.path.join(self.tmp, "started")
         refused = [
             lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--version"], env=dict(self.env, HOME=real)),
