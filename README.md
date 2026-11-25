@@ -233,6 +233,25 @@ By the same cut, a tmux session whose name holds U+2028 or NEL (U+0085) is recor
 before that character and comes back in a tmux session of that shorter name: once, under another name (seen on
 the same machine).
 
+Known edge until 0.1.10.3 (T119): tmux reads a # in a session name, a pane title or a folder name as the start of
+one of its own formats, and Tardigrade gives a waiting screen its title from the session's own name (read in its
+code; the title's reading seen with plain tmux 3.4, not with the tool). A session that runs in a tmux session whose
+name holds a # followed by certain letters, or two # in a row, is not brought back after a restart: the revive
+tries, says it gave up and leaves a tmux session under the changed name (laneork for lane#Work), and the other
+sessions come back. Seen with 0.1.10.2 and tmux 3.4 in a test with stand-in sessions (earlier versions hand the name
+to tmux the same way: read in the code of every version, not tried): three such sessions of ten were not brought
+back; one in a tmux session named bug#7 came back, and so did sessions in folders named C#Sharp and issue#12, each
+in its own folder. Not seen: a real restart; the tool on another version of tmux. What helps, tried once there: give
+that tmux session a name without # while it runs, and from the next record on it comes back. The old name stands
+after the equals sign, in single quotes:
+
+```
+tmux rename-session -t '=lane#Work' lane-work
+```
+
+Until 0.1.10.3, keep # out of the names of sessions, of tmux sessions and of folders that Claude Code sessions run
+in.
+
 Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
 tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
 "no terminal at all" for every session that runs in tmux, `open` says there is nothing to open, and a `record` or a

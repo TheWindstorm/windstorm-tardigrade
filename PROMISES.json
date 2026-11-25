@@ -1665,6 +1665,20 @@
    "issue": 127,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T119",
+   "seen": "2026-11-25, with the released 0.1.10.2 (script sha256 5f7cbb5a093d4bc6) in the suite's test world (tmux 3.4, stand-in sessions). tmux reads a # in the name it is asked to make a session under, and in the folder it is asked to start it in, as the start of one of its own formats, and the tool hands both over as they stand on its record. Ten sessions were planted: one plain; three in tmux sessions whose names hold such a hash (among them lane#Work, a # before a letter tmux has a short format for, and a name with two # in a row); one in a tmux session named bug#7; five in folders whose names hold a # (among them C#Sharp, notes#Work and issue#12). Record (exit 0): all ten exact, name, folder and tmux session. The tmux server and the sessions were ended; the revive's dry run named all ten (exit 0). The real revive (exit 0): \"revive: 7 started, 0 already running, 3 failed, 0 need you\". The three with such tmux names were not brought back: the tool made each one's waiting screen, tmux made that session under a changed name (lane#Work became laneork, the two # became one), and the tool then asked tmux for the name on its record, which no session has: \"not running yet (attempt N); will retry\", then \"GAVE UP after 39 attempt(s); its tmux session is gone\" (the test world retries faster than a real machine), while the waiting screens stood under the changed names. The session in bug#7 came back. All five folder sessions came back, each once and in its own folder: the session's start file changes into the recorded folder itself. After the next record the three were not on the record. Nothing was started twice. The same day, each tmux call of the tool tried with plain tmux 3.4: the title given to a pane is read the same way, and the tool gives a waiting screen its title from the session's own name; not seen: the tool with such a session name. With plain tmux 3.7c and 3.8 on two Macs the same day: the same places are read as a format. What helps, tried there with three sessions: a tmux session renamed without its # (tmux rename-session) before the record was taken: it came back, once; one beside it that kept its # did not. Not seen: a real restart; the boot service; the tool on another version of tmux or on a Mac; a person who met it. This row says the rest of what was seen once 0.1.10.3 is tagged.",
+   "promise": "a session whose own name, tmux session name or folder holds a # comes back as itself, and nothing in a name or a folder is ever read by tmux as a format. Every argument the tool hands to tmux that tmux reads as a format, and that carries a value the tool did not write, is handed over so that tmux takes it letter for letter; which arguments those are is said by trial for each tmux call of the tool, on tmux 3.4 and on the oldest and the newest tmux that could be reached, and what the tool reads back from tmux for such a name is in that list. Only those arguments change in 0.1.10.3. The test plants, beside a plain session (the control world): a folder with a # before a letter tmux has a short format for, a tmux name of that kind, and a tmux name that truly holds two #; it ends the server and reads: every session back, each once, the folder session in its own folder, each tmux name whole (two # stay two), and nothing of a name or a folder expanded. Seen red first on the released tool.",
+   "codon": "G2.62",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.10.3",
+   "ship_in": "0.1.10.3",
+   "test": "",
+   "proven": "",
+   "issue": 128,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
