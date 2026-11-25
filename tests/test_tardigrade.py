@@ -7309,6 +7309,46 @@ class Names(Base):
         self.assertGreater(len(first), before_uninstall, "uninstall read the marks through tmux")
         self.assertEqual(set(first), {"-u"}, f"a tmux call of the tool's own went out without -u: {first}")
 
+    def test_G5_28_the_tools_code_puts_the_tmux_program_into_a_call_in_one_place_only(self):
+        """the wrapper test above holds the roads it walks; this one reads the code, so that a road it does not walk
+        (the trust answer, a waiting screen's capture, a real open) cannot gain a tmux call of its own without -u.
+        Every place that names the tmux program is tmux_own, a test of whether there is one, or a line for the
+        person (an attach or a rename-session line, as words or for a window): that line is theirs, with no -u."""
+        src = fread(SCRIPT)
+        tree = ast.parse(src)
+        above = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+        persons = {("in_way_text", "at"), ("not_back_text", "look"), ("attach_tabs", "att"), ("open_windows", "att")}
+        own, lines, strays = [], set(), []
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "CFG"
+                    and isinstance(n.slice, ast.Constant) and n.slice.value == "tmux"):
+                continue
+            x, stmt, fn = n, None, ""
+            while x in above and not fn:
+                x = above[x]
+                stmt = stmt or (x if isinstance(x, ast.stmt) else None)
+                fn = x.name if isinstance(x, ast.FunctionDef) else ""
+            asked = isinstance(stmt, ast.If) and stmt.test in (n, above[n]) and (
+                stmt.test is n or (isinstance(above[n], ast.UnaryOp) and isinstance(above[n].op, ast.Not)))
+            to = (stmt.targets[0].id if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                  and isinstance(stmt.targets[0], ast.Name) else "")
+            if fn == "tmux_own":
+                own.append(ast.unparse(stmt))
+            elif asked:
+                pass                                    # "is there a tmux at all": no call
+            elif (fn, to) in persons:
+                lines.add((fn, to))
+                text = ast.get_source_segment(src, stmt)
+                self.assertNotIn("-u", text[text.index("CFG["):], f"line {n.lineno}: the person's line carries -u")
+            else:
+                strays.append(f"line {n.lineno} in {fn or 'no function'}: {ast.get_source_segment(src, stmt)[:90]}")
+        self.assertEqual(strays, [], "the tmux program is named outside tmux_own, a test for it and the person's lines")
+        self.assertEqual(own, ["return [CFG['tmux'], '-u', '-S', sock]"])
+        self.assertEqual(lines, persons, "a line for the person on this test's list is no longer in the code")
+        argv0 = [n.lineno for n in ast.walk(tree) if isinstance(n, ast.List) and n.elts
+                 and isinstance(n.elts[0], ast.Constant) and n.elts[0].value == "tmux"]
+        self.assertEqual(argv0, [], "a call is built with the bare word tmux as its program")
+
     def test_G5_28_a_pane_list_no_line_of_which_can_be_split_could_not_be_read_and_replaces_no_place(self):
         """family rule 6 on this read: tmux answered with lines and not one could be split at its tabs. That is the
         third answer, never "this session has no terminal": nothing a record holds is replaced on it, and no
@@ -7942,6 +7982,21 @@ class Invariants(unittest.TestCase):
                             f"{m.group(1)} read without the two keys: {line.strip()}")
 
 
+def proof_missing(rows, version):
+    """G7.13 (T111): the rows that shipped before `version` and are not proven on a real machine, as (id, why). A
+    row is proven when its 'proven' says where it was seen and its 'proof_owed' holds nothing. A proven line that
+    covers only part says what was seen, and the rest stands in 'proof_owed'; it is never decided by words found in
+    the proven line."""
+    out = []
+    for r in rows:
+        if Promises.v(r["ship_in"]) < version:
+            if not r.get("proven"):
+                out.append((r["id"], f"shipped in {r['ship_in']} and no real machine has proven it yet"))
+            elif (r.get("proof_owed") or "").strip():
+                out.append((r["id"], f"shipped in {r['ship_in']} and part is still owed: {r['proof_owed'].strip()}"))
+    return out
+
+
 class Promises(unittest.TestCase):
     """PROMISES.json holds what real machines, and the people using them, showed must change, and the version
     each change is due in. A lesson is a gate, not a note: these tests refuse a version while a promise due in it
@@ -7980,9 +8035,34 @@ class Promises(unittest.TestCase):
                 self.assertIn(f"`{r['test']}`", self.plan, f"{r['id']}: its test is not named in the plan")
 
     def test_PROMISES_the_version_after_needs_proof_on_a_real_machine(self):
-        for r in self.rows:
-            if self.v(r["ship_in"]) < self.version:
-                self.assertTrue(r.get("proven"), f"{r['id']} shipped in {r['ship_in']} and no real machine has proven it yet")
+        self.assertEqual(proof_missing(self.rows, self.version), [],
+                         "a row that shipped before this version is not proven on a real machine")
+
+    def test_G7_13_a_proven_line_that_still_owes_part_is_not_proof_for_the_gate_after_a_release(self):
+        """T111: a row's own field 'proof_owed' says what is still to be seen on a real machine. While it holds
+        anything the row is not proven, whatever its 'proven' says; words found in 'proven' decide nothing."""
+        # this file's own rows first, read as a version after every one of them: each row that says it owes is
+        # refused (seen red on T107 the day of the row, while the gate still took any proven line)
+        owing = [r["id"] for r in self.rows if (r.get("proof_owed") or "").strip()]
+        refused = [i for i, _ in proof_missing(self.rows, (999,))]
+        self.assertEqual([i for i in owing if i not in refused], [],
+                         "a row that says in 'proof_owed' what is still owed passed the gate after a release")
+        def row(i, ship, proven, **more):
+            return {"id": i, "ship_in": ship, "proven": proven, **more}
+        made = [row("A", "0.1.0", "seen on a stock machine", proof_owed=""),
+                row("B", "0.1.0", "seen on a stock machine, the Linux half", proof_owed="the Mac half"),
+                row("C", "0.1.0", ""),
+                row("D", "0.1.0", "seen on a stock machine. Not proven yet: the Mac half."),  # no field: owes nothing
+                row("E", "0.1.0", "seen on a stock machine", proof_owed="  "),
+                row("F", "0.2.0", "", proof_owed="all of it"),  # ships in this version
+                row("G", "0.1.0", "", proof_owed="all of it")]
+        got = proof_missing(made, (0, 2, 0))
+        self.assertEqual([i for i, _ in got], ["B", "C", "G"])
+        self.assertIn("the Mac half", dict(got)["B"])
+        self.assertNotIn("owed", dict(got)["C"])
+        self.assertEqual(proof_missing(made, (0, 1, 0)), [], "a row is looked at only from the version after its own")
+        for r in self.rows:                     # the field is words or it is not there
+            self.assertIsInstance(r.get("proof_owed", ""), str, r["id"])
 
     def test_PROMISES_a_date_moves_only_with_a_reason_and_a_persons_row_only_by_his_word(self):
         for r in self.rows:
