@@ -227,6 +227,18 @@ def as_text(data):
     return (data or b"").decode("utf-8", "surrogateescape")
 
 
+def cut_lines(text):
+    """G2.61 (T118): what another program wrote, cut into its lines at the line feed alone; text or bytes. Python's
+    splitlines() cuts a text at nine more characters (the carriage return, VT, FF, FS, GS, RS, NEL, U+2028, U+2029):
+    a JSON writer leaves the last three as they are inside a string and tmux leaves them in a name, so a line that
+    held one was cut in two, neither half could be read, and both were passed over. Like splitlines(), a text that
+    ends with its line feed has no empty last line."""
+    lines = text.split(b"\n" if isinstance(text, bytes) else "\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
 def run(argv, timeout=30, env=None):
     try:
         r = subprocess.run(argv, capture_output=True, timeout=timeout, env=env)
@@ -356,7 +368,7 @@ def procs():
         res.why = "the process list could not be read (ps " + (
             "gave no answer within 30 s, or could not be started)" if rc == 99 else f"ended with code {rc})")
         return res
-    for line in out.splitlines():
+    for line in cut_lines(out):
         p = line.split(None, 4)
         if len(p) == 5 and p[0].isdigit() and not p[3].startswith("Z"):
             res[int(p[0])] = (int(p[1]), int(p[2]), os.path.basename(p[4].strip()))
@@ -730,7 +742,7 @@ def panes():
                 res.why = f"the tmux server at {s} did not list its panes (" + (
                     "no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})")
             continue
-        lines, took = [x for x in out.splitlines() if x.strip()], 0
+        lines, took = [x for x in cut_lines(out) if x.strip()], 0
         for line in lines:
             p = line.split("\t", 2)
             if len(p) == 3 and p[0].isdigit():
@@ -786,7 +798,7 @@ def last_model(sid, since_ms, config_dir=""):
         except OSError:
             continue
         since, last = None, None
-        for line in tail.splitlines():
+        for line in cut_lines(tail):
             try:
                 d = json.loads(line)
             except ValueError:
@@ -838,7 +850,7 @@ def print_run(r):
             continue
         last = ""
         for chunk in chunks:
-            for line in chunk.decode(errors="replace").splitlines():
+            for line in cut_lines(chunk.decode(errors="replace")):
                 try:
                     d = json.loads(line)
                 except ValueError:
@@ -849,29 +861,42 @@ def print_run(r):
     return ""
 
 
-def last_turn(r):
+def last_turn(r, unread=None):
     """The last entry of this session's conversation that is a turn: a user or assistant line, not Claude
     Code's own bookkeeping and not what it printed for a command (its "Bye!" for /exit). None if there is
-    no conversation file or no such line."""
+    no conversation file or no such line. G2.61 (T118): a list given as `unread` gets one number, how many
+    lines written after that turn could not be read (a line torn by a power cut, say): what they were is not
+    known, so nothing is decided from "this turn was the last"."""
     base = r.get("config_dir") or os.path.join(HOME, ".claude")
     for f in glob.glob(os.path.join(base, "projects", "*", f"{r['session_id']}.jsonl")):
         try:
             with open(f, "rb") as fh:
                 fh.seek(0, 2)
-                fh.seek(max(0, fh.tell() - 65536))
-                tail = fh.read().decode(errors="replace").splitlines()
+                at = max(0, fh.tell() - 65536)
+                fh.seek(at)
+                tail = cut_lines(fh.read().decode(errors="replace"))
         except OSError:
             continue
+        if at:
+            tail = tail[1:]             # the read began inside a line: that piece is no line
+        lost = 0
         for line in reversed(tail):
+            if not line.strip():
+                continue
             try:
                 d = json.loads(line)
             except ValueError:
+                d = None
+            if not isinstance(d, dict):
+                lost += 1
                 continue
-            if not isinstance(d, dict) or d.get("type") not in ("user", "assistant") or d.get("isMeta"):
+            if d.get("type") not in ("user", "assistant") or d.get("isMeta"):
                 continue
             c = (d.get("message") or {}).get("content") if isinstance(d.get("message"), dict) else None
             if isinstance(c, str) and c.lstrip().startswith(("<local-command-stdout>", "<local-command-stderr>")):
                 continue
+            if unread is not None:
+                unread.append(lost)
             return d
         return None
     return None
@@ -880,6 +905,7 @@ def last_turn(r):
 _HISTORY = {}
 EXIT_SIDS = []                  # the session ids on the record, so the history is read once for all of them
 HISTORY_SAY = []                # set by revive and record, which say in the log when the history cannot be used
+UNREAD_SAID = set()             # G2.61: the sessions whose unread lines after an /exit this run has said
 HISTORY_SID = re.compile(r'"sessionId"\s*:\s*"([0-9A-Za-z-]{8,64})"')
 
 
@@ -896,12 +922,15 @@ def history_exits(base, sids):
     if have is not None and set(sids) <= have[0]:
         return have[1]
     want = set(sids) | (have[0] if have else set())
-    last, shaped, problem = {}, 0, ""
+    last, shaped, problem, lost = {}, 0, "", 0
     try:
         with open(os.path.join(base, "history.jsonl"), "rb") as fh:
             fh.seek(0, 2)
-            fh.seek(max(0, fh.tell() - 4_000_000))
-            tail = fh.read().decode(errors="replace").splitlines()
+            at = max(0, fh.tell() - 4_000_000)
+            fh.seek(at)
+            tail = cut_lines(fh.read().decode(errors="replace"))
+            if at:
+                tail = tail[1:]         # the read began inside a line: that piece is no line
     except FileNotFoundError:
         tail, problem = [], "is not there (no history.jsonl in that folder)"
     except OSError as e:
@@ -915,6 +944,15 @@ def history_exits(base, sids):
             continue                    # another session's: not read
         try:
             d = json.loads(line)
+        except ValueError:
+            d = None
+        if not isinstance(d, dict):
+            # G2.61 (T118): a line of one of these sessions that could not be read. What was typed there is not
+            # known, so an /exit before it is not that session's last prompt (one after it still is)
+            lost += 1
+            last[m.group(1)] = (last.get(m.group(1), (0, False))[0], False)
+            continue
+        try:
             sid, t, words = d["sessionId"], float(d["timestamp"]) / 1000, d.get("display")
         except (ValueError, KeyError, TypeError):
             continue
@@ -925,6 +963,9 @@ def history_exits(base, sids):
     if problem and have is None and HISTORY_SAY:
         log(f"the prompt history in {base} {problem}. A session ended with /exit is known only "
             "from its conversation or its pane; one may be brought back that its owner ended.")
+    if lost and have is None and HISTORY_SAY:
+        log(f"the prompt history in {base}: {lost} line(s) of a session on the record could not be read; an /exit "
+            "before such a line is not taken as that session's last prompt")
     out = {sid: t for sid, (t, ex) in last.items() if ex}
     _HISTORY[base] = (want, out)
     return out
@@ -941,9 +982,17 @@ def exited_at(r):
     t = history_exits(base, [r["session_id"]] + EXIT_SIDS).get(r["session_id"], 0)
     if t > seen:
         return t
-    d = last_turn(r)
+    after = []
+    d = last_turn(r, after)
     c = (d.get("message") or {}).get("content") if d and isinstance(d.get("message"), dict) else None
     if not (isinstance(c, str) and EXIT_CMD.search(c)):
+        return 0
+    if after and after[0]:
+        # G2.61 (T118): the conversation went on after the /exit, in lines that could not be read
+        if HISTORY_SAY and r["session_id"] not in UNREAD_SAID:
+            UNREAD_SAID.add(r["session_id"])
+            log(f"{display(r)}: {after[0]} line(s) written after the /exit in its conversation could not be read; "
+                "it is not taken as ended by its owner")
         return 0
     try:
         t = datetime.datetime.fromisoformat(str(d.get("timestamp", "")).replace("Z", "+00:00")).timestamp()
@@ -1140,7 +1189,7 @@ def proc_cwd(pid):
         except OSError:
             return ""
     out = run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], timeout=5)[1]
-    return next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
+    return next((l[1:] for l in cut_lines(out) if l.startswith("n")), "")
 
 
 def in_skip_folder(path):
@@ -1790,7 +1839,7 @@ def env_file_pairs():
         return [], ["(the file could not be read)"]
     nul = "\0" in raw
     keep, left = [], []
-    for item in (raw.split("\0") if nul else raw.splitlines()):
+    for item in (raw.split("\0") if nul else cut_lines(raw)):
         if not nul:
             item = item.strip()
             if item.startswith("export "):
@@ -2505,14 +2554,14 @@ OTHER_DIALOG = re.compile(r"usage[ -]credits|extra[ -]usage|usage limit|limit re
 
 
 def bottom(screen, n):
-    return "\n".join([ln for ln in screen.splitlines() if ln.strip()][-n:])
+    return "\n".join([ln for ln in cut_lines(screen) if ln.strip()][-n:])
 
 
 def under_box(screen):
     """T36: how many lines with text are under the lowest rule on the screen (the input box's lower edge):
     notices, the status line, which a person can make any height, and the mode line. A fixed count from
     the foot missed the box on a machine whose status line is 13 lines tall. At most 40."""
-    lines = [SGR.sub("", ln) for ln in screen.splitlines() if SGR.sub("", ln).strip()]
+    lines = [SGR.sub("", ln) for ln in cut_lines(screen) if SGR.sub("", ln).strip()]
     for i in range(len(lines) - 1, -1, -1):
         if BOX_EDGE.match(lines[i]):
             return min(len(lines) - 1 - i, 40)
@@ -2637,7 +2686,7 @@ def box_empty(screen):
     ❯ right under a rule, with nothing after the ❯ but its dim placeholder (a session nobody wrote in shows
     one, such as 'Try "how does <filepath> work?"'). The screen is read with its styles (capture-pane -e),
     so typed text and the placeholder can be told apart. No box found means: not known to be empty."""
-    lines = [ln for ln in screen.splitlines() if SGR.sub("", ln).strip()][-(15 + under_box(screen)):]
+    lines = [ln for ln in cut_lines(screen) if SGR.sub("", ln).strip()][-(15 + under_box(screen)):]
     for i in range(len(lines) - 1, 0, -1):
         plain = SGR.sub("", lines[i]).lstrip()
         if plain.startswith("❯") and BOX_EDGE.match(SGR.sub("", lines[i - 1])):
@@ -3568,7 +3617,7 @@ def idle_shell(pane):
     if not (len(fg) == 1 and fg[0].get("pid") == pi.get("shell_pid")):
         return False, "it is running something else"
     rc, out = run([CFG["herdr"], "pane", "read", pane, "--source", "visible"], timeout=40)
-    last = [ln for ln in out.splitlines() if ln.strip()][-1:] or [""]
+    last = [ln for ln in cut_lines(out) if ln.strip()][-1:] or [""]
     if not re.search(r"[$%#❯]\s*$", last[0]):
         return False, "it has text typed after the prompt"
     return True, ""
@@ -4227,12 +4276,12 @@ def will_refuse():
         rc, _, err = run_err(["launchctl", "print", f"gui/{uid}"], timeout=10)
         if rc != 125:
             return None
-        said = (err.strip().splitlines() or [""])[0].strip()[:200]
+        said = (cut_lines(err.strip()) or [""])[0].strip()[:200]
         return (f"NOT set up: this account is not logged in at this Mac's screen, and launchd loads a job for an "
                 f"account only while it is. `launchctl print gui/{uid}` answered exit 125"
                 + (f" (\"{said}\")" if said else "") + ".")
     rc, out, err = run_err(["systemctl", "--user", "is-enabled", BOOT_UNITS[0]], timeout=10, env=user_env())
-    said = [x.strip() for x in err.splitlines() if NO_BUS.search(x)]
+    said = [x.strip() for x in cut_lines(err) if NO_BUS.search(x)]
     if out.strip() or not said:
         return None
     return (f"NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl --user` "
@@ -4450,7 +4499,7 @@ def setup():
                 if rc == 0:
                     continue
                 # G5.17 (b): the stop says what launchd answered, what it holds now, what is on disk and the step
-                said = (err.strip().splitlines() or [""])[0].strip()[:200]
+                said = (cut_lines(err.strip()) or [""])[0].strip()[:200]
                 print(f"NOT set up: launchd did not take {label} (exit {rc}" + (f": \"{said}\"" if said else "")
                       + "). Nothing comes back by itself yet.")
                 now, now_why = job_read(label)
@@ -4629,10 +4678,10 @@ def unit_read(unit, what, env):
     fields["no bus"] is set where its own words on standard error say it could not connect."""
     rc, out, err = run_err(["systemctl", "--user", "show", unit, "-p", "ActiveState", "-p", "SubState"],
                            timeout=10, env=env)
-    f = dict(x.split("=", 1) for x in out.splitlines() if "=" in x)
+    f = dict(x.split("=", 1) for x in cut_lines(out) if "=" in x)
     active, sub = f.get("ActiveState", "").strip(), f.get("SubState", "").strip()
     if rc != 0:
-        said = next((x.strip()[:160] for x in err.splitlines() if x.strip()), "")
+        said = next((x.strip()[:160] for x in cut_lines(err) if x.strip()), "")
         f.update({"failed": str(rc), "no bus": "yes" if NO_BUS.search(err) else ""})
         return "unread", f"systemctl gave no answer about {what} (exit {rc}" + (f': "{said}"' if said else "") + ")", f
     if not active or not sub:
@@ -4795,7 +4844,7 @@ def boot_read():
         for unit, verb, good, what in ((BOOT_UNITS[0], "is-enabled", "enabled", "boot service"),
                                        (BOOT_UNITS[1], "is-active", "active", "record timer")):
             rc, out = run(["systemctl", "--user", verb, unit], timeout=10, env=env)
-            word = (out.strip().splitlines() or [""])[0].strip()
+            word = (cut_lines(out.strip()) or [""])[0].strip()
             seen.append(f"{what}: {word or 'no answer'}")
             if word == good:
                 continue
@@ -5330,7 +5379,7 @@ def marked_sessions():
             continue
         rc, out, err = run_err(tmux_own(s) + ["list-sessions", "-F", "#{" + OURS_MARK + "}"], timeout=6)
         if rc == 0:
-            n += sum(1 for line in out.splitlines() if line.strip())
+            n += sum(1 for line in cut_lines(out) if line.strip())
         elif rc == 99 or not ("no server running" in err or "error connecting to" in err):
             unread.append(f"the tmux server at {s} did not list its sessions ("
                           + ("no answer within 6 s)" if rc == 99 else f"tmux ended with code {rc})"))

@@ -7548,6 +7548,147 @@ class Names(Base):
         self.tg("record", "--force")
         self.assertEqual(self.logged(said), 1, "said once, at the record that changed it")
 
+    def test_G2_61_what_another_program_wrote_is_cut_at_the_line_feed_alone(self):
+        """T118: Python's splitlines() cuts at the line feed and also at U+2028, at NEL (U+0085) and at more, which
+        a JSON writer and tmux leave as they are inside a line. A piece that was cut does not parse and was passed
+        over, saying nothing. Both sightings and their controls in one world, nine sessions:
+          (1) five, as seen on a stock machine: a conversation that went on after an /exit with every line after it
+              holding U+2028 as it is; an /exit in the prompt history and a later prompt that holds it; the same
+              two with the character in its backslash-u form (the controls); an ordinary conversation whose last
+              two lines hold it;
+          (2) two in tmux sessions whose names hold U+2028 and NEL (the control: the plain names of the others);
+          and two whose line after the /exit cannot be read at all (torn in the middle, as a power cut leaves the
+          last line of a file): the tool does not decide past a line it could not read, and says how many.
+        After a restart: nine of nine back, each started once and in the tmux session it had, the names on the
+        record equal to the names planted, and none called ended by its owner."""
+        SEP, NEL = chr(0x2028), chr(0x85)
+        lanes = [("exit-raw", "Exit Then Raw"), ("hist-raw", "History Raw"), ("exit-esc", "Exit Then Escaped"),
+                 ("hist-esc", "History Escaped"), ("tail-raw", "Tail Raw"), (f"sep{SEP}name", "Sep Name"),
+                 (f"nel{NEL}name", "Nel Name"), ("exit-torn", "Exit Then Torn"), ("hist-torn", "History Torn")]
+        sid = {s: self.start_lane(s, n) for s, n in lanes}
+        # the premise of (2): tmux keeps both names whole and prints them whole, and splitlines() cuts that answer
+        # into more lines than it has
+        rc, out = self.tmux(self.sock, "list-panes", "-a", "-F", self.FORMAT)
+        self.assertEqual(rc, 0, out)
+        for s, _ in lanes:
+            self.assertIn("\t" + s + "\n", out, f"tmux does not hold the name {s!r} whole: not the world meant")
+        self.assertEqual((out.count("\n"), len(out.splitlines())), (9, 11), "splitlines() no longer cuts where it did")
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        want = {sid[s]: ("tmux", self.sock, s) for s, _ in lanes}
+        places = self.places()
+        seen = self.table()["lanes"][0]["last_seen"]
+
+        def stamp(t):
+            return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".000Z"
+        ended = [{"type": "assistant", "timestamp": stamp(seen - 60), "message": {"content": [{"type": "text", "text": "done"}]}},
+                 {"type": "user", "timestamp": stamp(seen + 2), "message": {"content":
+                     "<command-name>/exit</command-name>\n<command-message>exit</command-message>"}},
+                 {"type": "user", "timestamp": stamp(seen + 2), "message": {"content":
+                     "<local-command-stdout>Bye!</local-command-stdout>"}}]
+        # as after a resume: a tool call and its result, each holding the character
+        went_on = [{"type": "assistant", "timestamp": stamp(seen + 4), "message": {"content": [
+                        {"type": "tool_use", "name": "Bash", "input": {"command": f"printf 'a{SEP}b'"}}]}},
+                   {"type": "user", "timestamp": stamp(seen + 5), "message": {"content": [
+                        {"type": "tool_result", "content": f"a{SEP}b"}]}}]
+        d = os.path.join(self.home, ".claude", "projects", "-work")
+        os.makedirs(d, exist_ok=True)
+
+        def conversation(session, entries, raw, torn=b""):
+            data = "".join(json.dumps(e, ensure_ascii=not raw) + "\n" for e in entries).encode("utf-8") + torn
+            with open(os.path.join(d, sid[session] + ".jsonl"), "wb") as f:
+                f.write(data)
+            return data
+
+        def prompt(session, words, t, raw):
+            return (json.dumps({"display": words, "pastedContents": {}, "timestamp": int(t * 1000), "project": self.work,
+                                "sessionId": sid[session]}, ensure_ascii=not raw) + "\n").encode("utf-8")
+        files = {"exit-raw": conversation("exit-raw", ended + went_on, True),
+                 "exit-esc": conversation("exit-esc", ended + went_on, False),
+                 "tail-raw": conversation("tail-raw", ended[:1] + went_on, True),
+                 "exit-torn": conversation("exit-torn", ended, True, torn=(
+                     '{"type":"assistant","timestamp":"%s","message":{"content":[{"type":"te' % stamp(seen + 4)).encode())}
+        hist = {"hist-raw": prompt("hist-raw", "/exit", seen + 2, True) + prompt("hist-raw", f"go on a{SEP}b", seen + 3, True),
+                "hist-esc": prompt("hist-esc", "/exit", seen + 2, False) + prompt("hist-esc", f"go on a{SEP}b", seen + 3, False),
+                "hist-torn": prompt("hist-torn", "/exit", seen + 2, True) + (
+                    '{"sessionId": "%s", "timestamp": %d, "project": "/w", "display": "go o\n'
+                    % (sid["hist-torn"], int((seen + 3) * 1000))).encode()}
+        with open(os.path.join(self.home, ".claude", "history.jsonl"), "wb") as f:
+            f.write(b"".join(hist.values()))
+        # the premise of (1): what was planted holds the character as it is where it is meant to, and its
+        # backslash-u form in the controls; and each raw line is cut by splitlines() into pieces that do not parse
+        mark = SEP.encode("utf-8")
+        for name, data in dict(files, **hist).items():
+            if name.endswith("-raw"):
+                self.assertEqual(data.count(mark), 2 if name != "hist-raw" else 1, name)
+                self.assertGreater(len(data.decode().splitlines()), data.count(b"\n"), name)
+            else:
+                self.assertEqual(data.count(mark), 0, name)
+            if name.endswith("-esc"):
+                self.assertEqual(data.count(b"\\u2028"), 2 if name != "hist-esc" else 1, name)
+        self.assertRaises(ValueError, json.loads, hist["hist-torn"].split(b"\n")[1])
+        self.assertIn(sid["hist-torn"].encode(), hist["hist-torn"].split(b"\n")[1], "the torn line still names its session")
+        self.assertRaises(ValueError, json.loads, files["exit-torn"].split(b"\n")[-1])
+
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        try:
+            self.wait_launches(n + 9)
+        except AssertionError:
+            pass
+        time.sleep(2)
+        back = [x["sid"] for x in self.launches()[n:]]
+        missing = [name for s, name in lanes if sid[s] not in back]
+        self.assertEqual(sorted(back), sorted(sid.values()),
+                         f"{len(set(back))} of 9 came back in {len(back)} start(s); not back: {missing}\n{out}")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("its owner ended it", out)
+        self.assertIn("revive: 9 started, 0 already running, 0 failed, 0 need you\n", out)
+        # a line that could not be read is counted, and said where a decision would have leaned on it
+        self.assertIn("Exit Then Torn: 1 line(s) written after the /exit in its conversation could not be read; "
+                      "it is not taken as ended by its owner", out)
+        # and only that one: a line that holds U+2028 is read, not counted among those that could not be
+        self.assertEqual(out.count("in its conversation could not be read"), 1, out)
+        self.assertIn("1 line(s) of a session on the record could not be read; an /exit before such a line is not taken "
+                      "as that session's last prompt", out)
+        for s, name in lanes:
+            self.assertEqual(self.pane_sid(s), sid[s], f"{name} is not in the tmux session {s!r} it had:\n{out}")
+        rc, out = self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")
+        self.assertEqual(sorted(out.split("\n")[:-1]), sorted(s for s, _ in lanes), "a tmux session under another name")
+        rc, out = self.tg("census")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("ended by its owner", out)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual((places, self.places()), (want, want), "the names on the record are the names planted")
+        self.assertEqual(self.table()["down"], [])
+        rc, out = self.tg("revive")
+        self.assertIn("revive: 0 started, 9 already running, 0 failed, 0 need you\n", out)
+        time.sleep(1.5)
+        self.assertEqual(len(self.launches()), n + 9, "no second copy")
+
+    def test_G2_61_no_place_in_the_tools_code_cuts_a_text_where_splitlines_cuts(self):
+        """T118, the code read beside the planted run: the tool has one function that cuts what another program
+        wrote into lines, at the line feed alone, and no call of splitlines() anywhere (str.splitlines cuts at
+        ten characters, bytes.splitlines at the carriage return too). The check is tried on a copy with one
+        planted call, which it must find."""
+        def cuts(src):
+            return [f"line {n.lineno}: {ast.unparse(n)[:70]}" for n in ast.walk(ast.parse(src))
+                    if isinstance(n, ast.Attribute) and n.attr in ("splitlines", "readlines")]
+        src = fread(SCRIPT)
+        planted = src + "\n\ndef planted_cut(out):\n    return [x for x in out.splitlines() if x]\n"
+        self.assertEqual(len(cuts(planted)) - len(cuts(src)), 1, "the check does not see a planted call")
+        self.assertEqual(cuts(src), [])
+        tg = self.load_tool()
+        text = "a" + chr(0x2028) + "b" + chr(0x85) + "c\rd\x0be\x0cf\x1cg\x1dh\x1ei" + chr(0x2029) + "j\nk\n"
+        self.assertEqual(len(text.splitlines()), 11, "the premise: splitlines() cuts this text into eleven")
+        self.assertEqual(tg.cut_lines(text), [text[:-3], "k"])
+        self.assertEqual(tg.cut_lines(text.encode("utf-8")), [text[:-3].encode("utf-8"), b"k"])
+        self.assertEqual((tg.cut_lines(""), tg.cut_lines("a"), tg.cut_lines("\n"), tg.cut_lines("a\n\nb")),
+                         ([], ["a"], [""], ["a", "", "b"]))
+
+
 
 class Tests(unittest.TestCase):
     def test_G7_1_a_run_stopped_part_way_leaves_nothing_behind(self):
