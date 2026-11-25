@@ -1669,7 +1669,12 @@ ASK_WHY = {}                       # tmux socket -> why the last asking gave no 
 ASK_WHYS = {                       # every cause there is for no answer, in this one place (a test reads each)
     "taken": "the made-up name it asks with is taken by a tmux session that is there: one of Tardigrade's own "
              "ends by itself within a minute, any other is a person's and is left alone",
-    "none_made": "tmux made no session to ask with, in its own words: {said}",
+    "none_made": {                 # one cause, said by what tmux did: its own words only when it said any
+        "said": "tmux made no session to ask with, in its own words: {said}",
+        "nothing": "tmux made no session to ask with and said nothing",
+        "no_answer": "tmux made no session to ask with: it gave no answer in {s} seconds",
+        "not_run": "tmux made no session to ask with: it could not be run ({err})",
+    },
     "other_name": "tmux held the made-up name as neither of the two forms it can have",
 }
 
@@ -1685,9 +1690,10 @@ def hashes_doubled(v):
 
 
 def tmux_said(words):
-    """tmux's own words for a line of the log: the first line, printable ASCII, no backtick, no dollar sign"""
+    """tmux's own words for a line of the log: the first line, printable ASCII, no backtick, no dollar sign.
+    Empty when tmux said nothing."""
     first = words.strip().split("\n")[0]
-    return re.sub(r"[^\x20-\x7e]|[`$]", "?", first)[:160] or "(nothing)"
+    return re.sub(r"[^\x20-\x7e]|[`$]", "?", first)[:160]
 
 
 def tmux_first(sock):
@@ -1703,7 +1709,7 @@ def tmux_first(sock):
 
 def server_ended(sock, pid):
     """The session Tardigrade asked with may have been that tmux server's only one. tmux then ends the server, and
-    a start that reaches it while it ends fails (tmux says "server exited unexpectedly": 3 of 300 on tmux 3.4).
+    a start that reaches it while it ends fails (tmux says "server exited unexpectedly"; seen on tmux 3.4).
     So when no session is left there, the next start waits until that server's process is gone, 3 s at most."""
     if not pid.isdigit() or tmux(sock, "list-sessions", "-F", "#{session_id}")[1].strip():
         return
@@ -1724,16 +1730,21 @@ def tmux_asked(sock):
     if has_session(sock, ASKS_AS) or has_session(sock, one):
         ASK_WHY[sock] = ASK_WHYS["taken"]
         return None
+    how, wait_s = "", 3 if TESTING else 30
     try:        # not run(): what tmux says when it makes none is on its error stream
         made = subprocess.run(argv + ["new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}",
                                       "-s", ASKS_AS, "-x", "200", "-y", "50", "-c", "/", "sleep 30"],
-                              capture_output=True, encoding="utf-8", errors="replace", timeout=30, env=server_env())
+                              capture_output=True, encoding="utf-8", errors="replace", timeout=wait_s,
+                              env=server_env())
         rc, out, err = made.returncode, made.stdout, made.stderr
-    except (subprocess.TimeoutExpired, OSError) as e:
-        rc, out, err = 99, "", type(e).__name__
+    except subprocess.TimeoutExpired:
+        rc, out, err, how = 99, "", "", "no_answer"
+    except OSError as e:
+        rc, out, err, how = 99, "", type(e).__name__, "not_run"
     sid, _, got = out.rstrip("\n").partition("\t")
     if rc != 0 or not re.fullmatch(r"\$[0-9]+", sid):
-        ASK_WHY[sock] = ASK_WHYS["none_made"].format(said=tmux_said(err or out))
+        said = "" if how else tmux_said(err or out)
+        ASK_WHY[sock] = ASK_WHYS["none_made"][how or ("said" if said else "nothing")].format(said=said, s=wait_s, err=err)
         return None
     ans = None
     if got in (ASKS_AS, one):

@@ -18,21 +18,23 @@
   then shows it as tardigrade-asks-# or tardigrade-asks-##; it holds a sleep that ends by itself), reads back what
   tmux holds, and ends that session. Like a waiting screen, it is a tmux session of Tardigrade's own making, in the
   same run; it ends no other. If tmux cannot be asked (a tmux session of that made-up name is already there, which
-  is left alone; tmux made no session; tmux held the name as something else), a session whose tmux name holds a # is
-  not started under a guessed name: its line says NOT STARTED and which of the three, the run asks again at each
-  try, and the other sessions come back. If the run gives up on it, its give-up line points to the README's edge on
-  starts that failed, which says how one such session is brought back by hand. A title never stops a start: with no
-  answer it goes over without its #. A run with no # in any name, title or folder asks nothing and does what
+  is left alone; tmux made no session, with its own words if it said any, and else that it said nothing, gave no
+  answer in 30 seconds or could not be run; tmux held the name as something else), a session whose tmux name holds a
+  # is not started under a guessed name: its line says NOT STARTED and which of the three, the run asks again at
+  each try, and the other sessions come back. If the run gives up on it, its give-up line points to the README's
+  edge on starts that failed, which says how one such session is brought back by hand. A title never stops a start:
+  with no answer it goes over without its #. A run with no # in any name, title or folder asks nothing and does what
   0.1.10.2 did. Seen with this version and stand-in sessions, in its three new tests: on tmux 3.4 on every push, and
   once each on stock virtual machines with tmux 2.6 (Ubuntu 18.04, with Python 3.8 added from that release's own
   archive), tmux 2.7 (AlmaLinux 8.10, Python 3.9) and tmux 3.0a (Ubuntu 20.04, Python 3.8). A fourth test walks each
   of the three causes, and a fifth a start that fails for a cause of its own once tmux could be asked (both on tmux
   3.4). When the session it asked with was the only one on that tmux server, tmux ends the server with it, and a
-  start that reaches the server just then fails (tmux 3.4: 3 times in 300, and once in this version's own test run):
-  Tardigrade waits until that server is gone, 3 seconds at most. A sixth test holds that with a stand-in whose
-  server takes a second and a half to end. Not seen: a real Claude Code session with such a name; a Mac. Nothing
-  else changed. Still on 0.1.10.2 and met it? Give that tmux session a name without a # while it runs, and from the
-  next record on it comes back (the README of 0.1.10.2 has the line) (T119).
+  start that reaches the server just then fails (tmux 3.4 alone: in 2 of 300 tries in one trial and in 1 of 300 in
+  another; and once in this version's own test run): Tardigrade waits until that server is gone, 3 seconds at most.
+  A sixth test holds that with a stand-in whose server takes a second and a half to end. Not seen: a real Claude
+  Code session with such a name; a Mac. Nothing else changed. Still on 0.1.10.2 and met it? Give that tmux session a
+  name without a # while it runs, and from the next record on it comes back (the README of 0.1.10.2 has the line)
+  (T119).
 
 ## 0.1.10.2 (2026-11-25)
 

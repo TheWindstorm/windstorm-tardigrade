@@ -2371,7 +2371,7 @@ class Revive(Base):
             self.reads_names = got == "plant#asks"
             self.tmux(self.sock, "kill-session", "-t", made)
             # that was this server's only session if nothing else is there: tmux then ends the server, and a start
-            # that reaches it while it ends fails (seen once in a whole run, and 3 of 300 by hand on tmux 3.4)
+            # that reaches it while it ends fails (seen once in a whole run, and by hand on tmux 3.4)
             if not self.tmux(self.sock, "list-sessions", "-F", "#{session_id}")[1].strip():
                 self.until(lambda: not self.pid_there(int(server)), "the tmux server of the plant's asking to end")
         return name.replace("#", "##") if self.reads_names else name
@@ -2574,9 +2574,12 @@ class Revive(Base):
         """T119: the causes for "tmux could not be asked" stand in one place in the tool, and this test walks every
         one of them in a world of its own making: the made-up name taken (in the form the test above does not plant),
         a tmux that makes no session and says why (its words carry a backtick, a dollar sign, an escape character
-        and a second line: the line shows the first line with a ? for each), and a tmux that holds the made-up name
-        as a third thing (that session is ended by its id). Each time: the plain session comes back, the one with a
-        hash in its tmux name is not started under any name, and its line carries that cause."""
+        and a second line: the line shows the first line with a ? for each), one that makes none and says nothing,
+        one that never answers (the line says so with the time allowed, and never "in its own words"), and a tmux
+        that holds the made-up name as a third thing (that session is ended by its id). Each time: the plain
+        session comes back, the one with a hash in its tmux name is not started under any name, and its line
+        carries that cause. A tmux that cannot be run starts nothing at all, so that way is read from the tool's
+        own answer, with the tool loaded in this test."""
         self.cfg({"retry_min": 0.1, "retry_gap_s": 1})
         src = fread(SCRIPT)
         listed = re.search(r"^ASK_WHYS = (\{.*?^\})", src, re.S | re.M)
@@ -2601,12 +2604,17 @@ class Revive(Base):
         none = self.script("tmux-makes-none", f"#!{sys.executable}\n" + head
                            + "    sys.stderr.write('no room for it: ' + chr(96) + 'x' + chr(96) + ' ' + chr(36) + '(y) '"
                            " + chr(27) + '[1m' + chr(10) + 'a second line' + chr(10))\n    sys.exit(1)\n" + tail)
+        silent = self.script("tmux-makes-none-and-says-nothing", f"#!{sys.executable}\n" + head + "    sys.exit(1)\n" + tail)
+        hung = self.script("tmux-never-answers", f"#!{sys.executable}\n" + head
+                           + "    import time\n    time.sleep(600)\n" + tail)
         other = self.script("tmux-other-name", f"#!{sys.executable}\n" + head
                             + "    a[a.index('tardigrade-asks-##')] = 'tardigrade-asks-other'\n" + tail)
         # the form of the made-up name that the test above does not plant on this machine's tmux
         held = "tardigrade-asks-##" if self.reads_names else "tardigrade-asks-#"
         seen = {}
-        for key, stand_in, left in (("taken", TMUX, [held]), ("none_made", none, []), ("other_name", other, [])):
+        for key, way, stand_in, left in (("taken", "", TMUX, [held]), ("none_made", "said", none, []),
+                                         ("none_made", "nothing", silent, []), ("none_made", "no_answer", hung, []),
+                                         ("other_name", "", other, [])):
             self.reboot()
             self.cfg({"tmux": stand_in})
             if key == "taken":
@@ -2620,14 +2628,26 @@ class Revive(Base):
                                errors="surrogateescape", env=self.env, timeout=240, cwd=self.tmp)
             out = r.stdout + r.stderr
             time.sleep(1)
-            why = whys[key].format(said="no room for it: ?x? ?(y) ?[1m")
+            why = (whys[key][way] if way else whys[key]).format(said="no room for it: ?x? ?(y) ?[1m", s=3)
+            self.assertEqual("in its own words" in why, way == "said", why)
             line = ("Hash Before A Letter: NOT STARTED. The name of its tmux session holds a # and tmux could not be "
                     f"asked how it takes one ({why}), so it is not started under a guessed name. Nothing of it is lost. "
                     "This run asks again at each try")
-            seen[key] = (self.logged(line), [x["sid"] for x in self.launches()[n0:]], names(),
-                         "revive: 1 started, 0 already running, 1 failed, 0 need you" in out)
-            self.assertEqual(seen[key], (1, [sid["plain"]], sorted(["plain"] + left), True), key + "\n" + out[-2500:])
-        self.assertEqual(sorted(seen), sorted(whys), "every cause in the list was walked, and the list holds no other")
+            seen[key, way] = (self.logged(line), [x["sid"] for x in self.launches()[n0:]], names(),
+                              "revive: 1 started, 0 already running, 1 failed, 0 need you" in out)
+            self.assertEqual(seen[key, way], (1, [sid["plain"]], sorted(["plain"] + left), True),
+                             f"{key} {way}\n" + out[-2500:])
+        # a tmux that cannot be run: the tool's own answer, and the cause it keeps for the line
+        tg = self.load_tool()
+        tg.load_cfg()
+        tg.CFG["tmux"] = self.script("tmux-not-a-program", "no program\n")
+        os.chmod(tg.CFG["tmux"], 0o644)
+        self.assertEqual((tg.tmux_asked(self.sock), tg.ASK_WHY.get(self.sock)),
+                         (None, whys["none_made"]["not_run"].format(err="PermissionError")))
+        seen["none_made", "not_run"] = True
+        listed = [(k, w) for k, v in whys.items() for w in (v if isinstance(v, dict) else [""])]
+        self.assertEqual(sorted(seen), sorted(listed), "every cause and every way in the list was walked, no other")
+        self.assertEqual(sorted(whys), ["none_made", "other_name", "taken"], "three causes")
         self.assertEqual(self.logged("asked once how it takes a #"), 0)
 
     def test_G2_62_a_start_that_fails_for_another_cause_once_tmux_could_be_asked_is_not_laid_to_the_hash(self):
@@ -2676,7 +2696,7 @@ class Revive(Base):
 
     def test_G2_62_a_start_right_after_the_asking_waits_until_the_tmux_server_has_ended(self):
         """T119: when the session the tool asks with was the tmux server's only one, tmux ends the server, and a
-        start that reaches it while it ends fails (seen on tmux 3.4: "server exited unexpectedly", 3 of 300). Here
+        start that reaches it while it ends fails (seen on tmux 3.4: "server exited unexpectedly"). Here
         ONE session is on the record and its tmux name holds a hash, so after a restart the asking session is alone
         on its server. The tmux is a stand-in for that moment made wide: its server takes a second and a half to
         end after its last session was ended, says so by its process number, and refuses every start that reaches
