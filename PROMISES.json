@@ -1791,6 +1791,48 @@
    "issue": 137,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T123",
+   "seen": "2026-11-25, on a reviewer's read of 0.1.10.3's change to the control of the walking tests of T119. (a) The comment above the control says of the old control that, asked again at short intervals, it lost for its whole wait in one run on the test image. Seen was that the control had no file for its whole wait in one run (run 45611984100, job 139197580979); that the race the comment names is what kept the file away is read in tmux's source and counted on plain tmux, and the red did not come back in further runs with the old control. The sentence stays in 0.1.10.3, because that test file's sum is named by runs on real machines. (b) The control starts tmux with its output thrown away, so a red by the control says only how long it waited: not tmux's exit code, not what tmux said. (c) After its wait the control lets its asking client go by a second tmux call; if that call itself gives no answer in its time, its error leaves the block before the asking client is ended, and it stands in place of the control's own failure. Not seen: (b) or (c) in a run; both are read in the code.",
+   "promise": "(a) the comment says the sighting and the reading apart. (b) A red by the control carries tmux's exit code and tmux's own words for the asking call, cut and cleaned as the tool cuts and cleans tmux's words, and carries nothing of what the control handed tmux; seen red first with a control that hands tmux nothing to answer. (c) The letting-go call's own failure cannot skip the ending of the asking client and cannot stand in place of the first failure: seen red first with a stand-in tmux whose letting-go call gives no answer. What the walking tests prove of the tool stays as it is. In the tests only; the tool file does not change.",
+   "codon": "G7.17",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 138,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T124",
+   "seen": "2026-11-25, in the suite's test world (tmux 3.4, stand-in sessions). Read in the code: the name of a session is taken from Claude Code's file with the white space at both its ends removed, and white space there is what Python counts as such, a no-break space and the line separators among it. Seen with the 0.1.11 build in a trial of twelve sessions: for a session whose own name ended in a no-break space, and for one whose name ended in a line separator, the record held the name without its last character; all twelve came back, each resumed as itself. Seen with the 0.1.10.3 candidate (script sha256 f254bdc9f3937e82), three sessions that never had a conversation, each recorded, ended and started new: a name that ended in a no-break space, and one that ended in a plain space, were each handed to the new session without the last character; a no-break space inside a name was kept (the control). So a resumed session keeps its name, which comes from its conversation, while the record, the census and a session started new carry a name that is one character shorter than the one the person gave. The same line in the released 0.1.9, 0.1.10.1 and 0.1.10.2 (read). Not seen: the real Claude Code keeping such a character at the end of a name (the stand-in does); anyone it happened to.",
+   "promise": "the name on the record is the name Claude Code's file gives, character for character, and a session started new gets exactly that name. What the tool prints of a name follows its rules for a printed value (G2.57); what it stores, compares and hands to Claude Code is the name as it was. Before the build it is looked up whether the real Claude Code keeps white space at the ends of a name: if it never does, this row says so and its test stays as a guard. A test plants names that end in a plain space, a no-break space and a line separator beside one with a no-break space inside, and reads the record and the name handed to a session started new equal to the name planted; seen red first.",
+   "codon": "G2.64",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 139,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T130",
+   "seen": "2026-11-25, on a search of the tool for values it did not write that reach another program's text. Two places are written as a shell takes one value whole and have no test that plants a shell's special characters: the command line the tool hands tmux for a new session or a pane started again (the start file's path; the waiting screen's line with the Python's path and the script's path), and the socket's path and name in the person's own server command. The suite's test homes are plain paths. Seen with the 0.1.10.3 candidate (script sha256 f254bdc9f3937e82) on tmux 3.4: six of the suite's own tests, unchanged, with the folder the test homes are made in set to a path that holds a space, an apostrophe and a dollar sign. Three passed, three failed, and each failure was read as the test's own: a stand-in start script that places a path inside double quotes; a pattern that expects no space in the socket's path; a comparison with the folder as tmux prints it, and tmux 3.4 prints a dollar sign in a path with a backslash before it. In all six the tool's own values arrived whole: the socket reached the server command as one argument, and the start file's path reached tmux's command line in one piece. Not counted: how many of the suite's other tests carry such an assumption.",
+   "promise": "the suite runs with its test homes under a path that holds the shell's special characters (a space, an apostrophe, a dollar sign), by one setting, and the tests' own stand-in scripts and patterns are made to hold there. A test in that world records, ends the server and revives with a server command and a waiting screen, and reads the socket, the start file's path, the Python's path and the script's path arrive whole. Beside the shell's characters it plants tmux's own: values that tmux's command grammar reads otherwise than they were written. One CI leg runs the whole suite that way. In the tests only; the tool file does not change.",
+   "codon": "G7.18",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.12",
+   "ship_in": "0.1.12",
+   "test": "",
+   "proven": "",
+   "issue": 140,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
