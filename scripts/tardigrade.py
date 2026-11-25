@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.10.1"
+VERSION = "0.1.10.2"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -171,7 +171,7 @@ def log(msg):
     print(line, flush=True)
     fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as f:
+    with os.fdopen(fd, "a", encoding="utf-8", errors="backslashreplace") as f:
         f.write(line + "\n")
 
 
@@ -1564,7 +1564,7 @@ def write_launch_file(r):
     os.makedirs(launch_dir(), mode=0o700, exist_ok=True)
     path = os.path.join(launch_dir(), r["session_id"] + ".sh")
     fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
         f.write(launch_text(r))
     os.replace(path + ".new", path)
     return path
@@ -3775,6 +3775,13 @@ COMMANDS = {"wait": wait_screen, "report": report_cmd, "trust": trust_cmd, "reco
             "setup": setup, "uninstall": uninstall}
 
 if __name__ == "__main__":
+    # T115: a name the tool did not write (a folder whose name is not UTF-8) ends no run at a print: such a
+    # character is written as its backslash form. The log's write does the same.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
     cmd = (sys.argv[1:] or ["census"])[0]
     if cmd in ("-h", "--help", "help"):
         print(__doc__)

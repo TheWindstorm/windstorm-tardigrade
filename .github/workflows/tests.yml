@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04     # named: the image that "latest" pointed to when 0.1.10.1 was tagged
     strategy:
       fail-fast: false
       matrix:
@@ -17,7 +17,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: python tests/test_tardigrade.py -v
   skill-spec:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

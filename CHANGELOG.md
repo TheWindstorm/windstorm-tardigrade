@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.1.10.2 (2026-11-25)
+
+- **One folder with an odd name no longer stops every session from coming back.** Up to 0.1.10.1, when one recorded
+  session was in a folder whose name is not UTF-8 (a name written long ago in another encoding), the revive after a
+  restart ended in an error before it started anything: no session came back, the ones in ordinary folders
+  included, and census ended in the same error. Seen with 0.1.10.1 and stand-in sessions on a stock Ubuntu 24.04
+  virtual machine through a real restart: 0 of 3 back by the boot service and 0 of 3 by hand, each time with
+  "UnicodeEncodeError" and the words "surrogates not allowed". Now such a name ends no command: on the screen and in
+  the log its odd byte is written as a backslash form, every other session comes back, and that session too, in its
+  own folder (seen with this version on the same machine through a real restart: 3 of 3 back, the boot
+  service ending with success, census listing all three). On a Mac's own disk such a folder cannot be made
+  (macOS 27, APFS: "Illegal byte sequence"). Whether Claude Code itself can be in such a folder: version 2.1.332,
+  not signed in, refused to start in one (seen once each: at its screen, and in print mode); one that was
+  running when its folder was renamed to such a name kept running there (seen once, at its first screen). Not
+  seen: a signed-in session in such a folder, and whether Claude Code records that folder for it. A process
+  that is no session, with such a byte in its command line, ended nothing (3 of 3 sessions back). Nothing else
+  changed. Still on 0.1.10.1 and met it? A session in an ordinary folder comes back by its name, one at a time:
+
+      tardigrade revive --only "Name"
+
+  Not cured by this version, due in 0.1.11 (T114): a session whose recorded NAME holds half of an emoji (a lone
+  surrogate) still ends a revive, and no session comes back (seen in a test with stand-in sessions, not on a real
+  machine); odd characters in other names and in what other programs print are not read yet either (T115).
+  Found while this version was tried, and not cured by it either: a session in a tmux session whose name holds a
+  backslash is not brought back, while the others are (T116; seen on a stock virtual machine with tmux 3.4); and
+  under a language setting that is not UTF-8, a session whose folder name holds a character outside ASCII comes
+  back in the home folder, not its own (T117; seen in a test with a made locale, not on a real machine; 0.1.10.1
+  brought back none there). And a session ended with /exit, then resumed, whose every line after that holds the
+  character U+2028 as it is, is skipped by the revive as ended by its owner; a tmux session name that holds
+  U+2028 or NEL comes back cut at it (T118; seen with stand-in sessions and planted lines on a stock virtual
+  machine; that Claude Code writes the character as it is was counted in two real conversation files). The
+  README's known edges say what helps.
+
 ## 0.1.10.1 (2026-11-24)
 
 - **Census no longer says "comes back after a reboot: yes" when nothing would.** Up to 0.1.10 the answer was read from
