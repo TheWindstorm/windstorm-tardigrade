@@ -234,6 +234,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G2.55 | Due in 0.1.11 (T104). A person who names a session the census shows is never told that it is not on the record. | Not built yet. |
 | G2.56 | Due in 0.1.11 (T106). Every start line the tool prints or logs shows a `VAR=value` word that stands before the program as `VAR=(set)`; the session's start file and the person's own settings file keep the real value. The dry run says once that values are not shown. | Not built yet. |
 | G2.57 | Due in 0.1.11 (T114). The tool never ends on a character: no value it did not write ends a run, on the way in (every place that turns such bytes into text says how a byte that is not text is read) or on the way out (no write to the screen or the log can raise on a character). A revive that meets a session in a folder whose name is not UTF-8 brings back every other session and that one too, in its own folder. Seen red first: a revive that ended on one such folder and brought none of three sessions back. | Not built yet. |
+| G2.58 | Due in 0.1.10.2 (T115), alone. One folder whose name is not UTF-8 stops no other session's return and ends no command: after a restart every other session comes back, and that one too, in its own folder; no write to the screen or to the log can raise on a character. The half of G2.57 that does not wait. Seen red first: the released 0.1.10.1 on a stock machine through a real restart, none of three sessions back. | Not built yet. |
 
 ### G3 Census: say what is running and what is not
 
