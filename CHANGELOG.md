@@ -27,9 +27,12 @@
   once each on stock virtual machines with tmux 2.6 (Ubuntu 18.04, with Python 3.8 added from that release's own
   archive), tmux 2.7 (AlmaLinux 8.10, Python 3.9) and tmux 3.0a (Ubuntu 20.04, Python 3.8). A fourth test walks each
   of the three causes, and a fifth a start that fails for a cause of its own once tmux could be asked (both on tmux
-  3.4). Not seen: a real Claude Code session with such a name; a Mac. Nothing else changed. Still on 0.1.10.2 and
-  met it? Give that tmux session a name without a # while it runs, and from the next record on it comes back (the
-  README of 0.1.10.2 has the line) (T119).
+  3.4). When the session it asked with was the only one on that tmux server, tmux ends the server with it, and a
+  start that reaches the server just then fails (tmux 3.4: 3 times in 300, and once in this version's own test run):
+  Tardigrade waits until that server is gone, 3 seconds at most. A sixth test holds that with a stand-in whose
+  server takes a second and a half to end. Not seen: a real Claude Code session with such a name; a Mac. Nothing
+  else changed. Still on 0.1.10.2 and met it? Give that tmux session a name without a # while it runs, and from the
+  next record on it comes back (the README of 0.1.10.2 has the line) (T119).
 
 ## 0.1.10.2 (2026-11-25)
 

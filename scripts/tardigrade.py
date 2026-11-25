@@ -1701,6 +1701,17 @@ def tmux_first(sock):
     return argv
 
 
+def server_ended(sock, pid):
+    """The session Tardigrade asked with may have been that tmux server's only one. tmux then ends the server, and
+    a start that reaches it while it ends fails (tmux says "server exited unexpectedly": 3 of 300 on tmux 3.4).
+    So when no session is left there, the next start waits until that server's process is gone, 3 s at most."""
+    if not pid.isdigit() or tmux(sock, "list-sessions", "-F", "#{session_id}")[1].strip():
+        return
+    end = time.time() + 3
+    while time.time() < end and alive(int(pid)):
+        time.sleep(0.02)
+
+
 def tmux_asked(sock):
     """How does the tmux server on this socket take a # in a session's name and in a pane's title? Asked with one
     session of the tool's own making under a made-up name: its command is a sleep that ends by itself, what tmux
@@ -1731,9 +1742,11 @@ def tmux_asked(sock):
         ans = {"name": got == one, "title": {one: True, ASKS_AS: False}.get(title)}
     else:
         ASK_WHY[sock] = ASK_WHYS["other_name"]
+    server = tmux(sock, "display", "-p", "-t", f"{sid}:", "#{pid}")[1].strip()
     if tmux(sock, "kill-session", "-t", sid)[0] != 0 and tmux(sock, "has-session", "-t", sid)[0] == 0:
         log(f"  tmux ({os.path.basename(sock)}): the session Tardigrade made to ask tmux one thing could not be "
             f"ended ({got}); it holds a sleep and ends by itself within a minute")
+    server_ended(sock, server)
     if ans:
         ASKED[sock] = ans
         says = {True: "is read as a format, so it goes over with each # doubled", False: "is left as it stands",

@@ -244,13 +244,15 @@ itself: under its own tmux name, in its folder, with its own name in the waiting
 in a name differs between its versions (2.6 leaves it as it stands, 2.7 and later read it), so Tardigrade asks the
 tmux it finds: once in a run, and only when a name or a title with a # is to be handed over, it makes one tmux
 session of its own, which tmux shows as tardigrade-asks-# or tardigrade-asks-## and which holds a sleep, reads back
-what tmux holds, and ends it. If tmux cannot be asked, a session whose tmux name holds a # is not started under a
-guessed name: its line in the log says NOT STARTED and why, and the other sessions come back. The causes it can
-name: a tmux session of that made-up name is already there (one of Tardigrade's own, left by a run that was cut off,
-ends by itself within a minute; any other is yours and is left alone); tmux made no session (the line carries tmux's
-own words); tmux held the made-up name as something else. The run asks again at each try, once a minute for 25
-minutes (`retry_min`). If it gives up, that is a start that failed like any other (T103, T104 above). Seen with
-stand-in sessions in this version's tests on tmux 2.6, 2.7, 3.0a and 3.4 (the first three on stock virtual
+what tmux holds, and ends it. When that was the only session on that tmux server, tmux ends the server too, and a
+start that reaches it just then fails (seen on tmux 3.4, 3 times in 300): Tardigrade waits until that server is
+gone, 3 seconds at most, before it starts anything. If tmux cannot be asked, a session whose tmux name holds a # is
+not started under a guessed name: its line in the log says NOT STARTED and why, and the other sessions come back.
+The causes it can name: a tmux session of that made-up name is already there (one of Tardigrade's own, left by a run
+that was cut off, ends by itself within a minute; any other is yours and is left alone); tmux made no session (the
+line carries tmux's own words); tmux held the made-up name as something else. The run asks again at each try, once a
+minute for 25 minutes (`retry_min`). If it gives up, that is a start that failed like any other (T103, T104 above).
+Seen with stand-in sessions in this version's tests on tmux 2.6, 2.7, 3.0a and 3.4 (the first three on stock virtual
 machines). Not seen: a real Claude Code session with such a name; a Mac. The way to be rid of all of this, on any
 version: a tmux session name without a #. Give the tmux session such a name while it runs, and from the next record
 on it comes back under that name (tried once on 0.1.10.2, with tmux 3.4). The old name stands after the equals sign,
@@ -519,7 +521,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 138 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 139 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 

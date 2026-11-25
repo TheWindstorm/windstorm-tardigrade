@@ -413,13 +413,24 @@ class Base(unittest.TestCase):
         """What a reboot does to this user: every session and the tmux server end. Each by exact pid."""
         for row in self.launches():
             self.kill(row["pid"])
+        servers = []
         for s in self.sockets():
             rc, out = self.tmux(s, "display", "-p", "#{pid}")
             if rc == 0 and out.strip().isdigit():
-                self.kill(int(out.strip()))
+                servers.append(int(out.strip()))
+                self.kill(servers[-1])
         end = time.time() + WAIT
-        while time.time() < end and any(self.tmux(s, "list-sessions")[0] == 0 for s in self.sockets()):
+        while time.time() < end and (any(self.tmux(s, "list-sessions")[0] == 0 for s in self.sockets())
+                                     or any(self.pid_there(p) for p in servers)):
             time.sleep(0.3)
+
+    @staticmethod
+    def pid_there(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
 
     def table(self):
         return jload(os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
@@ -2353,12 +2364,16 @@ class Revive(Base):
         format (each hash doubled comes back as one), tmux 2.6 leaves it as it stands."""
         if not hasattr(self, "reads_names"):
             os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
-            rc, out = self.tmux(self.sock, "new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}", "-s",
-                                "plant##asks", "sleep 30")
-            made, _, got = out.rstrip("\n").partition("\t")
+            rc, out = self.tmux(self.sock, "new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}\t#{pid}",
+                                "-s", "plant##asks", "sleep 30")
+            made, got, server = (out.rstrip("\n").split("\t") + ["", ""])[:3]
             self.assertIn((rc, got), ((0, "plant#asks"), (0, "plant##asks")))
             self.reads_names = got == "plant#asks"
             self.tmux(self.sock, "kill-session", "-t", made)
+            # that was this server's only session if nothing else is there: tmux then ends the server, and a start
+            # that reaches it while it ends fails (seen once in a whole run, and 3 of 300 by hand on tmux 3.4)
+            if not self.tmux(self.sock, "list-sessions", "-F", "#{session_id}")[1].strip():
+                self.until(lambda: not self.pid_there(int(server)), "the tmux server of the plant's asking to end")
         return name.replace("#", "##") if self.reads_names else name
 
     def a_hash_in_each_place(self):
@@ -2658,6 +2673,67 @@ class Revive(Base):
         self.assertIn(sid["lane#Work"], [x["sid"] for x in self.launches()[n0:]], "and started under its own name")
         self.assertEqual([x for x in names() if x not in ("plain", "lane#Work")], [], "no tmux session under another name")
         self.assertEqual(self.logged(": NOT STARTED."), 1)
+
+    def test_G2_62_a_start_right_after_the_asking_waits_until_the_tmux_server_has_ended(self):
+        """T119: when the session the tool asks with was the tmux server's only one, tmux ends the server, and a
+        start that reaches it while it ends fails (seen on tmux 3.4: "server exited unexpectedly", 3 of 300). Here
+        ONE session is on the record and its tmux name holds a hash, so after a restart the asking session is alone
+        on its server. The tmux is a stand-in for that moment made wide: its server takes a second and a half to
+        end after its last session was ended, says so by its process number, and refuses every start that reaches
+        it before. The session comes back at the first try, under its own name, and no start was refused."""
+        self.cfg({"retry_min": 0.2, "retry_gap_s": 1})
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        sid = str(uuid.uuid4())
+        rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux("lane#Work"), "-c", self.work,
+                          f"FAKE_SID={sid} FAKE_NAME='Hash Before A Letter' claude --model claude-opus-5-5")
+        self.assertEqual(rc, 0)
+        self.wait_launches(1)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, [r["tmux_session"] for r in self.table()["lanes"]]), (0, ["lane#Work"]), out)
+        self.reboot()
+        d = os.path.join(self.tmp, "ends-slowly")
+        os.makedirs(d)
+        slow = self.script("tmux-ends-slowly", f"#!{sys.executable}\n" + f"D, TMUX = {d!r}, {TMUX!r}\n" + r"""
+import os, subprocess, sys, time
+a = sys.argv[1:]
+P, K, R = (os.path.join(D, x) for x in ("server-pid", "last-session-ended", "refused"))
+
+
+def ending():
+    try:
+        os.kill(int(open(P).read()), 0)
+        return os.path.exists(K)
+    except (OSError, ValueError):
+        return False
+
+
+if "new-session" in a and "tardigrade-asks-##" in a:        # the server this stand-in speaks for: gone 1.5 s after K
+    p = subprocess.Popen([sys.executable, "-c", "import os, sys, time\nwhile not os.path.exists(sys.argv[1]):\n"
+                          "    time.sleep(0.02)\ntime.sleep(1.5)\n", K], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    open(P, "w").write(str(p.pid))
+elif any("#{pid}" in x for x in a) and os.path.exists(P):
+    print(open(P).read())
+    sys.exit(0)
+elif "kill-session" in a and os.path.exists(P) and not os.path.exists(K):
+    rc = subprocess.run([TMUX] + a, stdin=subprocess.DEVNULL).returncode
+    open(K, "w").close()
+    sys.exit(rc)
+elif "new-session" in a and ending():
+    open(R, "a").write("x")
+    sys.stderr.write("server exited unexpectedly\n")
+    sys.exit(1)
+os.execv(TMUX, [TMUX] + a)
+""")
+        self.cfg({"tmux": slow})
+        rc, out = self.tg("revive")
+        names = sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        refused = os.path.getsize(os.path.join(d, "refused")) if os.path.exists(os.path.join(d, "refused")) else 0
+        self.assertEqual((os.path.exists(os.path.join(d, "last-session-ended")), refused, names,
+                          [x["sid"] for x in self.launches()[1:]],
+                          "revive: 1 started, 0 already running, 0 failed, 0 need you" in out),
+                         (True, 0, ["lane#Work"], [sid], True), out[-3000:])
+        self.assertEqual(self.logged("asked once how it takes a #"), 1)
 
 
 class Census(Base):
