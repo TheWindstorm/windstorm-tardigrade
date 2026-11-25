@@ -1721,6 +1721,34 @@
    "issue": 132,
    "moved_why": "",
    "moved_by_person": ""
+  },
+  {
+   "id": "T125",
+   "seen": "2026-11-25, on a stock Ubuntu 20.04.6 virtual machine (Python 3.8.10, tmux 3.0a), each command in an empty home of its own, with the released 0.1.10.2 (script sha256 5f7cbb5a093d4bc6) and with the 0.1.10.3 candidate (script sha256 f254bdc9f3937e82) alike, twelve commands each. --version and --help made nothing. census, census --json, setup --dry-run, trust, report, open and uninstall --dry-run each made two folders, .config/windstorm-tardigrade and .local/state/windstorm-tardigrade, with the folders above them. revive --dry-run, revive --dry-run --all and record --dry-run made the same two folders and the log file, with one line in it. Read in the code: every command but those two begins by closing Tardigrade's two folders to the user, which makes them where they are missing and sets their mode where they are there, and a logged line makes the log's folder and is written whether the run is a dry run or not. So a person who only asks what setup would do, or what is running, has folders of ours before agreeing to anything, and a dry run leaves a line behind. No text of ours said that a dry run makes nothing. Not seen: the same on a Mac; a home that is set up (read only: there a dry run adds to the log and a read sets the two folders' modes); anyone harmed by it.",
+   "promise": "after a command that only reads, and after every dry run, the disk is as it was: the same names, the same modes, the same bytes, in a home where nothing is set up and in one that is. A dry run writes nothing: no log line, no folder, no change of a mode; what it would have left for the keeper of the machine it prints. The commands that write (setup, revive, record, trust on and off, uninstall) keep closing Tardigrade's two folders to the user as today. A command that only reads does not repair a mode: where one of the two folders is open to others it says so and names the command that closes it. open is not a read: where nothing is set up it says so and makes nothing. A test runs each such command in an empty home and in a set-up home, lists names, modes, sizes and change times before and after, and reads them equal; seen red first.",
+   "codon": "G5.29",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 133,
+   "moved_why": "",
+   "moved_by_person": ""
+  },
+  {
+   "id": "T126",
+   "seen": "2026-11-25, from reading the code and one read on a Mac. To open a window on a Mac the tool hands Terminal, through osascript, the line that attaches to a session's tmux session, placed inside the text of a script. That line is quoted for a shell and not for the script's language; it carries the tmux session's name (and the socket's path, and the tmux path from the settings); and the tool does not read what osascript answers. The same in every released version that opens windows on a Mac. Seen on macOS 27.2.1 (arm64), in a test account, with no window and no app started: only how the script language reads the text that the 0.1.10.3 candidate composes. For a plain name it is read as the line meant. For a name with a double quote, and for a name with a backslash, it is refused with a syntax error (exit code 1). A name with certain characters can be read as other words. So the window of such a session would not open and nothing would say so. The name of a tmux session is chosen by the person or by a program already running as them. What helps: open --dry-run prints the attach line for each hidden session, quoted for a shell, to type in a terminal (read in the code; not typed on a Mac with such a name). The desktop note's line, which also goes to osascript, carries only the tool's own words and counts (read). Not seen: open itself on a Mac with such a session, which needs a desktop session.",
+   "promise": "a value the tool did not write never becomes part of another program's script: the line for a window reaches osascript as an argument that the script reads, never inside the script's text, so the script's text is the same for every name and a name of any characters arrives whole. The tool reads osascript's answer, and when a window could not be opened it says so in one line with the line to type. A test with a stand-in osascript that keeps its arguments plants names with a double quote, with a backslash and with the other characters seen, and reads both; seen red first. The stand-in holds a belief about osascript, so open itself is seen on a real Mac with such a name before 0.1.11 is tagged.",
+   "codon": "G4.12",
+   "owner": "maintainer",
+   "first_ship_in": "0.1.11",
+   "ship_in": "0.1.11",
+   "test": "",
+   "proven": "",
+   "issue": 134,
+   "moved_why": "",
+   "moved_by_person": ""
   }
  ],
  "declined": [
