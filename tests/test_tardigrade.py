@@ -2345,6 +2345,207 @@ class Revive(Base):
         with open(self.state("tardigrade.log"), "rb") as f:
             self.assertNotIn(b"Traceback", f.read())
 
+    def name_for_this_tmux(self, name):
+        """The plant is the test's own. How this machine's tmux must be handed a session name to hold exactly it is
+        asked once, with a made-up name in a session that is ended at once: tmux from 3.0 on reads the name as a
+        format (each hash doubled comes back as one), tmux 2.6 leaves it as it stands."""
+        if not hasattr(self, "reads_names"):
+            os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+            rc, out = self.tmux(self.sock, "new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}", "-s",
+                                "plant##asks", "sleep 30")
+            made, _, got = out.rstrip("\n").partition("\t")
+            self.assertIn((rc, got), ((0, "plant#asks"), (0, "plant##asks")))
+            self.reads_names = got == "plant#asks"
+            self.tmux(self.sock, "kill-session", "-t", made)
+        return name.replace("#", "##") if self.reads_names else name
+
+    def a_hash_in_each_place(self):
+        """T119's world. Seven sessions: a plain one (the control), three whose TMUX SESSION NAME holds a hash (before
+        a letter tmux has a short format for; two hashes in a row; the form in parentheses, which tmux may run as a
+        command), two whose FOLDER does, and one whose OWN NAME does (the tool hands that to tmux as the title of the
+        waiting screen). Recorded, a restart, a revive typed in this test's own folder. Then everything is read back
+        from tmux and from the stand-ins, letter for letter, and compared in one piece."""
+        form = "#(touch hashproof-%s)"
+        plan = [("plain", "Plain Lane", "plain"),
+                ("lane#Work", "Hash Before A Letter", "f2"),
+                ("two##hashes", "Two Hashes", "f3"),
+                ("par " + form % "s", "The Form In A Tmux Name", "f4"),
+                ("sheet", "Folder Hash Before A Letter", "notes#Sheet"),
+                ("fform", "The Form In A Folder", "run " + form % "c"),
+                ("own", "Own #W ##name " + form % "t", "f7")]
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        sid, folder = {}, {}
+        for s, n, f in plan:
+            folder[s] = os.path.join(self.tmp, f)
+            os.makedirs(folder[s])
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            # the folder after -c is read as a format by every tmux seen; that tmux holds what is meant is read back
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c",
+                              folder[s].replace("#", "##"), f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        fmt = "#{session_name}\t#{pane_current_path}\t#{session_path}\t#{pane_title}\t#{pane_start_path}"
+
+        def held():
+            rc, out = self.tmux(self.sock, "list-panes", "-a", "-F", fmt)
+            return {x.split("\t")[0]: x.split("\t")[1:] for x in out.split("\n") if x} if rc == 0 else {}
+        planted = held()
+        self.assertEqual(sorted(planted), sorted(s for s, _, _ in plan), "the plant: tmux holds the names meant")
+        self.assertEqual([r["cwd"] for r in self.launches()], [folder[s] for s, _, _ in plan], "the plant: the folders")
+        # an older tmux has no session_path (3.0a) or no pane_start_path: each is read only where the plain session has it
+        knows_path, knows_start = planted["plain"][1] == folder["plain"], planted["plain"][3] == folder["plain"]
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        t = {r["session_id"]: r for r in self.table()["lanes"]}
+        self.assertEqual({s: (t[sid[s]]["tmux_session"], t[sid[s]]["name"], t[sid[s]]["cwd"]) for s, _, _ in plan},
+                         {s: (s, n, folder[s]) for s, n, _ in plan}, "the record holds each value as it is")
+        self.reboot()
+        n0 = len(self.launches())
+        # typed in this test's own folder: what a form runs lands where the tmux server was started
+        r = subprocess.run([sys.executable, "-I", SCRIPT, "revive"], capture_output=True, encoding="utf-8",
+                           errors="surrogateescape", env=self.env, timeout=240, cwd=self.tmp)
+        out = r.stdout + r.stderr
+        end = time.time() + WAIT
+        while time.time() < end and len(self.launches()) < n0 + len(plan):
+            time.sleep(0.3)
+        time.sleep(1)
+        back, now = {}, held()
+        for x in self.launches()[n0:]:
+            back.setdefault(x["sid"], []).append(x["cwd"])
+        got = {s: {"tmux holds a session of this name": s in now,
+                   "starts, each with its folder": back.get(sid[s], []),
+                   "the pane's folder": now.get(s, [None])[0],
+                   "the session's folder in tmux": now.get(s, [None] * 2)[1] if knows_path else "(not read)",
+                   "the folder the pane was started with": now.get(s, [None] * 4)[3] if knows_start else "(not read)",
+                   "the title": now.get(s, [None] * 3)[2] if s in ("plain", "own") else "(not read)"}
+               for s, _, _ in plan}
+        want = {s: {"tmux holds a session of this name": True,
+                    "starts, each with its folder": [folder[s]],
+                    "the pane's folder": folder[s],
+                    "the session's folder in tmux": folder[s] if knows_path else "(not read)",
+                    "the folder the pane was started with": folder[s] if knows_start else "(not read)",
+                    "the title": f"{n} (coming back)" if s in ("plain", "own") else "(not read)"}
+                for s, n, _ in plan}
+        self.maxDiff = None
+        self.assertEqual(got, want, out[-3000:])
+        self.assertEqual(sorted(now), sorted(s for s, _, _ in plan), "no tmux session under another name")
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn(f"revive: {len(plan)} started, 0 already running, 0 failed, 0 need you", out)
+        self.assertEqual(self.logged("asked once how it takes a #"), 1, "tmux is asked once in a run")
+
+        # "no file" proves something only beside a control that DID run in this same world: the same server is
+        # handed the form in a place where tmux is known to run it, and the test waits until its file is there
+        def proofs():
+            found = [os.path.join(dp, f) for dp, _, fs in os.walk(self.tmp) for f in fs if f.startswith("hashproof")]
+            return sorted(found + [os.path.join(os.getcwd(), f) for f in os.listdir(os.getcwd()) if f.startswith("hashproof")])
+
+        def control_ran():
+            subprocess.run([TMUX, "-S", self.sock, "display", "-p", form % "control"], capture_output=True, env=self.env,
+                           cwd=self.tmp, timeout=30)
+            return any(x.endswith("hashproof-control") for x in proofs())
+        self.until(control_ran, "the control: the form handed to display -p makes its file in this world")
+        time.sleep(1)
+        self.assertEqual([os.path.basename(x) for x in proofs()], ["hashproof-control"],
+                         "only the control's file: no name, folder or title was run as a command")
+
+    def test_G2_62_a_hash_in_a_tmux_name_a_folder_or_a_session_name_comes_back_letter_for_letter_and_runs_nothing(self):
+        # T119, on this machine's own tmux. Seen red first on the released 0.1.10.2.
+        self.a_hash_in_each_place()
+
+    def test_G2_62_the_same_on_a_tmux_that_reads_no_name_and_no_title_as_a_format(self):
+        """T119: the tool asks its tmux, it knows no versions. tmux 2.6 reads the folder after -c as a format and
+        hands a session's name and a pane's title on as they stand (seen on a stock Ubuntu 18.04). This stand-in
+        in front of the real tmux behaves that way: it doubles each hash after -s and -T before the real one reads
+        it. A tool that doubled every hash without asking would bring back sessions under doubled names here.
+        On a machine whose own tmux already leaves names as they stand, the stand-in hands everything on unchanged
+        and this test is the one above."""
+        self.name_for_this_tmux("")
+        double = "x.replace('#', '##') if keep else x" if self.reads_names else "x"
+        p = self.script("tmux-keeps-names", f"#!{sys.executable}\n" + "import os, sys\nout, keep = [], False\n"
+                        f"for x in sys.argv[1:]:\n    out.append({double})\n"
+                        "    keep = x in ('-s', '-T')\n" + f"os.execv({TMUX!r}, [{TMUX!r}] + out)\n")
+        self.cfg({"tmux": p})
+        self.a_hash_in_each_place()
+
+
+    def test_G2_62_a_tmux_that_cannot_be_asked_starts_no_session_under_a_guessed_name_and_says_so(self):
+        """T119: three sessions, a plain one, one whose tmux session name holds a hash and one whose own name does.
+        A run with no hash anywhere asks tmux nothing. Then a tmux session stands under the made-up name the tool
+        asks with (a person's, or one left by a run that was cut off): it is not touched, tmux is not asked, the
+        session with the hash in its tmux name is not started under any name and its line says so with the step;
+        the other two come back, the title without its hash (a title never stops a start). Once that tmux session
+        is gone, the next revive brings the third back under its own name."""
+        self.cfg({"retry_min": 0.1, "retry_gap_s": 1})
+        plan = [("plain", "Plain Lane"), ("lane#Work", "Hash Before A Letter"), ("own", "Own #W name")]
+        sid = {}
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        for s, n in plan:
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                              f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        names = lambda: sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        self.assertEqual(names(), sorted(s for s, _ in plan))
+
+        def revive():
+            n0 = len(self.launches())
+            r = subprocess.run([sys.executable, "-I", SCRIPT, "revive"], capture_output=True, encoding="utf-8",
+                               errors="surrogateescape", env=self.env, timeout=240, cwd=self.tmp)
+            time.sleep(1)
+            return r.stdout + r.stderr, [x["sid"] for x in self.launches()[n0:]]
+        # the control: only the plain session on the record, and tmux is asked nothing
+        self.tmux(self.sock, "kill-session", "-t", "=lane#Work")
+        self.tmux(self.sock, "kill-session", "-t", "=own")
+        for row in self.launches()[1:]:
+            self.kill(row["pid"])
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, [r["tmux_session"] for r in self.table()["lanes"]]), (0, ["plain"]), out)
+        self.reboot()
+        out, started = revive()
+        self.assertEqual(started, [sid["plain"]], out)
+        self.assertEqual((self.logged("asked once how it takes a #"), names()), (0, ["plain"]), "no hash: nothing is asked")
+        # all three on the record; then the made-up name is taken
+        for s, n in plan[1:]:
+            before = len(self.launches())
+            self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                      f"MY_SETTING=byhand claude --resume {sid[s]}")
+            self.wait_launches(before + 1)
+        rc, out = self.tg("record", "--force")
+        t = {r["session_id"]: (r["tmux_session"], r["name"]) for r in self.table()["lanes"]}
+        self.assertEqual((rc, t), (0, {sid[s]: (s, n) for s, n in plan}), out)
+        self.reboot()
+        self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", "tardigrade-asks-##", "sleep 600")[0], 0)
+        taken = [x for x in names() if x.startswith("tardigrade-asks-")]
+        self.assertEqual(len(taken), 1, names())
+        pane = self.tmux(self.sock, "display", "-p", "-t", f"={taken[0]}:", "#{pane_pid}")[1]
+        self.addCleanup(lambda: pane.strip().isdigit() and self.kill(int(pane)))
+        out, started = revive()
+        self.assertEqual(sorted(started), sorted([sid["plain"], sid["own"]]), out)
+        self.assertEqual(names(), sorted(["plain", "own"] + taken), "no tmux session under a guessed name")
+        self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", f"={taken[0]}:", "#{pane_pid}")[1], pane,
+                         "the tmux session under the made-up name was not touched")
+        line = ("Hash Before A Letter: NOT STARTED. The name of its tmux session holds a # and tmux could not be asked "
+                "how it takes one (a tmux session under the made-up name it asks with is already there, and is left "
+                "alone), so it is not started under a guessed name.")
+        self.assertEqual((self.logged(line), self.logged("give its tmux session a name without a # (tmux rename-session)")),
+                         (1, 1), out)
+        self.assertIn("Hash Before A Letter: GAVE UP after", out)
+        self.assertIn("revive: 2 started, 0 already running, 1 failed, 0 need you", out)
+        self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", "=own:", "#{pane_title}")[1],
+                         "Own W name (coming back)\n", "the title went over without its hash")
+        self.assertEqual(self.logged("asked once how it takes a #"), 0)
+        # the made-up name is free again: the next revive asks, and the third session is back under its own name
+        self.tmux(self.sock, "kill-session", "-t", f"={taken[0]}")
+        out, started = revive()
+        self.assertEqual(started, [sid["lane#Work"]], out)
+        self.assertEqual(names(), sorted(s for s, _ in plan))
+        self.assertIn("revive: 1 started, 2 already running, 0 failed, 0 need you", out)
+        self.assertEqual(self.logged("asked once how it takes a #"), 1)
+
+
 
 class Census(Base):
     def test_G3_1_census_names_hidden_and_down_sessions(self):
@@ -3703,11 +3904,18 @@ class Invariants(unittest.TestCase):
     def test_INV1_it_never_ends_a_session(self):
         for word in ("kill-server", "kill-pane", "kill-window", "SIGKILL", "pkill", "killall"):
             self.assertNotIn(word, self.src, word)
-        # the one tmux session it ends is its own waiting screen, from one function, after checking the mark
-        self.assertEqual(self.src.count("kill-session"), 1)
+        # the tmux sessions it ends are its own: its waiting screen, from one function, after checking the mark; and
+        # (T119) the one it makes to ask tmux one thing, in the function that made it, by the id tmux gave for it
+        self.assertEqual(self.src.count("kill-session"), 2)
         end = self.src[self.src.index("def end_waiting_screen("):self.src.index("def write_progress(")]
         self.assertIn("kill-session", end)
         self.assertLess(end.index("if is_waiting(sock, name):"), end.index("kill-session"))
+        ask = self.src[self.src.index("def tmux_asked(sock):"):self.src.index("def name_for_tmux(")]
+        self.assertEqual(ask.count('tmux(sock, "kill-session", "-t", sid)'), 1)
+        self.assertLess(ask.index('"new-session", "-d", "-P", "-F", "#{session_id}'), ask.index("kill-session"))
+        self.assertLess(ask.index('re.fullmatch(r"\\$[0-9]+", sid)'), ask.index("kill-session"))   # an id, never a name
+        self.assertIn('"-s", ASKS_AS,', ask)
+        self.assertIn('"sleep 30"', ask)
         # SIGTERM appears only where the waiting screen says it ignores it
         self.assertEqual([ln.strip() for ln in self.src.splitlines() if "SIGTERM" in ln],
                          ["for sg in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGTSTP):"])

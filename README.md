@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.10.2, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.10.3, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
 > that version found faults, which is what they were for; after the fixes every session came back every time, all
 > 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
@@ -36,7 +36,7 @@ changed, as it has in 0.1.9), then set up again: setup is what refreshes the cop
 Without the plugin system, it is one file:
 
 ```bash
-git clone --depth 1 --branch v0.1.10.2 https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.10.3 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
@@ -233,24 +233,26 @@ By the same cut, a tmux session whose name holds U+2028 or NEL (U+0085) is recor
 before that character and comes back in a tmux session of that shorter name: once, under another name (seen on
 the same machine).
 
-Known edge until 0.1.10.3 (T119): tmux reads a # in a session name, a pane title or a folder name as the start of
-one of its own formats, and Tardigrade gives a waiting screen its title from the session's own name (read in its
-code; the title's reading seen with plain tmux 3.4, not with the tool). A session that runs in a tmux session whose
-name holds a # followed by certain letters, or two # in a row, is not brought back after a restart: the revive
-tries, says it gave up and leaves a tmux session under the changed name (laneork for lane#Work), and the other
-sessions come back. Seen with 0.1.10.2 and tmux 3.4 in a test with stand-in sessions (earlier versions hand the name
-to tmux the same way: read in the code of every version, not tried): three such sessions of ten were not brought
-back; one in a tmux session named bug#7 came back, and so did sessions in folders named C#Sharp and issue#12, each
-in its own folder. Not seen: a real restart; the tool on another version of tmux. What helps, tried once there: give
-that tmux session a name without # while it runs, and from the next record on it comes back. The old name stands
-after the equals sign, in single quotes:
+A # in a name or a folder (T119, cured in 0.1.10.3): tmux reads a # in a session's name, a pane's title and a
+folder as the start of one of its own formats. Up to 0.1.10.2 a session that ran in a tmux session whose name holds
+a # followed by certain letters, or two # in a row, was not brought back after a restart: the revive gave up and
+left a tmux session under a changed name (laneork for lane#Work), and the other sessions came back. From 0.1.10.3
+on Tardigrade hands tmux each of these so that tmux holds it letter for letter, and such a session comes back as
+itself: under its own tmux name, in its folder, with its own name in the waiting screen's title. How tmux takes a #
+in a name differs between its versions (2.6 leaves it as it stands, 2.7 and later read it), so Tardigrade asks the
+tmux it finds: once in a run, and only when a name or a title with a # is to be handed over, it makes one tmux
+session of its own, which tmux shows as tardigrade-asks-# or tardigrade-asks-## and which holds a sleep, reads back
+what tmux holds, and ends it. If a tmux session of that name is already there, it is left alone and tmux is not
+asked: a session whose tmux name holds a # is then not started under a guessed name. Its line in the log says NOT
+STARTED and why, the run asks again at each try, and so does the next `tardigrade revive`; the other sessions come
+back. Seen with stand-in sessions in this version's tests on tmux 2.6, 2.7, 3.0a and 3.4 (the first three on stock
+virtual machines). Not seen: a real Claude Code session with such a name; a Mac. Still on 0.1.10.2: give that tmux
+session a name without # while it runs, and from the next record on it comes back (tried once there, with tmux
+3.4). The old name stands after the equals sign, in single quotes:
 
 ```
 tmux rename-session -t '=lane#Work' lane-work
 ```
-
-Until 0.1.10.3, keep # out of the names of sessions, of tmux sessions and of folders that Claude Code sessions run
-in.
 
 Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
 tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
@@ -363,8 +365,9 @@ Setup tells you this for your machine. It never changes it for you.
   back that way, with nobody watching, and the opening message gives it one turn. You chose that mode when you
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use
   `"wake": "idle"`.
-- It never ends a session and never answers a dialog for you. If a revived session stops at a question, it waits
-  there for you. The one exception is yours to switch on: `trust on` (above). It is two keys, sent only when the
+- It never ends a session of yours and never answers a dialog for you. The only tmux sessions it ends are ones it
+  made itself in the same run: a waiting screen, and the one it makes to ask tmux one thing (T119 above). If a
+  revived session stops at a question, it waits there for you. The one exception is yours to switch on: `trust on` (above). It is two keys, sent only when the
   screen shows the cursor on "Yes, I trust".
 - It types one thing of its own, the wake-up message, and only into a session it started itself that is loaded,
   idle and shows no question. `"wake": "idle"` switches that off.

@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.1.10.2"
+VERSION = "0.1.10.3"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -1655,14 +1655,107 @@ def same_login(r, pid):
     return want == "unknown" or env_facts(pid)["token_print"] == want
 
 
-def new_session(sock, name, cwd, cmd):
+# ---------- a # in what tmux is handed (T119) ----------
+# tmux reads some of its arguments as a format: there a # before certain letters is replaced, two become one, and
+# one kind of # form is RUN as a command. Which arguments, by trial on 2.6, 3.0a, 3.2a, 3.4, 3.7c and 3.8: the
+# folder after -c on every one of them; a session's name after -s and a pane's title after -T from 3.0a on, not on
+# 2.6. Never: an exact target (=NAME), the command, the text the tool types, the socket's path. No versions known.
+# The folder goes over with each # doubled, always: tmux gives it back as one, and a tmux that did not would open
+# the pane elsewhere, where the start file's own cd still puts the session in its folder. For a name and a title
+# the tool asks the server itself, once in a run, and only when a value with a # is to be handed over.
+ASKS_AS = "tardigrade-asks-##"     # the made-up value: a tmux that reads the place as a format holds one # of the two
+ASKED = {}                         # tmux socket -> {"name": bool, "title": bool or None}
+ASK_WHY = {}                       # tmux socket -> why the last asking gave no answer
+
+
+def hashes_doubled(v):
+    return v.replace("#", "##")
+
+
+def tmux_first(sock):
+    """the start of a tmux call that may be the one that starts the server"""
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     ensure_server(sock)
     argv = [CFG["tmux"], "-S", sock]
     conf = os.path.expanduser(str(CFG.get("tmux_conf") or ""))
     if conf and os.path.isfile(conf):
         argv += ["-f", conf]         # read only when this call is the one that starts the server
-    argv += ["new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", cwd, cmd]
+    return argv
+
+
+def tmux_asked(sock):
+    """How does the tmux server on this socket take a # in a session's name and in a pane's title? Asked with one
+    session of the tool's own making under a made-up name: its command is a sleep that ends by itself, what tmux
+    then holds is read back, and the session is ended by its id. A session already there under that name is left
+    alone, and then there is no answer. None: it could not be asked (ASK_WHY says why); the next try asks again."""
+    if sock in ASKED:
+        return ASKED[sock]
+    one = ASKS_AS.replace("##", "#")
+    argv = tmux_first(sock)
+    if has_session(sock, ASKS_AS) or has_session(sock, one):
+        ASK_WHY[sock] = "a tmux session under the made-up name it asks with is already there, and is left alone"
+        return None
+    rc, out = run(argv + ["new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}", "-s", ASKS_AS,
+                          "-x", "200", "-y", "50", "-c", "/", "sleep 30"], env=server_env())
+    sid, _, got = out.rstrip("\n").partition("\t")
+    if rc != 0 or not re.fullmatch(r"\$[0-9]+", sid):
+        ASK_WHY[sock] = "tmux did not make the session it asks with"
+        return None
+    ans = None
+    if got in (ASKS_AS, one):
+        tmux(sock, "select-pane", "-t", f"{sid}:", "-T", ASKS_AS)
+        title = tmux(sock, "display", "-p", "-t", f"{sid}:", "#{pane_title}")[1].rstrip("\n")
+        ans = {"name": got == one, "title": {one: True, ASKS_AS: False}.get(title)}
+    else:
+        ASK_WHY[sock] = "tmux gave the made-up name back as neither of the two it can be"
+    if tmux(sock, "kill-session", "-t", sid)[0] != 0 and tmux(sock, "has-session", "-t", sid)[0] == 0:
+        log(f"  tmux ({os.path.basename(sock)}): the session Tardigrade made to ask tmux one thing could not be "
+            f"ended ({got}); it holds a sleep and ends by itself within a minute")
+    if ans:
+        ASKED[sock] = ans
+        says = {True: "is read as a format, so it goes over with each # doubled", False: "is left as it stands",
+                None: "gave no answer, so a title goes over without its #"}
+        log(f"  tmux ({os.path.basename(sock)}): asked once how it takes a #, with a session of Tardigrade's own "
+            f"that it made and ended: a session's name {says[ans['name']]}; a pane's title {says[ans['title']]}")
+    return ans
+
+
+def name_for_tmux(sock, name):
+    """what to hand tmux after -s so that it holds exactly this name. None: the name holds a # and this server
+    could not be asked. The name as it stands goes only to a server that showed, in this run, that it leaves it alone."""
+    if "#" not in name:
+        return name
+    a = tmux_asked(sock)
+    return None if a is None else hashes_doubled(name) if a["name"] else name
+
+
+def title_for_tmux(sock, text):
+    """the same for a pane's title, which never stops a start: without an answer it goes over without its #"""
+    if "#" not in text:
+        return text
+    a = tmux_asked(sock)
+    if a is None or a["title"] is None:
+        return text.replace("#", "")
+    return hashes_doubled(text) if a["title"] else text
+
+
+def not_asked(r):
+    """a session whose tmux name holds a # is not started under a guessed name: said once in a run, with the step"""
+    if r["session_id"] in SAID.setdefault("not_asked", set()):
+        return
+    SAID["not_asked"].add(r["session_id"])
+    log(f"  {display(r)}: NOT STARTED. The name of its tmux session holds a # and tmux could not be asked how it "
+        f"takes one ({ASK_WHY.get(r['tmux_socket'], 'no answer')}), so it is not started under a guessed name. "
+        "This run asks again at each try. If it is not back at the end: start it by hand in its folder, and give "
+        "its tmux session a name without a # (tmux rename-session)")
+
+
+def new_session(sock, name, cwd, cmd):
+    argv = tmux_first(sock)
+    handed = name_for_tmux(sock, name)
+    if handed is None:
+        return 98
+    argv += ["new-session", "-d", "-s", handed, "-x", "200", "-y", "50", "-c", hashes_doubled(cwd), cmd]
     return run(argv, env=server_env())[0]      # nothing of the caller's environment, and no value on a command line
 
 
@@ -1676,7 +1769,7 @@ def start_lane(r, created):
             # The pane gets a new terminal, so nothing typed at the waiting screen reaches Claude.
             # tmux gives a respawned pane the PATH of the client that asks (tmux 3.4): ask with the clean
             # environment, as new_session does, or at boot the pane gets the boot service's PATH (G2.49).
-            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
+            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", hashes_doubled(cwd), cmd, env=server_env())[0]
             tmux(sock, "set-option", "-u", "-t", f"={name}:", WAIT_MARK)
             tmux(sock, "clear-history", "-t", f"={name}:")
             return rc == 0
@@ -1685,9 +1778,12 @@ def start_lane(r, created):
         if cur not in SHELLS:
             log(f"  {display(r)}: its tmux session is busy ({cur}); not touching it")
             return False
-        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
+        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", hashes_doubled(cwd), cmd, env=server_env())[0]
     else:
         rc = new_session(sock, name, cwd, cmd)
+        if rc == 98:
+            not_asked(r)
+            return False
         created.add((sock, name))
     return rc == 0
 
@@ -1727,7 +1823,7 @@ def show_waiting(todo, created):
         if new_session(sock, name, cwd, cmd) == 0:
             created.add((sock, name))
             tmux(sock, "set-option", "-t", f"={name}:", WAIT_MARK, "1")
-            tmux(sock, "select-pane", "-t", f"={name}:", "-T", f"{display(r)} (coming back)")
+            tmux(sock, "select-pane", "-t", f"={name}:", "-T", title_for_tmux(sock, f"{display(r)} (coming back)"))
 
 
 def holds_text(r):
