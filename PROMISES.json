@@ -1618,7 +1618,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.10.2",
    "ship_in": "0.1.10.2",
-   "test": "",
+   "test": "test_G2_58_one_folder_name_that_is_not_utf8_stops_no_other_session_and_ends_no_command",
    "proven": "",
    "issue": 123,
    "moved_why": "",

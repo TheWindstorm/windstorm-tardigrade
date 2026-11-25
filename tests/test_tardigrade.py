@@ -362,7 +362,8 @@ class Base(unittest.TestCase):
 
     def tg(self, *a, **over):
         env = dict(self.env, **{k: str(v) for k, v in over.items()})
-        r = subprocess.run([sys.executable, "-I", SCRIPT, *a], capture_output=True, text=True, env=env, timeout=240)
+        r = subprocess.run([sys.executable, "-I", SCRIPT, *a], capture_output=True, encoding="utf-8",
+                           errors="surrogateescape", env=env, timeout=240)
         return r.returncode, r.stdout + r.stderr
 
     def launches(self):
@@ -2286,6 +2287,63 @@ class Revive(Base):
         mine = [x for x in self.launches()[n:] if x["sid"] == a and x["seen"].get("MY_SETTING") != "byhand"]
         self.assertEqual(mine, [], f"alpha was started a second time after the load wait\n{out}")
         self.assertIn("Alpha Lane: something else started it meanwhile (tmux default:hand-a)", out)
+
+
+    def test_G2_58_one_folder_name_that_is_not_utf8_stops_no_other_session_and_ends_no_command(self):
+        """T115: one session lives in a folder whose name holds a byte that is not UTF-8, two in ordinary folders.
+        Every command is run and a restart is lived through, in this file's own language setting and then, where
+        this machine has it, with en_US.UTF-8 (there a print of such a name raised, where under C it was the write
+        to the log that did). No run ends in a traceback, each ends with exit 0, and after each restart all three
+        sessions are back, each in its own folder."""
+        folders = [os.path.join(self.tmp, "plain one"), os.fsdecode(os.fsencode(self.tmp) + b"/wb\xffx"),
+                   os.path.join(self.tmp, "plain two")]
+        places = ["one", "bent", "two"]
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        sid = []
+        for f, s in zip(folders, places):
+            os.makedirs(f)
+            before = len(self.launches())
+            sid.append(str(uuid.uuid4()))
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", s, "-c", f,
+                              f"FAKE_SID={sid[-1]} FAKE_NAME='Lane {s}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0)
+            self.wait_launches(before + 1)
+        self.assertEqual([r["cwd"] for r in self.launches()[-3:]], folders, "each stand-in runs where it was asked to")
+        have = subprocess.run(["locale", "-a"], capture_output=True).stdout.decode(errors="replace").lower().split()
+        worlds = [("this file's own setting", {})]
+        if "en_us.utf8" in have or "en_us.utf-8" in have:
+            worlds.append(("en_US.UTF-8", {"LC_ALL": "en_US.UTF-8"}))
+        wrong = []
+
+        def road(world, *a, **over):
+            rc, out = self.tg(*a, **dict(over, **world[1]))
+            if rc != 0 or "Traceback (most recent call last)" in out:
+                last = out.strip().splitlines()[-1][:150] if out.strip() else ""
+                wrong.append(f"[{world[0]}] {' '.join(a)}: exit {rc}: {last}")
+        for world in worlds:
+            for a in (("record", "--force"), ("census",), ("open", "--dry-run"), ("revive", "--dry-run", "--all"),
+                      ("trust",), ("setup", "--dry-run")):
+                road(world, *a)
+            self.assertEqual({r["session_id"]: r["cwd"] for r in self.table()["lanes"]}, dict(zip(sid, folders)),
+                             "the record keeps each folder exactly, for the act")
+            self.reboot()
+            n = len(self.launches())
+            # the second restart is another boot: the tool brings sessions back once for each boot
+            boot = {} if world is worlds[0] else {"TARDIGRADE_FAKE_BOOT_ID": "boot-b"}
+            road(world, "revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, **boot)
+            try:
+                self.wait_launches(n + 3)
+            except AssertionError:
+                pass
+            back = sorted((r["sid"], r["cwd"]) for r in self.launches()[n:])
+            if back != sorted(zip(sid, folders)):
+                wrong.append(f"[{world[0]}] after the restart {len(back)} of 3 came back: "
+                             + ", ".join(places[sid.index(s)] for s, _ in back if s in sid))
+            for a in (("census",), ("report",), ("record",), ("revive", "--dry-run", "--all")):
+                road(world, *a, **boot)
+            self.assertEqual(wrong, [], f"{len(wrong)} finding(s)")
+        with open(self.state("tardigrade.log"), "rb") as f:
+            self.assertNotIn(b"Traceback", f.read())
 
 
 class Census(Base):

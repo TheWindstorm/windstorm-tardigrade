@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.10.2 (2026-11-25)
+
+- **One folder with an odd name no longer stops every session from coming back.** Up to 0.1.10.1, when one recorded
+  session was in a folder whose name is not UTF-8 (a name written long ago in another encoding), the revive after a
+  restart ended in an error before it started anything: no session came back, the ones in ordinary folders
+  included, and census ended in the same error. Seen with 0.1.10.1 and stand-in sessions on a stock Ubuntu 24.04
+  virtual machine through a real restart: 0 of 3 back by the boot service and 0 of 3 by hand, each time with
+  "UnicodeEncodeError" and the words "surrogates not allowed". Now such a name ends no command: on the screen and in
+  the log its odd byte is written as a backslash form, every other session comes back, and that session too, in its
+  own folder. Nothing else changed. Still on 0.1.10.1 and met it? A session in an ordinary folder comes back by its
+  name, one at a time:
+
+      tardigrade revive --only "Name"
+
+  Not in this version, due in 0.1.11 (T114): odd characters in other names, and in what other programs print
+  (T115).
+
 ## 0.1.10.1 (2026-11-24)
 
 - **Census no longer says "comes back after a reboot: yes" when nothing would.** Up to 0.1.10 the answer was read from
