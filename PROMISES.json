@@ -1661,7 +1661,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G2_61_what_another_program_wrote_is_cut_at_the_line_feed_alone",
    "proven": "",
    "issue": 127,
    "moved_why": "",
