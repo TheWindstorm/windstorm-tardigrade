@@ -915,12 +915,12 @@
    "codon": "G3.20",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 71,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "moved from 0.1.11 to 0.1.12 on the maintainer's ruling of 2026-11-25, in one visit with T102: it rewords every stop line, and the test over every such line (T102) is written on the lines as they then stand.",
+   "moved_by_person": "the maintainer"
   },
   {
    "id": "T66",
@@ -1433,12 +1433,12 @@
    "codon": "G3.36",
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
-   "ship_in": "0.1.11",
+   "ship_in": "0.1.12",
    "test": "",
    "proven": "",
    "issue": 110,
-   "moved_why": "",
-   "moved_by_person": ""
+   "moved_why": "moved from 0.1.11 to 0.1.12 on the maintainer's ruling of 2026-11-25: six rows of 0.1.11 add or reword stop, needs-you and next-step lines, so the test over every such line is written once, on the lines as 0.1.11 leaves them; each of those rows still carries its own test of its own line, the step taken as printed, so 0.1.11 ships no new line untried.",
+   "moved_by_person": "the maintainer"
   },
   {
    "id": "T103",
