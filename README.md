@@ -253,18 +253,23 @@ already there (one of Tardigrade's own, left by a run that was cut off, ends by 
 yours and is left alone); tmux made no session (the line carries tmux's own words if it said any; else it says that
 tmux said nothing, gave no answer in 30 seconds, or could not be run); tmux held the made-up name as something else.
 The run asks again at each try, once a minute for 25 minutes (`retry_min`). If it gives up, that is a start that
-failed like any other (T103, T104 above). Seen with stand-in sessions in this version's tests on tmux 2.6, 2.7, 3.0a
-and 3.4 (the first three on stock virtual machines). Not seen: a real Claude Code session with such a name; a Mac.
-The way to be rid of all of this, on any version: a tmux session name without a #. Give the tmux session such a name
-while it runs, and from the next record on it comes back under that name (tried once on 0.1.10.2, with tmux 3.4).
-The old name stands after the equals sign, in single quotes:
+failed like any other (T103, T104 above). Seen with stand-in sessions: in this version's six tests on tmux 2.6, 2.7,
+3.0a and 3.4 (the first three on stock virtual machines), and through a real restart of a stock Ubuntu 24.04 virtual
+machine (tmux 3.4) with seven sessions, a # in a tmux name, a folder or their own name: the boot service's own run
+brought back seven of seven as they were, each once and in its own folder, where 0.1.10.2 brought back four of
+seven; and seven of seven again with 0.1.10.2 set up first and this version set up over it while the sessions ran.
+Not seen: a real Claude Code session with such a name; a Mac; a tmux that answers no call at all. The way to be rid
+of all of this, on any version: a tmux session name without a #. Give the tmux session such a name while it runs,
+and from the next record on it comes back under that name (tried once on 0.1.10.2, with tmux 3.4). The old name
+stands after the equals sign, in single quotes:
 
 ```
 tmux rename-session -t '=lane#Work' lane-work
 ```
 
 Typed outside tmux while no window was attached to that tmux server, tmux 2.7 answered "no current client" to this
-line and changed nothing (seen on a stock AlmaLinux 8.10 virtual machine); with a window attached there: not tried.
+line, with exit code 1, and gave the session the new name all the same; with a window attached there it gave the new
+name and said nothing (each seen once on a stock AlmaLinux 8.10 virtual machine).
 
 Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
 tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
