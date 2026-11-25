@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.10.3, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.10.4, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
 > that version found faults, which is what they were for; after the fixes every session came back every time, all
 > 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
@@ -36,7 +36,7 @@ changed, as it has in 0.1.9), then set up again: setup is what refreshes the cop
 Without the plugin system, it is one file:
 
 ```bash
-git clone --depth 1 --branch v0.1.10.3 https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.10.4 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
@@ -125,7 +125,7 @@ DOWN: on the record, not running now
   Data Import                        last seen 2 h ago   /home/you/import
 ```
 
-"Comes back after a reboot" is read at that moment from the things themselves: the installed copy, and the boot service enabled and the record timer active (on a Mac, both launchd jobs loaded). When one is not there it says NO and names it; when systemctl or launchctl gives no answer it says "could not be read", never yes, and names the step: log out and in (on a Mac, log in at its screen as this user), then run setup again. Up to 0.1.10 it was read from the setting alone, and could say yes with the boot service off.
+"Comes back after a reboot" is read at that moment from the things themselves: the installed copy, and the boot service enabled and the record timer active (on a Mac, both launchd jobs loaded). When one is not there it says NO and names it; when systemctl or launchctl gives no answer it says "could not be read", never yes, and names the step: log out and in (on a Mac, log in at its screen as this user), then run setup again. Up to 0.1.10 it was read from the setting alone, and could say yes with the boot service off. From 0.1.10.4 on it is also read from the service manager's own list of each service's start line: NO where setup's line is not held as written, and "not known", neither yes nor no, where it is held as written but not once and first (a start line of your own before it, in a drop-in file of yours); the line then names the place or the count and gives the step.
 
 "Quiet" is the time since the session last did anything. A hidden session that has been quiet for nine days is
 usually one you forgot.
@@ -234,6 +234,13 @@ tardigrade revive --only "NAME"
 By the same cut, a tmux session whose name holds U+2028 or NEL (U+0085) is recorded under the part of its name
 before that character and comes back in a tmux session of that shorter name: once, under another name (seen on
 the same machine).
+
+A space in the home folder's path (T132, cured in 0.1.10.4): up to 0.1.10.3, in a home folder whose path holds a
+space, the boot service and the timer did not start Tardigrade, while setup said it was set up and the census said
+sessions come back by themselves. If you set 0.1.10.3 or older up in such a home, update and run setup again. From
+0.1.10.4 on setup writes each path into its service files so that it is held as one whole value, refuses before its
+first write a path no service file can carry, and says "is set up" only after it has read the start lines back
+from the service manager itself.
 
 A # in a name or a folder (T119, cured in 0.1.10.3): tmux reads a # in a session's name, a pane's title and a folder
 as the start of one of its own formats. Up to 0.1.10.2 a session that ran in a tmux session whose name holds a #

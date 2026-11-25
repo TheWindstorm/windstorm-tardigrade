@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.10.4 (2026-11-30)
+
+- **A home folder whose path holds a space, and every other path a service file reads in its own way (T132).** Up
+  to 0.1.10.3 setup wrote two paths into its two service files as they stood: the Python that ran setup, and its
+  installed copy, which lies under the home folder. A service file reads some characters in its own way, so a path
+  that holds one of them was not read as one whole value. In a home folder whose path holds a space, the boot
+  service and the timer did not start Tardigrade, while setup said it was set up and the census said sessions come
+  back by themselves. Seen with 0.1.10.3 on a stock Ubuntu 24.04 virtual machine (systemd 255). Now setup writes
+  each of the two paths so that the service manager holds it as one whole value. The same start lines, placed by
+  hand in unit files on stock virtual machines with systemd 237, 239, 245 and 249 (Ubuntu 18.04, AlmaLinux 8.10,
+  Ubuntu 20.04 and 22.04), were held by each manager as on 255, and the record service started there with each
+  path whole; setup itself was not run on those four.
+- **A path the service file cannot carry is refused before the first write.** On Linux that is a Python whose
+  path holds a double quote, an apostrophe, a backslash or a dollar sign: the service manager's start line has no
+  way to hold one of these in a program's own path. On Linux and on a Mac it is a Python or a home folder whose
+  path holds a control character (a line break or the like). Setup says so in one line that names what it found,
+  gives the command that runs it with another Python, and installs nothing: no file is written. Where the path
+  holds a backtick, a dollar sign before a parenthesis, or a character a line breaks on or a terminal acts on, the
+  line shows the path changed (a question mark for each) and says so. The tool's older lines that show a path
+  show it as it stands (T135, due 0.1.11).
+- **Setup and the census read back what the service manager holds.** "Enabled" and "active" say that a service is
+  there, not what it would start. From this version on, "is set up" and "Comes back after a reboot: yes" are said
+  only after the service manager's own list of each service's start line has been asked (over its bus, with
+  `busctl`) and is, word for word, what setup wrote. What setup wrote is its own record in the settings
+  (`service_python`, `service_script`), never what the terminal that asks happens to have as its home or its Python.
+  If the manager holds something else: "NOT set up" (exit 1), and the census says NO. Where the reload that setup
+  asks of the manager after writing the files did not answer 0, setup says that too, and the step is to run setup
+  again. If the list cannot be asked (no `busctl`, or no answer in 10 seconds): "could not read" (setup: exit 3),
+  with one step by which you see it yourself. A setup made by an older version kept no record: after the update the
+  census says "could not be read" and that the step is to run setup again, except where the older service file's
+  line holds only plain words, which every reader takes alike.
+- **What is yours on a service is named as yours, and left as it is.** A drop-in file of your own on one of the two
+  services is never changed, and never a fault. Environment entries of your own are named by the variable's name
+  only, never a value (a value may be a password). A start line of your own beside the one setup wrote is counted,
+  never shown, and Tardigrade stays set up as long as the manager's list holds setup's own line once, as written
+  and first. If a drop-in of your own changes that (setup's line gone, changed, held twice or not first), setup says
+  "NOT set up" and that the file is yours; it does not send you to uninstall. It says what to do (change or remove
+  a drop-in that is not meant, then run setup again), and gives the service manager's own listing of that service
+  and its drop-in files (`systemctl --user cat` and the service's name) as the last thing on a line of its own;
+  the census does the same. The census says NO only where it read that setup's line is not held, or held changed.
+  Where the line is held as written, only not once and first, it says "not known", neither yes nor no, and names
+  the place or the count: Tardigrade read the manager's list, not what the service then does. Recorded on stock
+  virtual machines with systemd 237, 239, 245, 249 and 255, with drop-in files of made-up values: each manager's
+  answers had the same form.
+- **On a Mac** the two launchd files hold each argument as a string of its own, and no path stands in a line a shell
+  reads. Where launchd answers and this version does not find a job's arguments in its answer, setup and the census
+  say so, and the step is to tell the maintainer that line and the macOS version, not to log in at the Mac's screen.
+- The line that says how to switch lingering on gives the account's name as one shell word, and takes it from the
+  account itself, not from the terminal's variables.
+- Where systemctl gives no answer, the step "log out and in" stood beside the words "this login has no systemd user
+  manager to ask". On a virtual machine one was running and the shell could not reach it, so the words now say
+  that: "this shell cannot reach the systemd user manager" (T133). The step itself has not been walked (T134,
+  due 0.1.11).
+
 ## 0.1.10.3 (2026-11-27)
 
 - **A # in a name or a folder no longer changes what comes back.** tmux reads a # in a session's name, a pane's

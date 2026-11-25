@@ -35,9 +35,13 @@ If neither file exists, this skill was installed without its plugin. Get the scr
 1. Run `setup --dry-run` and tell the person what it will install: a boot service and a 5-minute timer for their own
    user. No administrator rights.
 2. Run `setup`. If tmux is missing it says so and stops: give the person the install line and wait. Setup says
-   "is set up" only after reading the boot service, the timer and the copy themselves. "NOT set up" (exit 1) names
-   what is missing; "Setup could not read whether it is set up" (exit 3) means systemctl or launchctl gave no
-   answer: it is neither set up nor not. Show its words and its one next step; never call it set up.
+   "is set up" only after reading the boot service, the timer and the copy themselves, and the start line the
+   service manager holds for each service, word for word. "NOT set up" (exit 1) names what is missing or what
+   differs; "Setup could not read whether it is set up" (exit 3) means systemctl, launchctl or the manager's own
+   list gave no answer: it is neither set up nor not. Show its words and its one next step; never call it set up.
+   A line that begins "Yours, not Tardigrade's" names a setting of the person's own on a service: show the line
+   and the tool's own step, change and remove nothing yourself, and never suggest removing a setting the tool only
+   named as theirs. Where the tool's own step says to look at a drop-in file, pass that step on as printed.
 3. Show the last lines it prints, word for word. They say who has to log in after a restart before sessions can
    come back (lingering on Linux, FileVault on a Mac).
 4. If lingering is off, give the person the one command it prints. **Do not run it yourself.** It needs `sudo`, and
@@ -54,6 +58,9 @@ and have been quiet for days, and sessions that are down.
 If the census says it **cannot tell** (the process list or tmux could not be read), show that line and nothing more:
 do not call any session down, do not run `revive` and do not start any session by hand on the strength of it. Run
 `census` again in a minute; if it still cannot tell, say so to the user and let them look with `tmux ls`.
+
+If the census says **not known** after "Comes back after a reboot", say exactly that, neither yes nor no; show the
+line and the step on the line after it as printed.
 
 Do not end, restart or change any session because of what the census shows. List them and ask. A hidden session may
 be doing exactly what its owner wants.

@@ -108,6 +108,10 @@
   {
    "name": "TARDIGRADE_FAKE_LINGER",
    "note": "read only with both keys"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_ACCOUNT",
+   "note": "read only with both keys"
   }
  ]
 }
