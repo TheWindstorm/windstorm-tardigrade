@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.10.1, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.10.2, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
 > that version found faults, which is what they were for; after the fixes every session came back every time, all
 > 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
@@ -38,7 +38,7 @@ changed, as it has in 0.1.9), then set up again: setup is what refreshes the cop
 Without the plugin system, it is one file:
 
 ```bash
-git clone --depth 1 --branch v0.1.10.1 https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.10.2 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
@@ -227,6 +227,56 @@ moment of a restart (ended with `/exit` and resumed on the other login seconds l
 **A session on the down list** (it ended by itself, or you let it go with `record --force`) is not started by a
 plain `tardigrade revive`; the census says so under its table. `tardigrade revive --only <its name>` finds it there,
 puts it back on the list a revive reads and starts it. For one you ended with `/exit` it asks for its id.
+
+About such a folder (T115): that was seen with stand-in sessions (none of three came back on 0.1.10.1, three
+of three on 0.1.10.2, through a real restart). Claude Code 2.1.332 itself, not signed in, refused to start in a
+folder whose name is not UTF-8 (seen once each: at its screen, and in print mode). One that was running when
+its folder was renamed to such a name kept running there (seen once, at its first screen, not signed in). Not
+seen: a signed-in session in such a folder, and whether Claude Code records that folder for it. A process
+that is no session, with such a byte in its command line, ended nothing: 3 of 3 sessions came back.
+
+Known edge until 0.1.11 (T116): a session in a tmux session whose name holds a backslash is not brought back.
+Seen with 0.1.10.1 (0.1.10.2 changes nothing there) and stand-in sessions on a stock Ubuntu 24.04 virtual machine
+with tmux 3.4, the tmux server ended by hand: the revive names that session, tries once a minute for 25 minutes
+and says it gave up; the other sessions come back, and nothing is started twice. tmux itself stores such a name
+with the backslash doubled, and doubles it again when Tardigrade asks for a session under the stored name. A
+leading dollar sign in the tmux name did the same. A tab or a control character in the name: expected the same by
+how tmux stores names, not seen. What helps, tried there: give that tmux session a name without a backslash while
+it runs, and from the next record on it comes back. The old name stands after the equals sign as `tmux ls` prints
+it, in single quotes:
+
+```
+tmux rename-session -t '=back\\slash' second-lane
+```
+
+Known edge until 0.1.11 (T117): on a machine whose language setting is not UTF-8 (`locale charmap` prints
+something other than UTF-8), a session in a folder whose name holds a character outside ASCII (an accent, a
+non-Latin letter) comes back in the home folder, not its own, and no line says so. Seen in a test with stand-in
+sessions and a made Latin-1 locale, not on a real machine; under a UTF-8 setting every session came back in its
+own folder. Up to 0.1.10.1 the revive there ended in an error and no session came back.
+
+Known edge until 0.1.11 (T118): Tardigrade cuts the lines of a conversation file and of the prompt history where
+Python's `splitlines()` cuts, which is at the line feed and also at the character U+2028. Claude Code writes that
+character as it is into a conversation file, for instance when a tool's output holds one (counted in two real
+conversation files: 7 of about 61,000 lines, and 51 of 64,757). If a session was ended with /exit and then resumed,
+and every line written after that holds such a character when the computer restarts, the revive says "skip NAME: its
+owner ended it with /exit", does not bring that session back, and census lists it as ended by its owner. The same
+for an /exit in the prompt history followed by a prompt that holds the character as it is: that line was planted by
+us, in the shape Claude Code writes. Seen with 0.1.10.1 (0.1.10.2 changes nothing there) and stand-in sessions with
+planted lines on a stock Ubuntu 24.04 virtual machine: 3 of 5 came back, the two skipped were the two planted this
+way, and nothing was started twice; one ordinary line after the /exit and the read is right. Not seen: a real
+session that ended this way; and whether Claude Code writes the character as it is into the prompt history (one real
+history file was counted, about 26,000 lines: no line held it, as it is or in its backslash form, so no prompt there
+held one). What helps, tried there: ask for the session by name, and the line Tardigrade prints names the step with
+the conversation's id; that step brought the session back:
+
+```
+tardigrade revive --only "NAME"
+```
+
+By the same cut, a tmux session whose name holds U+2028 or NEL (U+0085) is recorded under the part of its name
+before that character and comes back in a tmux session of that shorter name: once, under another name (seen on
+the same machine).
 
 **Typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`**, Tardigrade reads tmux as it does anywhere else
 (since 0.1.11, T109): every tmux call of its own carries `-u`. The attach line it prints for you carries no `-u`, and
@@ -543,7 +593,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 213 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 214 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

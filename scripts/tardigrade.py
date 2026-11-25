@@ -68,7 +68,7 @@ import stat
 import subprocess
 import time
 
-VERSION = "0.1.10.1"
+VERSION = "0.1.10.2"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
