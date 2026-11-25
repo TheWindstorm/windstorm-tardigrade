@@ -220,11 +220,17 @@ def log(msg):
         f.write(line + "\n")
 
 
+def as_text(data):
+    """T114: another program's output as text, byte for byte. A byte that is not UTF-8 becomes a lone surrogate (it
+    goes back out as the byte it was), and a carriage return stays one: Python's text mode hands a lone carriage
+    return over as a line feed, so a name that holds one would arrive as two lines."""
+    return (data or b"").decode("utf-8", "surrogateescape")
+
+
 def run(argv, timeout=30, env=None):
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout,
-                           env=env)
-        return r.returncode, r.stdout
+        r = subprocess.run(argv, capture_output=True, timeout=timeout, env=env)
+        return r.returncode, as_text(r.stdout)
     except (subprocess.TimeoutExpired, OSError):
         return 99, ""
 
@@ -232,9 +238,8 @@ def run(argv, timeout=30, env=None):
 def run_err(argv, timeout=30, env=None):
     """run(), with what the program wrote to stderr as a third answer"""
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout,
-                           env=env)
-        return r.returncode, r.stdout, r.stderr
+        r = subprocess.run(argv, capture_output=True, timeout=timeout, env=env)
+        return r.returncode, as_text(r.stdout), as_text(r.stderr)
     except (subprocess.TimeoutExpired, OSError):
         return 99, "", ""
 
@@ -711,8 +716,8 @@ def panes():
             try:
                 r = subprocess.run(tmux_own(s) + ["list-panes", "-a", "-F",
                                                   "#{pane_pid}\t#{session_attached}\t#{session_name}"],
-                                   capture_output=True, text=True, errors="surrogateescape", timeout=6)
-                rc, out, err = r.returncode, r.stdout, r.stderr
+                                   capture_output=True, timeout=6)
+                rc, out, err = r.returncode, as_text(r.stdout), as_text(r.stderr)
             except (subprocess.TimeoutExpired, OSError):
                 pass
         if rc != 0:

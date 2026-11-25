@@ -7377,6 +7377,20 @@ class Names(Base):
         self.assertGreater(len(first), before_uninstall, "uninstall read the marks through tmux")
         self.assertEqual(set(first), {"-u"}, f"a tmux call of the tool's own went out without -u: {first}")
 
+    def test_G2_57_another_programs_carriage_return_arrives_as_the_carriage_return_it_wrote(self):
+        """T114, rule 31 (vi): Python's text mode hands a lone carriage return over as a line feed, so a name that
+        holds one would arrive as two lines whatever the split after it. The tool's two readers of another
+        program's output take bytes and decode them: a carriage return stays one, a carriage return before a line
+        feed stays two characters, and a byte that is not UTF-8 becomes the lone surrogate that goes back out as
+        that byte. (The third reader, the pane list, is held by the code-reading test: no call reads a program
+        through text mode.)"""
+        tg = self.load_tool()
+        prog = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'a\\rb\\xffc\\r\\nd\\n'); "
+                                      "sys.stderr.buffer.write(b'e\\rf')"]
+        self.assertEqual(tg.run(prog), (0, "a\rb\udcffc\r\nd\n"))
+        self.assertEqual(tg.run_err(prog), (0, "a\rb\udcffc\r\nd\n", "e\rf"))
+        self.assertEqual(os.fsencode(tg.run(prog)[1]), b"a\rb\xffc\r\nd\n", "what came in goes back out as it was")
+
     def test_G2_57_every_place_in_the_tools_code_that_turns_bytes_into_text_or_back_says_how(self):
         """T114, the code read beside the planted run (which holds the roads it walks): a file opened as text, a
         program's output read as text and a decode each either name what happens to a byte that is not text
@@ -7412,10 +7426,11 @@ class Names(Base):
                 if not ("errors" in kw or takes or (reads and ast.unparse(n.args[0]) in kernel)):
                     loose.append(f"line {n.lineno}: {f} in mode {mode!r} says nothing about a byte that is not text")
             elif f in ("subprocess.run", "subprocess.Popen", "subprocess.check_output"):
-                if kw & {"text", "encoding", "universal_newlines"}:
-                    seen["program"] += 1
-                    if "errors" not in kw:
-                        loose.append(f"line {n.lineno}: {f} reads a program's output as text and names no errors=")
+                # a program's output is taken as bytes and decoded by as_text(): text mode would hand a lone
+                # carriage return over as a line feed (rule 31 (vi))
+                seen["program"] += "capture_output" in kw
+                if kw & {"text", "encoding", "universal_newlines", "errors"}:
+                    loose.append(f"line {n.lineno}: {f} reads a program's output through text mode")
             elif isinstance(n.func, ast.Attribute) and n.func.attr in ("decode", "encode") and not (
                     isinstance(n.func.value, ast.Constant)):
                 seen["decode"] += 1
