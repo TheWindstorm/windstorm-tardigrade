@@ -178,6 +178,11 @@ a stand-in for Claude Code: the fault as written here, and that a session starte
 `claude --resume <its id>` is on the list again at the next record. Resuming by name or from the list was not
 walked by us.
 
+Known edge until 0.1.11 (T114): a session whose recorded name holds half of an emoji (a lone surrogate, which a
+title cut in the middle of an emoji would leave) still ends a revive in an error, and no session comes back. Seen
+in a test with stand-in sessions on 0.1.10.1 and on 0.1.10.2, not on a real machine. A folder whose name is not
+UTF-8 did the same up to 0.1.10.1 and does not from 0.1.10.2 on (T115).
+
 Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
 tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
 "no terminal at all" for every session that runs in tmux, `open` says there is nothing to open, and a `record` or a

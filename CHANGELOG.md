@@ -16,8 +16,9 @@
 
       tardigrade revive --only "Name"
 
-  Not in this version, due in 0.1.11 (T114): odd characters in other names, and in what other programs print
-  (T115).
+  Not cured by this version, due in 0.1.11 (T114): a session whose recorded NAME holds half of an emoji (a lone
+  surrogate) still ends a revive, and no session comes back (seen in a test with stand-in sessions, not on a real
+  machine); odd characters in other names and in what other programs print are not read yet either (T115).
 
 ## 0.1.10.1 (2026-11-24)
 
