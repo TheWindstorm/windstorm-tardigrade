@@ -1666,10 +1666,28 @@ def same_login(r, pid):
 ASKS_AS = "tardigrade-asks-##"     # the made-up value: a tmux that reads the place as a format holds one # of the two
 ASKED = {}                         # tmux socket -> {"name": bool, "title": bool or None}
 ASK_WHY = {}                       # tmux socket -> why the last asking gave no answer
+ASK_WHYS = {                       # every cause there is for no answer, in this one place (a test reads each)
+    "taken": "the made-up name it asks with is taken by a tmux session that is there: one of Tardigrade's own "
+             "ends by itself within a minute, any other is a person's and is left alone",
+    "none_made": "tmux made no session to ask with, in its own words: {said}",
+    "other_name": "tmux held the made-up name as neither of the two forms it can have",
+}
+
+# tmux socket and session ids whose LAST try was not made because tmux could not be asked; and what their
+# give-up line says after "its tmux session is gone": the next step is by hand, and the README has it
+NOT_ASKED_NOW = set()
+NOT_ASKED_NEXT = ('. It was not started for the # in the name of its tmux session (its NOT STARTED line above). '
+                  'To bring it back by hand: the README, under "Known edge until 0.1.11 (T103, T104)"')
 
 
 def hashes_doubled(v):
     return v.replace("#", "##")
+
+
+def tmux_said(words):
+    """tmux's own words for a line of the log: the first line, printable ASCII, no backtick, no dollar sign"""
+    first = words.strip().split("\n")[0]
+    return re.sub(r"[^\x20-\x7e]|[`$]", "?", first)[:160] or "(nothing)"
 
 
 def tmux_first(sock):
@@ -1693,13 +1711,18 @@ def tmux_asked(sock):
     one = ASKS_AS.replace("##", "#")
     argv = tmux_first(sock)
     if has_session(sock, ASKS_AS) or has_session(sock, one):
-        ASK_WHY[sock] = "a tmux session under the made-up name it asks with is already there, and is left alone"
+        ASK_WHY[sock] = ASK_WHYS["taken"]
         return None
-    rc, out = run(argv + ["new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}", "-s", ASKS_AS,
-                          "-x", "200", "-y", "50", "-c", "/", "sleep 30"], env=server_env())
+    try:        # not run(): what tmux says when it makes none is on its error stream
+        made = subprocess.run(argv + ["new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}",
+                                      "-s", ASKS_AS, "-x", "200", "-y", "50", "-c", "/", "sleep 30"],
+                              capture_output=True, encoding="utf-8", errors="replace", timeout=30, env=server_env())
+        rc, out, err = made.returncode, made.stdout, made.stderr
+    except (subprocess.TimeoutExpired, OSError) as e:
+        rc, out, err = 99, "", type(e).__name__
     sid, _, got = out.rstrip("\n").partition("\t")
     if rc != 0 or not re.fullmatch(r"\$[0-9]+", sid):
-        ASK_WHY[sock] = "tmux did not make the session it asks with"
+        ASK_WHY[sock] = ASK_WHYS["none_made"].format(said=tmux_said(err or out))
         return None
     ans = None
     if got in (ASKS_AS, one):
@@ -1707,7 +1730,7 @@ def tmux_asked(sock):
         title = tmux(sock, "display", "-p", "-t", f"{sid}:", "#{pane_title}")[1].rstrip("\n")
         ans = {"name": got == one, "title": {one: True, ASKS_AS: False}.get(title)}
     else:
-        ASK_WHY[sock] = "tmux gave the made-up name back as neither of the two it can be"
+        ASK_WHY[sock] = ASK_WHYS["other_name"]
     if tmux(sock, "kill-session", "-t", sid)[0] != 0 and tmux(sock, "has-session", "-t", sid)[0] == 0:
         log(f"  tmux ({os.path.basename(sock)}): the session Tardigrade made to ask tmux one thing could not be "
             f"ended ({got}); it holds a sleep and ends by itself within a minute")
@@ -1740,14 +1763,15 @@ def title_for_tmux(sock, text):
 
 
 def not_asked(r):
-    """a session whose tmux name holds a # is not started under a guessed name: said once in a run, with the step"""
+    """a session whose tmux name holds a # is not started under a guessed name: said once in a run, with the
+    cause. The line names no step by hand: the session is down then, and this run asks again by itself."""
+    NOT_ASKED_NOW.add(r["session_id"])
     if r["session_id"] in SAID.setdefault("not_asked", set()):
         return
     SAID["not_asked"].add(r["session_id"])
     log(f"  {display(r)}: NOT STARTED. The name of its tmux session holds a # and tmux could not be asked how it "
-        f"takes one ({ASK_WHY.get(r['tmux_socket'], 'no answer')}), so it is not started under a guessed name. "
-        "This run asks again at each try. If it is not back at the end: start it by hand in its folder, and give "
-        "its tmux session a name without a # (tmux rename-session)")
+        f"takes one ({ASK_WHY[r['tmux_socket']]}), so it is not started under a guessed name. "
+        "Nothing of it is lost. This run asks again at each try")
 
 
 def new_session(sock, name, cwd, cmd):
@@ -1784,6 +1808,7 @@ def start_lane(r, created):
         if rc == 98:
             not_asked(r)
             return False
+        NOT_ASKED_NOW.discard(r["session_id"])
         created.add((sock, name))
     return rc == 0
 
@@ -2676,7 +2701,8 @@ def _revive(boot):
             tries_done = True
             for sid, (r, n) in pending.items():
                 log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}"
-                    + (f". Not started at the last pass: {cannot_tell}" if cannot_tell else ""))
+                    + (f". Not started at the last pass: {cannot_tell}" if cannot_tell else "")
+                    + (NOT_ASKED_NEXT if sid in NOT_ASKED_NOW else ""))
                 report["failed"].append(display(r))
             report.update(at=int(time.time()), boot=boot_id(), on_record=len(rows), began=prog["began"],
                           uptime_at_start=prog["uptime_at_start"], boot_run=boot, user_up_s=up_s,

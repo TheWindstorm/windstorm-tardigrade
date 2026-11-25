@@ -1401,6 +1401,8 @@ class Revive(Base):
                 f.write(text)
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
         self.assertIn("Beta Lane: GAVE UP after", out)
+        # T119: only a session not started for a # in its tmux name is pointed to the README by its give-up line
+        self.assertNotIn("the README, under", out)
         self.assertIn("its tmux session holds a shell", out)        # what is in its place now (G4.9)
         self.assertLess(out.index('Alpha Lane: answered Yes to "trust this folder?"'), out.index("Beta Lane: GAVE UP"), out)
         rep = jload(self.state("last-revive.json"))
@@ -2473,7 +2475,7 @@ class Revive(Base):
         """T119: three sessions, a plain one, one whose tmux session name holds a hash and one whose own name does.
         A run with no hash anywhere asks tmux nothing. Then a tmux session stands under the made-up name the tool
         asks with (a person's, or one left by a run that was cut off): it is not touched, tmux is not asked, the
-        session with the hash in its tmux name is not started under any name and its line says so with the step;
+        session with the hash in its tmux name is not started under any name and its line says so with the cause;
         the other two come back, the title without its hash (a title never stops a start). Once that tmux session
         is gone, the next revive brings the third back under its own name."""
         self.cfg({"retry_min": 0.1, "retry_gap_s": 1})
@@ -2528,11 +2530,19 @@ class Revive(Base):
         self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", f"={taken[0]}:", "#{pane_pid}")[1], pane,
                          "the tmux session under the made-up name was not touched")
         line = ("Hash Before A Letter: NOT STARTED. The name of its tmux session holds a # and tmux could not be asked "
-                "how it takes one (a tmux session under the made-up name it asks with is already there, and is left "
-                "alone), so it is not started under a guessed name.")
-        self.assertEqual((self.logged(line), self.logged("give its tmux session a name without a # (tmux rename-session)")),
-                         (1, 1), out)
-        self.assertIn("Hash Before A Letter: GAVE UP after", out)
+                "how it takes one (the made-up name it asks with is taken by a tmux session that is there: one of "
+                "Tardigrade's own ends by itself within a minute, any other is a person's and is left alone), so it "
+                "is not started under a guessed name. Nothing of it is lost. This run asks again at each try")
+        # the session is down at that moment: the line ends there, with no step by hand, and no line names a rename
+        self.assertEqual((self.logged(line + "\n"), self.logged(": NOT STARTED."), self.logged("rename")), (1, 1, 0), out)
+        # the stop line at the end of the run names the next step: by hand, and where the README has it
+        gave = re.search(r"Hash Before A Letter: GAVE UP after \d+ attempt\(s\); its tmux session is gone(.*)", out)
+        self.assertEqual(gave and gave.group(1), ". It was not started for the # in the name of its tmux session "
+                         "(its NOT STARTED line above). To bring it back by hand: the README, under "
+                         "\"Known edge until 0.1.11 (T103, T104)\"", out)
+        self.assertEqual(fread(os.path.join(ROOT, "README.md")).count("\nKnown edge until 0.1.11 (T103, T104): "), 1,
+                         "the README has that heading, once")
+        self.assertEqual(len(re.findall(r"GAVE UP after .*README", out)), 1, "and no other session's line points there")
         self.assertIn("revive: 2 started, 0 already running, 1 failed, 0 need you", out)
         self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", "=own:", "#{pane_title}")[1],
                          "Own W name (coming back)\n", "the title went over without its hash")
@@ -2545,6 +2555,109 @@ class Revive(Base):
         self.assertIn("revive: 1 started, 2 already running, 0 failed, 0 need you", out)
         self.assertEqual(self.logged("asked once how it takes a #"), 1)
 
+    def test_G2_62_every_cause_tmux_could_not_be_asked_stands_in_one_list_and_each_is_said_on_the_line(self):
+        """T119: the causes for "tmux could not be asked" stand in one place in the tool, and this test walks every
+        one of them in a world of its own making: the made-up name taken (in the form the test above does not plant),
+        a tmux that makes no session and says why (its words carry a backtick, a dollar sign, an escape character
+        and a second line: the line shows the first line with a ? for each), and a tmux that holds the made-up name
+        as a third thing (that session is ended by its id). Each time: the plain session comes back, the one with a
+        hash in its tmux name is not started under any name, and its line carries that cause."""
+        self.cfg({"retry_min": 0.1, "retry_gap_s": 1})
+        src = fread(SCRIPT)
+        listed = re.search(r"^ASK_WHYS = (\{.*?^\})", src, re.S | re.M)
+        self.assertTrue(listed, "the tool lists every cause for no answer in one place")
+        whys = ast.literal_eval(listed.group(1))
+        self.assertEqual(re.findall(r"ASK_WHY\[sock\] = (?!ASK_WHYS\[)", src), [], "no cause outside the list")
+        plan = [("plain", "Plain Lane"), ("lane#Work", "Hash Before A Letter")]
+        sid = {}
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        for s, n in plan:
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                              f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, sorted(r["tmux_session"] for r in self.table()["lanes"])), (0, ["lane#Work", "plain"]), out)
+        names = lambda: sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        head = "import os, sys\na = sys.argv[1:]\nif 'new-session' in a and 'tardigrade-asks-##' in a:\n"
+        tail = f"os.execv({TMUX!r}, [{TMUX!r}] + a)\n"
+        none = self.script("tmux-makes-none", f"#!{sys.executable}\n" + head
+                           + "    sys.stderr.write('no room for it: ' + chr(96) + 'x' + chr(96) + ' ' + chr(36) + '(y) '"
+                           " + chr(27) + '[1m' + chr(10) + 'a second line' + chr(10))\n    sys.exit(1)\n" + tail)
+        other = self.script("tmux-other-name", f"#!{sys.executable}\n" + head
+                            + "    a[a.index('tardigrade-asks-##')] = 'tardigrade-asks-other'\n" + tail)
+        # the form of the made-up name that the test above does not plant on this machine's tmux
+        held = "tardigrade-asks-##" if self.reads_names else "tardigrade-asks-#"
+        seen = {}
+        for key, stand_in, left in (("taken", TMUX, [held]), ("none_made", none, []), ("other_name", other, [])):
+            self.reboot()
+            self.cfg({"tmux": stand_in})
+            if key == "taken":
+                self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(held),
+                                           "sleep 600")[0], 0)
+                self.assertEqual(names(), [held])
+                pane = self.tmux(self.sock, "display", "-p", "-t", f"={held}:", "#{pane_pid}")[1]
+                self.addCleanup(lambda p=pane: p.strip().isdigit() and self.kill(int(p)))
+            n0 = len(self.launches())
+            r = subprocess.run([sys.executable, "-I", SCRIPT, "revive"], capture_output=True, encoding="utf-8",
+                               errors="surrogateescape", env=self.env, timeout=240, cwd=self.tmp)
+            out = r.stdout + r.stderr
+            time.sleep(1)
+            why = whys[key].format(said="no room for it: ?x? ?(y) ?[1m")
+            line = ("Hash Before A Letter: NOT STARTED. The name of its tmux session holds a # and tmux could not be "
+                    f"asked how it takes one ({why}), so it is not started under a guessed name. Nothing of it is lost. "
+                    "This run asks again at each try")
+            seen[key] = (self.logged(line), [x["sid"] for x in self.launches()[n0:]], names(),
+                         "revive: 1 started, 0 already running, 1 failed, 0 need you" in out)
+            self.assertEqual(seen[key], (1, [sid["plain"]], sorted(["plain"] + left), True), key + "\n" + out[-2500:])
+        self.assertEqual(sorted(seen), sorted(whys), "every cause in the list was walked, and the list holds no other")
+        self.assertEqual(self.logged("asked once how it takes a #"), 0)
+
+    def test_G2_62_a_start_that_fails_for_another_cause_once_tmux_could_be_asked_is_not_laid_to_the_hash(self):
+        """T119: the give-up line points to the README's edge for the hash only when the LAST try was not made
+        because tmux could not be asked. Here the made-up name is taken at the first tries (NOT STARTED is said),
+        then it is free in the same run: tmux is asked, the session is started under its own name, and its start
+        fails for a cause of its own (the stand-in ends at once). Its give-up line names no README edge."""
+        self.cfg({"retry_min": 0.5, "retry_gap_s": 1})
+        plan = [("plain", "Plain Lane"), ("lane#Work", "Hash Before A Letter")]
+        sid = {}
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        for s, n in plan:
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                              f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, sorted(r["tmux_session"] for r in self.table()["lanes"])), (0, ["lane#Work", "plain"]), out)
+        self.reboot()
+        with open(os.path.join(self.home, "failsid"), "w") as f:
+            f.write(sid["lane#Work"])
+        self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", "tardigrade-asks-##", "sleep 600")[0], 0)
+        names = lambda: sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        taken = names()
+        self.assertEqual(len(taken), 1, taken)
+        pane = self.tmux(self.sock, "display", "-p", "-t", f"={taken[0]}:", "#{pane_pid}")[1]
+        self.addCleanup(lambda: pane.strip().isdigit() and self.kill(int(pane)))
+        n0 = len(self.launches())
+        p = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             encoding="utf-8", errors="surrogateescape", env=self.env, cwd=self.tmp)
+        try:
+            self.until(lambda: self.logged(": NOT STARTED.") == 1, "the first try is not made: tmux cannot be asked")
+            self.tmux(self.sock, "kill-session", "-t", f"={taken[0]}")
+            out = p.communicate(timeout=240)[0]
+        finally:
+            if p.poll() is None:
+                p.kill()
+        gave = re.findall(r"Hash Before A Letter: GAVE UP after \d+ attempt\(s\); its tmux session .*", out)
+        self.assertEqual((len(gave), "README" in "".join(gave)), (1, False), out[-3000:])
+        self.assertEqual(self.logged("asked once how it takes a #"), 1, "it was asked in the same run, once free")
+        self.assertIn(sid["lane#Work"], [x["sid"] for x in self.launches()[n0:]], "and started under its own name")
+        self.assertEqual([x for x in names() if x not in ("plain", "lane#Work")], [], "no tmux session under another name")
+        self.assertEqual(self.logged(": NOT STARTED."), 1)
 
 
 class Census(Base):

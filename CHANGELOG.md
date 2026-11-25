@@ -2,30 +2,34 @@
 
 ## 0.1.10.3 (2026-11-25)
 
-- **A # in a name or a folder no longer changes what comes back.** tmux reads a # in a session's name, a pane's title
-  and a folder as the start of one of its own formats. Up to 0.1.10.2 Tardigrade handed these to tmux as they stood on
-  its record. A session that ran in a tmux session whose name holds a # before certain letters, or two # in a row, was
-  not brought back after a restart: the revive gave up and left a tmux session under a changed name (laneork for
-  lane#Work), while the other sessions came back. A session in a folder with a # came back in its own folder, but tmux
-  held a changed folder for its tmux session; and the waiting screen's title, made from the session's own name, was
-  changed the same way. Seen with 0.1.10.2 and tmux 3.4 in a test with stand-in sessions: three of ten sessions not
-  brought back. Now each of these is handed over so that tmux holds it letter for letter, and such a session comes
-  back as itself: under its own tmux name, in its folder, its own name in the title. The folder goes over with each #
-  doubled, which tmux gives back as one (every tmux tried reads a folder that way: 2.6, 2.7, 3.0a, 3.2a, 3.4, 3.7c and
-  3.8). For a name and a title it depends on the tmux: 2.6 leaves them as they stand, 2.7 and later read them.
-  Tardigrade knows no versions; it asks the tmux it finds. Once in a run, and only when a name or a title with a # is
-  to be handed over, it makes one tmux session of its own under a made-up name (tmux then shows it as
-  tardigrade-asks-# or tardigrade-asks-##; it holds a sleep that ends by itself), reads back what tmux holds, and ends
-  that session. Like a waiting screen, it is a tmux session of Tardigrade's own making, in the same run; it ends no
-  other. If tmux cannot be asked (a tmux session of that made-up name is already there: it is left alone), a session
-  whose tmux name holds a # is not started under a guessed name: its line says NOT STARTED and why, the run asks again
-  at each try, and the other sessions come back. A title never stops a start: with no answer it goes over without its
-  #. A run with no # in any name, title or folder asks nothing and does what 0.1.10.2 did. Seen with this version and
-  stand-in sessions, in its three new tests: on tmux 3.4 on every push, and once each on stock virtual machines with
-  tmux 2.6 (Ubuntu 18.04, with Python 3.8 added from that release's own archive), tmux 2.7 (AlmaLinux 8.10, Python
-  3.9) and tmux 3.0a (Ubuntu 20.04, Python 3.8). Not seen: a real Claude Code session with such a name; a Mac. Nothing
-  else changed. Still on 0.1.10.2 and met it? Give that tmux session a name without a # while it runs, and from the
-  next record on it comes back (the README of 0.1.10.2 has the line) (T119).
+- **A # in a name or a folder no longer changes what comes back.** tmux reads a # in a session's name, a pane's
+  title and a folder as the start of one of its own formats. Up to 0.1.10.2 Tardigrade handed these to tmux as they
+  stood on its record. A session that ran in a tmux session whose name holds a # before certain letters, or two # in
+  a row, was not brought back after a restart: the revive gave up and left a tmux session under a changed name
+  (laneork for lane#Work), while the other sessions came back. A session in a folder with a # came back in its own
+  folder, but tmux held a changed folder for its tmux session; and the waiting screen's title, made from the
+  session's own name, was changed the same way. Seen with 0.1.10.2 and tmux 3.4 in a test with stand-in sessions:
+  three of ten sessions not brought back. Now each of these is handed over so that tmux holds it letter for letter,
+  and such a session comes back as itself: under its own tmux name, in its folder, its own name in the title. The
+  folder goes over with each # doubled, which tmux gives back as one (every tmux tried reads a folder that way: 2.6,
+  2.7, 3.0a, 3.2a, 3.4, 3.7c and 3.8). For a name and a title it depends on the tmux: 2.6 leaves them as they stand,
+  2.7 and later read them. Tardigrade knows no versions; it asks the tmux it finds. Once in a run, and only when a
+  name or a title with a # is to be handed over, it makes one tmux session of its own under a made-up name (tmux
+  then shows it as tardigrade-asks-# or tardigrade-asks-##; it holds a sleep that ends by itself), reads back what
+  tmux holds, and ends that session. Like a waiting screen, it is a tmux session of Tardigrade's own making, in the
+  same run; it ends no other. If tmux cannot be asked (a tmux session of that made-up name is already there, which
+  is left alone; tmux made no session; tmux held the name as something else), a session whose tmux name holds a # is
+  not started under a guessed name: its line says NOT STARTED and which of the three, the run asks again at each
+  try, and the other sessions come back. If the run gives up on it, its give-up line points to the README's edge on
+  starts that failed, which says how one such session is brought back by hand. A title never stops a start: with no
+  answer it goes over without its #. A run with no # in any name, title or folder asks nothing and does what
+  0.1.10.2 did. Seen with this version and stand-in sessions, in its three new tests: on tmux 3.4 on every push, and
+  once each on stock virtual machines with tmux 2.6 (Ubuntu 18.04, with Python 3.8 added from that release's own
+  archive), tmux 2.7 (AlmaLinux 8.10, Python 3.9) and tmux 3.0a (Ubuntu 20.04, Python 3.8). A fourth test walks each
+  of the three causes, and a fifth a start that fails for a cause of its own once tmux could be asked (both on tmux
+  3.4). Not seen: a real Claude Code session with such a name; a Mac. Nothing else changed. Still on 0.1.10.2 and
+  met it? Give that tmux session a name without a # while it runs, and from the next record on it comes back (the
+  README of 0.1.10.2 has the line) (T119).
 
 ## 0.1.10.2 (2026-11-25)
 
