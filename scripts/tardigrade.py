@@ -907,6 +907,34 @@ EXIT_SIDS = []                  # the session ids on the record, so the history 
 HISTORY_SAY = []                # set by revive and record, which say in the log when the history cannot be used
 UNREAD_SAID = set()             # G2.61: the sessions whose unread lines after an /exit this run has said
 HISTORY_SID = re.compile(r'"sessionId"\s*:\s*"([0-9A-Za-z-]{8,64})"')
+JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+JSON_BARE = re.compile(r'(?:[\s{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)*')
+
+
+def whole_line(line):
+    """Is this piece of the prompt history one whole line, by its shape alone: an opening brace first and a
+    closing one last, every string closed, nothing outside the strings but braces, brackets, colons, commas,
+    numbers and true, false, null, and every brace and bracket closed by its own kind, the first brace by the
+    last character alone. What stands inside a string, which is what was typed, is passed over (G2.61). A line
+    torn anywhere before its end is not whole. Neither is such a piece with the next line written right after
+    it: torn outside a string it leaves a brace open, torn inside one it puts the next line's first key outside
+    the strings (a key that is a word, as every key Claude Code writes there is), and cut after its closing
+    brace, with only the line feed missing, its first brace is closed before the end."""
+    if not (line.startswith("{") and line.endswith("}")):
+        return False
+    bare = JSON_STRING.sub("", line)
+    if JSON_BARE.fullmatch(bare) is None:
+        return False
+    open_ones = []
+    for i, c in enumerate(bare):
+        if c in "{[":
+            open_ones.append(c)
+        elif c in "}]":
+            if not open_ones or open_ones.pop() != ("{" if c == "}" else "["):
+                return False
+            if not open_ones and i != len(bare) - 1:
+                return False
+    return not open_ones
 
 
 def history_exits(base, sids):
@@ -914,15 +942,21 @@ def history_exits(base, sids):
     prompt history in the folder `base`, for the session ids `sids` only (G2.36). Claude Code writes every prompt
     typed into a session there, slash commands too, with the session id; it does so even when it writes no
     /exit into the conversation itself (seen on real machines with 2.1.330). The file holds what people typed:
-    a line of another session is skipped before it is read, of a line of these only the time and whether it is
-    exactly /exit or /quit are kept, and nothing of it is logged, recorded or shown. When the file is not there,
-    could not be read or does not look as expected, no session is taken as ended by it, and the log says which of
-    the three it was (G2.54): a file that is not there is never said as one that could not be read."""
+    a line of another session is skipped before it is read (only its shape is looked at: is it one whole line),
+    of a line of these only the time and whether it is exactly /exit or /quit are kept, and nothing of it is
+    logged, recorded or shown. When the file is not there, could not be read or does not look as expected, no
+    session is taken as ended by it, and the log says which of the three it was (G2.54): a file that is not there
+    is never said as one that could not be read.
+    G2.61 (T118): a piece that is no whole line. Claude Code writes the session id as the last key of a line, so
+    the piece a power cut leaves at the end of the file names no session, and the next prompt is appended right
+    after it: one line that names the next prompt's session and cannot be read. What was typed in such a piece,
+    and into which session, is not known: an /exit that stands before it is not taken from the history as any
+    session's last prompt (one after it still is), and the conversation decides."""
     have = _HISTORY.get(base)
     if have is not None and set(sids) <= have[0]:
         return have[1]
     want = set(sids) | (have[0] if have else set())
-    last, shaped, problem, lost = {}, 0, "", 0
+    last, shaped, problem, lost, aside = {}, 0, "", 0, set()
     try:
         with open(os.path.join(base, "history.jsonl"), "rb") as fh:
             fh.seek(0, 2)
@@ -936,36 +970,47 @@ def history_exits(base, sids):
     except OSError as e:
         tail, problem = [], f"could not be read ({e.__class__.__name__}: {e.strerror or 'no cause given'})"
     for line in tail:
+        if not line.strip():
+            continue
         m = HISTORY_SID.search(line)
-        if not m:
-            continue
-        shaped += 1
-        if m.group(1) not in want:
-            continue                    # another session's: not read
-        try:
-            d = json.loads(line)
-        except ValueError:
-            d = None
-        if not isinstance(d, dict):
-            # G2.61 (T118): a line of one of these sessions that could not be read. What was typed there is not
-            # known, so an /exit before it is not that session's last prompt (one after it still is)
+        shaped += 1 if m else 0
+        d = None
+        if m and m.group(1) in want:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                d = None
+            torn = not isinstance(d, dict)
+        else:
+            torn = not whole_line(line)         # another session's, or one that names none: only its shape
+        if torn:
+            # G2.61 (T118): a piece that is no whole line. What was typed there, and into which session, is not
+            # known (a line torn before its end names no session, and the session it does name may be the next
+            # line's), so an /exit before it is no session's last prompt by the history (one after it still is)
             lost += 1
-            last[m.group(1)] = (last.get(m.group(1), (0, False))[0], False)
+            for k, (t0, ex) in list(last.items()):
+                if ex:
+                    last[k] = (t0, False)
+                    aside.add(k)
             continue
+        if d is None:
+            continue                    # a whole line of another session, or of none: not read
         try:
             sid, t, words = d["sessionId"], float(d["timestamp"]) / 1000, d.get("display")
         except (ValueError, KeyError, TypeError):
             continue
         if sid in want and isinstance(words, str) and t >= last.get(sid, (0, False))[0]:
             last[sid] = (t, words.strip() in ("/exit", "/quit"))
+            aside.discard(sid)          # a later line of its own that could be read says what its last prompt is
     if not problem and tail and not shaped:
         problem = "could not be used: it does not look as expected (no session ids in it)"
     if problem and have is None and HISTORY_SAY:
         log(f"the prompt history in {base} {problem}. A session ended with /exit is known only "
             "from its conversation or its pane; one may be brought back that its owner ended.")
-    if lost and have is None and HISTORY_SAY:
-        log(f"the prompt history in {base}: {lost} line(s) of a session on the record could not be read; an /exit "
-            "before such a line is not taken as that session's last prompt")
+    if aside and have is None and HISTORY_SAY:
+        log(f"the prompt history in {base}: {lost} piece(s) could not be read as a line; what was typed there, and "
+            f"into which session, is not known, so the /exit of {len(aside)} session(s) on the record before such "
+            "a piece is not taken from the history as its last prompt (its conversation decides)")
     out = {sid: t for sid, (t, ex) in last.items() if ex}
     _HISTORY[base] = (want, out)
     return out

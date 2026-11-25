@@ -278,7 +278,13 @@ tardigrade revive --only "NAME"
 
 A line written after an /exit that cannot be read at all (torn in the middle, as a power cut can leave the last line
 of a file) is counted, and Tardigrade does not decide past it: that session is not taken as ended by its owner, it
-comes back, and one line says how many such lines there were (since 0.1.11; seen in the same test).
+comes back, and one line says how many such pieces there were (since 0.1.11; seen in the same test). The prompt
+history is one file for every session, Claude Code writes a session's id last on each of its lines, and the next
+prompt of any session is written right after a torn piece. So there no /exit that stands before such a piece is
+taken from the history as a session's last prompt, whichever session the piece names; an /exit typed after it counts
+as before, and each session's conversation still decides for itself (seen in two more tests, with planted lines; a
+real prompt history torn by a power cut: not seen). The price: a session ended with /exit before such a piece, whose
+conversation holds no /exit, comes back once more.
 
 A tmux session whose name holds U+2028 or NEL (U+0085) is recorded under its whole name and comes back in a tmux
 session of that name (since 0.1.11; seen in the same test). Up to 0.1.10.2 it was recorded under the part of its
@@ -600,7 +606,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 214 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 217 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

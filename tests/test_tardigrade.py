@@ -2929,10 +2929,12 @@ class Revive(Base):
                 (other, "/exit", seen + 5), (other, private, seen + 6)]
         hp = os.path.join(self.home, ".claude", "history.jsonl")
         with open(hp, "w") as f:
+            # a piece that is no line stands BEFORE these prompts: an /exit after it still counts. (One after
+            # them would set every /exit before it aside: T118, held by the G2.61 tests.)
+            f.write("not json " + private + "\n" + json.dumps({"display": "/exit", "timestamp": int((seen + 9) * 1000)}) + "\n")
             for sid, words, t in hist:
                 f.write(json.dumps({"display": words, "pastedContents": {"1": private}, "timestamp": int(t * 1000),
                                     "project": self.work, "sessionId": sid}) + "\n")
-            f.write("not json " + private + "\n" + json.dumps({"display": "/exit", "timestamp": int((seen + 9) * 1000)}) + "\n")
         self.reboot()
         n = len(self.launches())
         rc, out = self.tg("revive")
@@ -7615,7 +7617,8 @@ class Names(Base):
               two lines hold it;
           (2) two in tmux sessions whose names hold U+2028 and NEL (the control: the plain names of the others);
           and two whose line after the /exit cannot be read at all (torn in the middle, as a power cut leaves the
-          last line of a file): the tool does not decide past a line it could not read, and says how many.
+          last line of a file): the tool does not decide past a line it could not read, and says how many. The
+          prompt history's torn piece is the end of the file and names no session: a real line has its id last.
         After a restart: nine of nine back, each started once and in the tmux session it had, the names on the
         record equal to the names planted, and none called ended by its owner."""
         SEP, NEL = chr(0x2028), chr(0x85)
@@ -7667,9 +7670,10 @@ class Names(Base):
                      '{"type":"assistant","timestamp":"%s","message":{"content":[{"type":"te' % stamp(seen + 4)).encode())}
         hist = {"hist-raw": prompt("hist-raw", "/exit", seen + 2, True) + prompt("hist-raw", f"go on a{SEP}b", seen + 3, True),
                 "hist-esc": prompt("hist-esc", "/exit", seen + 2, False) + prompt("hist-esc", f"go on a{SEP}b", seen + 3, False),
-                "hist-torn": prompt("hist-torn", "/exit", seen + 2, True) + (
-                    '{"sessionId": "%s", "timestamp": %d, "project": "/w", "display": "go o\n'
-                    % (sid["hist-torn"], int((seen + 3) * 1000))).encode()}
+                # the real shape: the session id is the last key of a line, so the piece a power cut leaves at the
+                # end of the file names no session, and no line feed follows it
+                "hist-torn": prompt("hist-torn", "/exit", seen + 2, True)
+                             + prompt("hist-torn", "go on with it", seen + 3, True)[:31]}
         with open(os.path.join(self.home, ".claude", "history.jsonl"), "wb") as f:
             f.write(b"".join(hist.values()))
         # the premise of (1): what was planted holds the character as it is where it is meant to, and its
@@ -7683,8 +7687,10 @@ class Names(Base):
                 self.assertEqual(data.count(mark), 0, name)
             if name.endswith("-esc"):
                 self.assertEqual(data.count(b"\\u2028"), 2 if name != "hist-esc" else 1, name)
-        self.assertRaises(ValueError, json.loads, hist["hist-torn"].split(b"\n")[1])
-        self.assertIn(sid["hist-torn"].encode(), hist["hist-torn"].split(b"\n")[1], "the torn line still names its session")
+        torn = hist["hist-torn"].split(b"\n")[1]
+        self.assertRaises(ValueError, json.loads, torn)
+        self.assertTrue(torn.startswith(b'{"display": "go on') and b"sessionId" not in torn, torn)
+        self.assertTrue(b"".join(hist.values()).endswith(torn), "the file ends in the torn piece, no line feed after it")
         self.assertRaises(ValueError, json.loads, files["exit-torn"].split(b"\n")[-1])
 
         self.reboot()
@@ -7707,8 +7713,10 @@ class Names(Base):
                       "it is not taken as ended by its owner", out)
         # and only that one: a line that holds U+2028 is read, not counted among those that could not be
         self.assertEqual(out.count("in its conversation could not be read"), 1, out)
-        self.assertIn("1 line(s) of a session on the record could not be read; an /exit before such a line is not taken "
-                      "as that session's last prompt", out)
+        self.assertIn("1 piece(s) could not be read as a line; what was typed there, and into which session, is not "
+                      "known, so the /exit of 1 session(s) on the record before such a piece is not taken from the "
+                      "history as its last prompt (its conversation decides)", out)
+        self.assertEqual(out.count("could not be read as a line"), 1, out)
         for s, name in lanes:
             self.assertEqual(self.pane_sid(s), sid[s], f"{name} is not in the tmux session {s!r} it had:\n{out}")
         rc, out = self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")
@@ -7724,6 +7732,162 @@ class Names(Base):
         self.assertIn("revive: 0 started, 9 already running, 0 failed, 0 need you\n", out)
         time.sleep(1.5)
         self.assertEqual(len(self.launches()), n + 9, "no second copy")
+
+    def test_G2_61_the_next_prompt_joined_to_a_torn_piece_of_the_prompt_history_ends_no_session(self):
+        """T118, the prompt history after a power cut and a restart, in the shape the real file has (the session id
+        is the last key of a line). The cut left a piece with no line feed and no session id; the next prompt
+        typed after the restart was appended right after it: one line that cannot be read and that names the NEXT
+        prompt's session, here one that is not on the record. Joined typed /exit before that line. What was typed
+        in the torn piece, and into which session, is not known, so the history alone does not end Joined: its
+        conversation decides, and it comes back.
+        The limit, in the same file: Plain's /exit stands after the joined line with nothing of its own after
+        it, and Other's /exit is followed by a whole line of a session that is not on the record. Both are still
+        taken as ended by their owner. Nothing that was typed reaches a line of ours."""
+        a, b, c = (self.start_lane(s, n) for s, n in (("joined", "Joined Lane"), ("plain", "Plain Lane"),
+                                                      ("other", "Other Lane")))
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        seen = self.table()["lanes"][0]["last_seen"]
+        off = "0f0f0f0f-1111-4222-8333-444444444444"         # a session that is not on the record
+        private = "PRIVATE-WORDS-9c1"
+
+        def prompt(sid, words, t):
+            return (json.dumps({"display": words, "pastedContents": {}, "timestamp": int(t * 1000),
+                                "project": self.work, "sessionId": sid}) + "\n").encode("utf-8")
+        torn = prompt(a, "go on " + private, seen + 3)[:36]
+        joined = torn + prompt(off, "the first prompt after the restart " + private, seen + 4)
+        data = (prompt(a, "/exit", seen + 2) + joined + prompt(b, "/exit", seen + 5) + prompt(c, "/exit", seen + 6)
+                + prompt(off, "something else " + private, seen + 7))
+        # the premise: the torn piece names no session and has no line feed; joined to the next prompt it is one
+        # line that does not parse and names that prompt's session alone; every other line is whole
+        self.assertTrue(torn.startswith(b'{"display": "go on') and b"sessionId" not in torn and b"\n" not in torn, torn)
+        self.assertEqual((joined.count(b"\n"), joined.count(b'"sessionId"'), joined.count(off.encode())), (1, 1, 1))
+        self.assertRaises(ValueError, json.loads, joined)
+        lines = data.split(b"\n")[:-1]
+        self.assertEqual([i for i, x in enumerate(lines) if not self.parses(x)], [1], "one line that does not parse")
+        with open(os.path.join(self.home, ".claude", "history.jsonl"), "wb") as f:
+            f.write(data)
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        try:
+            self.wait_launches(n + 1)
+        except AssertionError:
+            pass
+        time.sleep(2)
+        back = [x["sid"] for x in self.launches()[n:]]
+        self.assertEqual(back, [a], f"Joined Lane alone comes back, once; came back: {len(back)}\n{out}")
+        self.assertIn("skip  Plain Lane: its owner ended it with /exit", out)
+        self.assertIn("skip  Other Lane: its owner ended it with /exit", out)
+        self.assertNotIn("skip  Joined Lane", out)
+        self.assertIn("1 piece(s) could not be read as a line; what was typed there, and into which session, is not "
+                      "known, so the /exit of 1 session(s) on the record before such a piece is not taken from the "
+                      "history as its last prompt (its conversation decides)", out)
+        self.assertEqual(out.count("could not be read as a line"), 1, out)
+        outs = [out] + [self.tg(*cmd)[1] for cmd in (("census",), ("record",), ("report",), ("census", "--json"))]
+        self.assertNotIn("Joined Lane", "".join(x for x in outs[1].split("\n") if "ended by its owner" in x))
+        st = os.path.join(self.home, ".local", "state", "windstorm-tardigrade")
+        files = [os.path.join(dp, f) for d in (st, os.path.join(self.home, ".config", "windstorm-tardigrade"))
+                 for dp, _, fs in os.walk(d) for f in fs]
+        for text in outs + [fread(f) for f in files]:
+            self.assertNotIn("PRIVATE-WORDS", text)
+            self.assertNotIn("first prompt after", text)
+
+    @staticmethod
+    def parses(line):
+        try:
+            return isinstance(json.loads(line), dict)
+        except ValueError:
+            return False
+
+    def test_G2_61_a_line_that_names_a_session_and_cannot_be_read_sets_aside_every_exit_before_it(self):
+        """T118, the other shape of a piece that is no line: one that does name a session on the record (its id
+        stands early in it) and breaks off before its end. Up to this change only that session's /exit was set
+        aside. What was typed there is not known, and neither is whether the id is the piece's own (the test
+        above: the next prompt's line joined to a torn piece), so every /exit that stands before it in the prompt
+        history is set aside, whichever session the piece names: Named (the one it names) and Before (another one)
+        both come back. An /exit after it still counts (After is skipped), and so does a session's own /exit
+        typed again after it (Again typed /exit before the piece and after it: skipped, and not counted among
+        those set aside). An empty line and a line of spaces are no pieces: they stand after After's /exit here,
+        and After stays skipped. The line says how many pieces and how many sessions. Nothing typed reaches a line
+        of ours."""
+        a, b, c, d = (self.start_lane(s, n) for s, n in (("named", "Named Lane"), ("before", "Before Lane"),
+                                                         ("after", "After Lane"), ("again", "Again Lane")))
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        seen = self.table()["lanes"][0]["last_seen"]
+
+        def prompt(sid, words, t):
+            return (json.dumps({"display": words, "pastedContents": {}, "timestamp": int(t * 1000),
+                                "project": self.work, "sessionId": sid}) + "\n").encode("utf-8")
+        torn = ('{"sessionId": "%s", "timestamp": %d, "project": "/w", "display": "go on PRIVATE-WORDS-7d2\n'
+                % (a, int((seen + 4) * 1000))).encode("utf-8")
+        data = (prompt(d, "/exit", seen + 1) + prompt(a, "/exit", seen + 2) + prompt(b, "/exit", seen + 3) + torn
+                + prompt(c, "/exit", seen + 5) + b"\n   \n" + prompt(d, "/exit", seen + 6))
+        # the premise: one line that does not parse, and it names Named's session
+        lines = data.split(b"\n")[:-1]
+        self.assertEqual([i for i, x in enumerate(lines) if x.strip() and not self.parses(x)], [3],
+                         "one line that does not parse")
+        self.assertEqual([i for i, x in enumerate(lines) if not x.strip()], [5, 6], "an empty line and one of spaces")
+        self.assertIn(a.encode(), lines[3])
+        with open(os.path.join(self.home, ".claude", "history.jsonl"), "wb") as f:
+            f.write(data)
+        self.reboot()
+        n = len(self.launches())
+        rc, out = self.tg("revive")
+        try:
+            self.wait_launches(n + 2)
+        except AssertionError:
+            pass
+        time.sleep(2)
+        back = sorted(x["sid"] for x in self.launches()[n:])
+        self.assertEqual(back, sorted([a, b]), f"Named and Before come back, each once; came back: {len(back)}\n{out}")
+        self.assertIn("skip  After Lane: its owner ended it with /exit", out)
+        self.assertIn("skip  Again Lane: its owner ended it with /exit", out)
+        self.assertNotIn("skip  Named Lane", out)
+        self.assertNotIn("skip  Before Lane", out)
+        self.assertIn("1 piece(s) could not be read as a line; what was typed there, and into which session, is not "
+                      "known, so the /exit of 2 session(s) on the record before such a piece is not taken from the "
+                      "history as its last prompt (its conversation decides)", out)
+        self.assertEqual(out.count("could not be read as a line"), 1, out)
+        outs = [out] + [self.tg(*cmd)[1] for cmd in (("census",), ("record",), ("report",), ("census", "--json"))]
+        st = os.path.join(self.home, ".local", "state", "windstorm-tardigrade")
+        files = [os.path.join(dp, f) for dd in (st, os.path.join(self.home, ".config", "windstorm-tardigrade"))
+                 for dp, _, fs in os.walk(dd) for f in fs]
+        for text in outs + [fread(f) for f in files]:
+            self.assertNotIn("PRIVATE-WORDS", text)
+
+    def test_G2_61_a_whole_line_of_the_prompt_history_is_told_from_a_piece_by_its_shape_alone(self):
+        """T118: the tool looks only at the shape of a line of the prompt history that is not one of its sessions'
+        (it reads nothing typed there). This test holds that reading by itself. Whole lines are whole, whatever
+        was typed: braces, brackets, quotes, backslashes, a colon, U+2028 as it is. A piece is not: and for two
+        lines in Claude Code's shape, EVERY piece that a cut can leave of them is no whole line, alone and with the
+        next line written right after it (torn inside what was typed, between two keys, inside a number, right
+        after an opening brace, and after the closing brace with only the line feed missing)."""
+        tg = self.load_tool()
+
+        def line(words, sid="0f0f0f0f-1111-4222-8333-444444444444", ascii_only=True, pasted=None):
+            return json.dumps({"display": words, "pastedContents": pasted or {}, "timestamp": 1764000000123,
+                               "project": self.work, "sessionId": sid}, ensure_ascii=ascii_only)
+        typed = 'a } ] { [ " \\ : , true null 12 -1.5e3 {"sessionId": "x"}'
+        whole = [line("go on"), line(typed), line(""), line("a" + chr(0x2028) + "b", ascii_only=False),
+                 line("a" + chr(0x2028) + "b"), line("x", pasted={"1": {"id": 1, "type": "text", "content": typed}}),
+                 "{}", '{"a": [1, -2.5e-3, true, false, null, {"b": []}]}']
+        for x in whole:
+            self.assertTrue(isinstance(json.loads(x), dict) and tg.whole_line(x), x)
+        pieces = ["not json words", "12", '"go on"', "[1, 2]", "{display: 1}", '{"a": 1}}', '{{"a": 1}', '{"a": [1}',
+                  '{"a": 1} more', ' {"a": 1}', '{"a": "b}', line("go on")[:-1], line("go on") + line("next"),
+                  '{"a": [{]}}', '{"a": {[}]}', '{"a": [1}, {"b": 2]}']    # each closed by the other kind
+        for x in pieces:
+            self.assertFalse(tg.whole_line(x), x)
+        nxt = line("the next prompt " + typed, sid="12345678-1111-4222-8333-444444444444")
+        for first in (line("go on with it"), line(typed, pasted={"1": {"id": 1, "content": "{"}})):
+            for k in range(1, len(first) + 1):      # the last one: cut after the closing brace, before the line feed
+                if k < len(first):
+                    self.assertFalse(tg.whole_line(first[:k]), f"a piece, cut after {k} characters, is read as a whole line")
+                self.assertFalse(tg.whole_line(first[:k] + nxt),
+                                 f"a piece cut after {k} characters with the next line after it is read as a whole line")
+            self.assertTrue(tg.whole_line(first) and tg.whole_line(nxt))
 
     def test_G2_61_no_place_in_the_tools_code_cuts_a_text_where_splitlines_cuts(self):
         """T118, the code read beside the planted run: the tool has one function that cuts what another program
