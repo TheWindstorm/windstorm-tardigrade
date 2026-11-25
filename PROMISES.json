@@ -1619,7 +1619,7 @@
    "first_ship_in": "0.1.10.2",
    "ship_in": "0.1.10.2",
    "test": "test_G2_58_one_folder_name_that_is_not_utf8_stops_no_other_session_and_ends_no_command",
-   "proven": "",
+   "proven": "2026-11-24, on 0.1.10.2's candidate e908b01 (script sha256 5f7cbb5a093d4bc6). On a stock Ubuntu 24.04.5 virtual machine (a fresh disk; systemd 255, Python 3.12.3, tmux 3.4, lingering on): three stand-in sessions, one of them in a folder whose name holds the byte 0xFF; setup, a record and a census (each exit 0; the census lists all three, that folder written with a backslash form); a real restart of the machine. The boot service's own run (LANG=C.UTF-8 and no LC_ALL, read from that process) started all three and ended with success: \"count: started=3 LOADED=3 UP-NOT-LOADED=0 DOWN=0\", and each stand-in ran in its own folder, the one with the byte 0xFF included (read from /proc). A revive by hand with LANG=en_US.UTF-8 after it, twice: exit 0, \"0 started, 3 already running\"; 6 stand-in starts written down in all, the three made and the three brought back. census and report: exit 0. The same walk on that machine the same evening told the versions apart: the released 0.1.10.1 brought back 0 of 3 (exit 1, a traceback); the released tool with the log's and the streams' change alone, 1 of 3 (exit 1 at the start file's write); with all four places, 3 of 3. On a Mac (macOS 27.2.1, APFS) such a folder cannot be made: mkdir answers \"Illegal byte sequence\" (tried in a temporary folder), so this row has no Mac half on a Mac's own disk; a disk of another kind on a Mac was not tried.",
    "issue": 123,
    "moved_why": "",
    "moved_by_person": ""

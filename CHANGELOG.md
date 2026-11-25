@@ -9,8 +9,10 @@
   virtual machine through a real restart: 0 of 3 back by the boot service and 0 of 3 by hand, each time with
   "UnicodeEncodeError" and the words "surrogates not allowed". Now such a name ends no command: on the screen and in
   the log its odd byte is written as a backslash form, every other session comes back, and that session too, in its
-  own folder. Nothing else changed. Still on 0.1.10.1 and met it? A session in an ordinary folder comes back by its
-  name, one at a time:
+  own folder (seen with this version on the same machine through a real restart: 3 of 3 back, the boot
+  service ending with success, census listing all three). On a Mac's own disk such a folder cannot be made
+  (macOS 27, APFS: "Illegal byte sequence"). Nothing else changed. Still on 0.1.10.1 and met it? A session in an
+  ordinary folder comes back by its name, one at a time:
 
       tardigrade revive --only "Name"
 
