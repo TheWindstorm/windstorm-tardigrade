@@ -11,8 +11,12 @@
   the log its odd byte is written as a backslash form, every other session comes back, and that session too, in its
   own folder (seen with this version on the same machine through a real restart: 3 of 3 back, the boot
   service ending with success, census listing all three). On a Mac's own disk such a folder cannot be made
-  (macOS 27, APFS: "Illegal byte sequence"). Nothing else changed. Still on 0.1.10.1 and met it? A session in an
-  ordinary folder comes back by its name, one at a time:
+  (macOS 27, APFS: "Illegal byte sequence"). Whether Claude Code itself can be in such a folder: version 2.1.332,
+  not signed in, refused to start in one (seen once each: at its screen, and in print mode); one that was
+  running when its folder was renamed to such a name kept running there (seen once, at its first screen). Not
+  seen: a signed-in session in such a folder, and whether Claude Code records that folder for it. A process
+  that is no session, with such a byte in its command line, ended nothing (3 of 3 sessions back). Nothing else
+  changed. Still on 0.1.10.1 and met it? A session in an ordinary folder comes back by its name, one at a time:
 
       tardigrade revive --only "Name"
 

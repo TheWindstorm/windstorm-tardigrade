@@ -183,6 +183,13 @@ title cut in the middle of an emoji would leave) still ends a revive in an error
 in a test with stand-in sessions on 0.1.10.1 and on 0.1.10.2, not on a real machine. A folder whose name is not
 UTF-8 did the same up to 0.1.10.1 and does not from 0.1.10.2 on (T115).
 
+About such a folder (T115): that was seen with stand-in sessions (none of three came back on 0.1.10.1, three
+of three on 0.1.10.2, through a real restart). Claude Code 2.1.332 itself, not signed in, refused to start in a
+folder whose name is not UTF-8 (seen once each: at its screen, and in print mode). One that was running when
+its folder was renamed to such a name kept running there (seen once, at its first screen, not signed in). Not
+seen: a signed-in session in such a folder, and whether Claude Code records that folder for it. A process
+that is no session, with such a byte in its command line, ended nothing: 3 of 3 sessions came back.
+
 Known edge until 0.1.11 (T116): a session in a tmux session whose name holds a backslash is not brought back.
 Seen with 0.1.10.1 (0.1.10.2 changes nothing there) and stand-in sessions on a stock Ubuntu 24.04 virtual machine
 with tmux 3.4, the tmux server ended by hand: the revive names that session, tries once a minute for 25 minutes
@@ -205,16 +212,18 @@ own folder. Up to 0.1.10.1 the revive there ended in an error and no session cam
 
 Known edge until 0.1.11 (T118): Tardigrade cuts the lines of a conversation file and of the prompt history where
 Python's `splitlines()` cuts, which is at the line feed and also at the character U+2028. Claude Code writes that
-character as it is when a tool's output or a pasted prompt holds one (counted in two real conversation files: 7
-of about 61,000 lines, and 51 of 64,757). If a session was ended with /exit and then resumed, and every line
-written after that holds such a character when the computer restarts, the revive says "skip NAME: its owner
-ended it with /exit", does not bring that session back, and census lists it as ended by its owner. The same for
-an /exit in the prompt history followed by a prompt that holds the character. Seen with 0.1.10.1 (0.1.10.2
-changes nothing there) and stand-in sessions with planted lines on a stock Ubuntu 24.04 virtual machine: 3 of 5
-came back, the two skipped were the two planted this way, and nothing was started twice; one ordinary line after
-the /exit and the read is right. Not seen: a real session that ended this way. What helps, tried there: ask for
-the session by name, and the line Tardigrade prints names the step with the conversation's id; that step brought
-the session back:
+character as it is into a conversation file, for instance when a tool's output holds one (counted in two real
+conversation files: 7 of about 61,000 lines, and 51 of 64,757). If a session was ended with /exit and then resumed,
+and every line written after that holds such a character when the computer restarts, the revive says "skip NAME: its
+owner ended it with /exit", does not bring that session back, and census lists it as ended by its owner. The same
+for an /exit in the prompt history followed by a prompt that holds the character as it is: that line was planted by
+us, in the shape Claude Code writes. Seen with 0.1.10.1 (0.1.10.2 changes nothing there) and stand-in sessions with
+planted lines on a stock Ubuntu 24.04 virtual machine: 3 of 5 came back, the two skipped were the two planted this
+way, and nothing was started twice; one ordinary line after the /exit and the read is right. Not seen: a real
+session that ended this way; and whether Claude Code writes the character as it is into the prompt history (one real
+history file was counted, about 26,000 lines: no line held it, as it is or in its backslash form, so no prompt there
+held one). What helps, tried there: ask for the session by name, and the line Tardigrade prints names the step with
+the conversation's id; that step brought the session back:
 
 ```
 tardigrade revive --only "NAME"
