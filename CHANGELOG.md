@@ -19,6 +19,11 @@
   Not cured by this version, due in 0.1.11 (T114): a session whose recorded NAME holds half of an emoji (a lone
   surrogate) still ends a revive, and no session comes back (seen in a test with stand-in sessions, not on a real
   machine); odd characters in other names and in what other programs print are not read yet either (T115).
+  Found while this version was tried, and not cured by it either: a session in a tmux session whose name holds a
+  backslash is not brought back, while the others are (T116; seen on a stock virtual machine with tmux 3.4); and
+  under a language setting that is not UTF-8, a session whose folder name holds a character outside ASCII comes
+  back in the home folder, not its own (T117; seen in a test with a made locale, not on a real machine; 0.1.10.1
+  brought back none there). The README's known edges say what helps.
 
 ## 0.1.10.1 (2026-11-24)
 

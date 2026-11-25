@@ -183,6 +183,26 @@ title cut in the middle of an emoji would leave) still ends a revive in an error
 in a test with stand-in sessions on 0.1.10.1 and on 0.1.10.2, not on a real machine. A folder whose name is not
 UTF-8 did the same up to 0.1.10.1 and does not from 0.1.10.2 on (T115).
 
+Known edge until 0.1.11 (T116): a session in a tmux session whose name holds a backslash is not brought back.
+Seen with 0.1.10.1 (0.1.10.2 changes nothing there) and stand-in sessions on a stock Ubuntu 24.04 virtual machine
+with tmux 3.4, the tmux server ended by hand: the revive names that session, tries once a minute for 25 minutes
+and says it gave up; the other sessions come back, and nothing is started twice. tmux itself stores such a name
+with the backslash doubled, and doubles it again when Tardigrade asks for a session under the stored name. A
+leading dollar sign in the tmux name did the same. A tab or a control character in the name: expected the same by
+how tmux stores names, not seen. What helps, tried there: give that tmux session a name without a backslash while
+it runs, and from the next record on it comes back. The old name stands after the equals sign as `tmux ls` prints
+it, in single quotes:
+
+```
+tmux rename-session -t '=back\\slash' second-lane
+```
+
+Known edge until 0.1.11 (T117): on a machine whose language setting is not UTF-8 (`locale charmap` prints
+something other than UTF-8), a session in a folder whose name holds a character outside ASCII (an accent, a
+non-Latin letter) comes back in the home folder, not its own, and no line says so. Seen in a test with stand-in
+sessions and a made Latin-1 locale, not on a real machine; under a UTF-8 setting every session came back in its
+own folder. Up to 0.1.10.1 the revive there ended in an error and no session came back.
+
 Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
 tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
 "no terminal at all" for every session that runs in tmux, `open` says there is nothing to open, and a `record` or a
