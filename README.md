@@ -203,6 +203,27 @@ non-Latin letter) comes back in the home folder, not its own, and no line says s
 sessions and a made Latin-1 locale, not on a real machine; under a UTF-8 setting every session came back in its
 own folder. Up to 0.1.10.1 the revive there ended in an error and no session came back.
 
+Known edge until 0.1.11 (T118): Tardigrade cuts the lines of a conversation file and of the prompt history where
+Python's `splitlines()` cuts, which is at the line feed and also at the character U+2028. Claude Code writes that
+character as it is when a tool's output or a pasted prompt holds one (counted in two real conversation files: 7
+of about 61,000 lines, and 51 of 64,757). If a session was ended with /exit and then resumed, and every line
+written after that holds such a character when the computer restarts, the revive says "skip NAME: its owner
+ended it with /exit", does not bring that session back, and census lists it as ended by its owner. The same for
+an /exit in the prompt history followed by a prompt that holds the character. Seen with 0.1.10.1 (0.1.10.2
+changes nothing there) and stand-in sessions with planted lines on a stock Ubuntu 24.04 virtual machine: 3 of 5
+came back, the two skipped were the two planted this way, and nothing was started twice; one ordinary line after
+the /exit and the read is right. Not seen: a real session that ended this way. What helps, tried there: ask for
+the session by name, and the line Tardigrade prints names the step with the conversation's id; that step brought
+the session back:
+
+```
+tardigrade revive --only "NAME"
+```
+
+By the same cut, a tmux session whose name holds U+2028 or NEL (U+0085) is recorded under the part of its name
+before that character and comes back in a tmux session of that shorter name: once, under another name (seen on
+the same machine).
+
 Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
 tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
 "no terminal at all" for every session that runs in tmux, `open` says there is nothing to open, and a `record` or a

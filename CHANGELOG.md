@@ -23,7 +23,11 @@
   backslash is not brought back, while the others are (T116; seen on a stock virtual machine with tmux 3.4); and
   under a language setting that is not UTF-8, a session whose folder name holds a character outside ASCII comes
   back in the home folder, not its own (T117; seen in a test with a made locale, not on a real machine; 0.1.10.1
-  brought back none there). The README's known edges say what helps.
+  brought back none there). And a session ended with /exit, then resumed, whose every line after that holds the
+  character U+2028 as it is, is skipped by the revive as ended by its owner; a tmux session name that holds
+  U+2028 or NEL comes back cut at it (T118; seen with stand-in sessions and planted lines on a stock virtual
+  machine; that Claude Code writes the character as it is was counted in two real conversation files). The
+  README's known edges say what helps.
 
 ## 0.1.10.1 (2026-11-24)
 
