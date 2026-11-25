@@ -186,9 +186,13 @@ def signal_mine(pid, sig, folder, started=None, test=""):
         end = time.time() + 3
         while cmdline_of(pid) == "" and start_time(pid) == was and running(pid) and time.time() < end:
             time.sleep(0.05)
+        # G7.14 (T113): what goes into the reason is read BEFORE the last look, and nothing is read after it. Read
+        # after it, the command line of a process that ended in between came back as gone (or empty, for one that
+        # had ended and was not yet read by its parent), and a process that was no longer there failed the test.
+        seen = cmdline_of(pid)
         if start_time(pid) != was or not running(pid):
             return False                                # it ended while it was being read
-        NOT_SHOWN.append((test, pid, f"{cmdline_of(pid)!r}: neither this test's folder in its command line or "
+        NOT_SHOWN.append((test, pid, f"{seen!r}: neither this test's folder in its command line or "
                                      "environment, nor the start time remembered with it, nor a child of the suite"))
         return False
     _SIGNAL["shown"] = pid
@@ -7795,6 +7799,75 @@ class Signals(Base):
                 if not probe and where not in ("signal_mine", "_on_signal", me, GATE_TEST):
                     out.append(f"line {c.lineno} in {where}")
         self.assertEqual(sorted(set(out)), [], "a signal sent past signal_mine")
+
+    def test_G7_14_a_process_that_ends_at_any_read_of_the_signal_guard_is_gone_and_is_not_written_down(self):
+        """T113: before the guard writes down that a process was not shown to be the test's own, it reads that
+        process several times. One that ends between two of those reads was nobody's to signal: nothing is sent and
+        nothing is written down, at whichever read it ends. Seen in a whole run: the guard's last look said "still
+        there", the process ended, the command line read for the reason came back as gone, and a test that had
+        passed failed on it. Planted here: a stranger that is ended just before the guard's first read of it, then
+        just before its second, and so on through every read the guard makes."""
+        import builtins
+        me = self._testMethodName
+        other = tempfile.mkdtemp(prefix="tgother")                 # a folder that is not this test's
+        self.addCleanup(shutil.rmtree, other, True)
+        clean = {"PATH": os.environ["PATH"], "HOME": other, "TMUX_TMPDIR": other}
+        nap = [shutil.which("sleep"), "300"]
+        asked = lambda: [x for x in NOT_SHOWN if x[0] == me]
+
+        def forget():
+            n = len(asked())
+            NOT_SHOWN[:] = [x for x in NOT_SHOWN if x[0] != me]         # made on purpose: they do not fail this test
+            return n
+        plan = {"pid": None, "born": None, "at": None, "n": 0, "busy": False}
+
+        def reading(path, *a, **k):
+            """this file's open while the guard is asked: each read of the planted process is counted, and just
+            before read number `at` the process is ended (by its start time) and waited for"""
+            if not plan["busy"] and isinstance(path, str) and path.startswith(f"/proc/{plan['pid']}/"):
+                plan["n"] += 1
+                if plan["n"] == plan["at"]:
+                    plan["busy"] = True
+                    try:
+                        sent = signal_mine(plan["pid"], signal.SIGKILL, "", plan["born"])
+                        end = time.time() + 10
+                        while running(plan["pid"]) and time.time() < end:
+                            time.sleep(0.01)
+                        plan["ended"] = sent and not running(plan["pid"])
+                    finally:
+                        plan["busy"] = False
+            return builtins.open(path, *a, **k)
+
+        def ask(at):
+            """a new stranger, and the guard asked to signal it -> (its pid, whether a signal went, reads made)"""
+            pid, born = self.orphan(nap, clean)
+            self.assertEqual(shown_mine(pid, self.tmp), "")
+            plan.update(pid=pid, born=born, at=at, n=0, ended=False)
+            globals()["open"] = reading
+            try:
+                sent = signal_mine(pid, signal.SIGTERM, self.tmp, test=me)
+            finally:
+                del globals()["open"]
+                plan["pid"] = None
+            return pid, sent, plan["n"]
+        # a stranger that stays: every read is made, nothing is sent, and it is written down with its command line
+        pid, sent, reads = ask(None)
+        self.assertFalse(sent)
+        time.sleep(0.3)
+        self.assertTrue(running(pid), "a signal went to a stranger")
+        self.assertEqual([(x[1], x[2].split(":")[0]) for x in asked()], [(pid, repr(" ".join(nap)))])
+        self.assertEqual(forget(), 1)
+        self.assertGreaterEqual(reads, 6, "the guard reads a process it cannot show less often than this test expects")
+        # one that ends just before read 1, 2, ... of those: gone, at every one of them
+        wrong = []
+        for at in range(1, reads + 1):
+            pid, sent, _ = ask(at)
+            self.assertTrue(plan["ended"], f"the plant was not ended before read {at}")
+            if sent or asked():
+                wrong.append(f"ended before read {at} of {reads}: signal sent {sent}, written down as "
+                             f"{[x[2][:40] for x in asked()]}")
+            forget()
+        self.assertEqual(wrong, [], "a process that had ended was written down as a stranger")
 
     def test_G5_18_the_guard_catches_each_kind_in_a_planted_test_and_only_the_gate_can_take_it_out(self):
         """T87: the guard's parts 2 to 5. A planted test of each kind is caught, also when it swallows the error, and

@@ -1591,7 +1591,7 @@
    "owner": "maintainer",
    "first_ship_in": "0.1.11",
    "ship_in": "0.1.11",
-   "test": "",
+   "test": "test_G7_14_a_process_that_ends_at_any_read_of_the_signal_guard_is_gone_and_is_not_written_down",
    "proven": "",
    "issue": 121,
    "moved_why": "",
