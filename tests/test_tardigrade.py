@@ -2452,16 +2452,32 @@ class Revive(Base):
         self.assertEqual(self.logged("asked once how it takes a #"), 1, "tmux is asked once in a run")
 
         # "no file" proves something only beside a control that DID run in this same world: the same server is
-        # handed the form in a place where tmux is known to run it, and the test waits until its file is there
+        # handed the form in a place where tmux is known to run it, and the test waits until its file is there.
+        # The client that asks STAYS until then. tmux signals the shell it started for a format as soon as the
+        # client that asked for it is gone, and the command runs only if that shell had already started it (read
+        # in tmux's source, seen in its own log). So a client that asks and goes makes the file only when it wins
+        # that race; asked again every 0.1 s it lost for a whole 40 s in one run on the test image. So after
+        # display -p the same client waits (wait-for) on a name of this test's own, and the test lets it go once
+        # the file was seen or the wait is over.
         def proofs():
             found = [os.path.join(dp, f) for dp, _, fs in os.walk(self.tmp) for f in fs if f.startswith("hashproof")]
             return sorted(found + [os.path.join(os.getcwd(), f) for f in os.listdir(os.getcwd()) if f.startswith("hashproof")])
 
-        def control_ran():
-            subprocess.run([TMUX, "-S", self.sock, "display", "-p", form % "control"], capture_output=True, env=self.env,
+        held = "tardigrade-control-" + os.path.basename(self.tmp)
+        asking = subprocess.Popen([TMUX, "-S", self.sock, "display", "-p", form % "control", ";", "wait-for", held],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  env=self.env, cwd=self.tmp)
+        try:
+            self.until(lambda: any(x.endswith("hashproof-control") for x in proofs()),
+                       "the control: the form handed to display -p makes its file in this world")
+        finally:
+            subprocess.run([TMUX, "-S", self.sock, "wait-for", "-S", held], capture_output=True, env=self.env,
                            cwd=self.tmp, timeout=30)
-            return any(x.endswith("hashproof-control") for x in proofs())
-        self.until(control_ran, "the control: the form handed to display -p makes its file in this world")
+            try:
+                asking.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                asking.kill()
+                asking.wait()
         time.sleep(1)
         self.assertEqual([os.path.basename(x) for x in proofs()], ["hashproof-control"],
                          "only the control's file: no name, folder or title was run as a command")
