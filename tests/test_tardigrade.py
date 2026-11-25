@@ -703,7 +703,9 @@ class Base(unittest.TestCase):
 
     def tg(self, *a, **over):
         env = dict(self.env, **{k: str(v) for k, v in over.items()})
-        r = subprocess.run([sys.executable, "-I", SCRIPT, *a], capture_output=True, text=True, env=env, timeout=240)
+        # a byte the tool printed that is not text is kept (a lone surrogate), never raised on
+        r = subprocess.run([sys.executable, "-I", SCRIPT, *a], capture_output=True, text=True, env=env, timeout=240,
+                           encoding="utf-8", errors="surrogateescape")
         return r.returncode, r.stdout + r.stderr
 
     def launches(self):
@@ -7240,6 +7242,68 @@ class Names(Base):
     def places(self):
         return {r["session_id"]: (r["host"], r["tmux_socket"], r["tmux_session"]) for r in self.table()["lanes"]}
 
+    def test_G2_57_a_folder_whose_name_is_not_utf8_ends_no_run_and_every_session_comes_back(self):
+        """T114: the tool never ends on a character. One session lives in a folder whose name holds a byte that is not
+        UTF-8, two in ordinary folders, and beside them runs a process that is no session and whose command line holds
+        such a byte (the tool reads every process). Every command is run and a restart is lived through, in this
+        file's own language setting and then, where this machine has it, with en_US.UTF-8 (there a print of such a
+        name raises, where under C it is the write to the log that does). No run ends in a traceback, each ends with
+        exit 0, and after each restart all three sessions are back, each in its own folder, the bent one included."""
+        folders = [os.path.join(self.tmp, "plain one"), os.fsdecode(os.fsencode(self.tmp) + b"/wb\xffx"),
+                   os.path.join(self.tmp, "plain two")]
+        places = ["one", "bent", "two"]
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        sid = []
+        for f, s in zip(folders, places):
+            os.makedirs(f)
+            before = len(self.launches())
+            sid.append(str(uuid.uuid4()))
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", s, "-c", f,
+                              f"FAKE_SID={sid[-1]} FAKE_NAME='Lane {s}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0)
+            self.wait_launches(before + 1)
+        self.assertEqual([r["cwd"] for r in self.launches()[-3:]], folders, "each stand-in runs where it was asked to")
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)", os.fsdecode(b"arg\xffx")],
+                                 env=self.env, cwd=self.tmp, stdin=subprocess.DEVNULL)
+        self.addCleanup(lambda: (other.poll() is None and other.kill(), other.wait(timeout=10)))
+        have = subprocess.run(["locale", "-a"], capture_output=True).stdout.decode(errors="replace").lower().split()
+        worlds = [("this file's own setting", {})]
+        if "en_us.utf8" in have or "en_us.utf-8" in have:
+            worlds.append(("en_US.UTF-8", {"LC_ALL": "en_US.UTF-8"}))
+        wrong = []
+
+        def road(world, *a, **over):
+            rc, out = self.tg(*a, **dict(over, **world[1]))
+            if rc != 0 or "Traceback (most recent call last)" in out:
+                last = out.strip().splitlines()[-1][:150] if out.strip() else ""
+                wrong.append(f"[{world[0]}] {' '.join(a)}: exit {rc}: {last}")
+        for world in worlds:
+            for a in (("record", "--force"), ("census",), ("open", "--dry-run"), ("revive", "--dry-run", "--all"),
+                      ("trust",), ("setup", "--dry-run")):
+                road(world, *a)
+            self.assertEqual({r["session_id"]: r["cwd"] for r in self.table()["lanes"]}, dict(zip(sid, folders)),
+                             "the record keeps each folder exactly, for the act")
+            self.reboot()
+            n = len(self.launches())
+            # the second restart is another boot: the tool brings sessions back once for each boot
+            boot = {} if world is worlds[0] else {"TARDIGRADE_FAKE_BOOT_ID": "boot-b"}
+            road(world, "revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100, **boot)
+            try:
+                self.wait_launches(n + 3)
+            except AssertionError:
+                pass
+            back = sorted((r["sid"], r["cwd"]) for r in self.launches()[n:])
+            if back != sorted(zip(sid, folders)):
+                wrong.append(f"[{world[0]}] after the restart {len(back)} of 3 came back")
+            self.assertEqual(wrong, [], f"{len(wrong)} finding(s)")
+            for s, i in zip(places, sid):
+                self.assertEqual(self.pane_sid(s), i, f"[{world[0]}] the session in tmux session {s!r}")
+            for a in (("census",), ("record",)):
+                road(world, *a, **boot)
+        self.assertEqual(wrong, [], f"{len(wrong)} finding(s)")
+        with open(self.state("tardigrade.log"), "rb") as f:
+            self.assertNotIn(b"Traceback", f.read())
+
     def test_G5_28_a_session_is_found_and_its_name_read_whole_where_the_tool_is_started_with_LC_ALL_C(self):
         self.assertEqual(self.env.get("LC_ALL"), "C", "the world of this file")
         self.assertNotIn("TMUX", self.env)
@@ -7312,6 +7376,58 @@ class Names(Base):
         self.assertGreater(before_uninstall, seen_reading + 3, "the revive made tmux calls of its own")
         self.assertGreater(len(first), before_uninstall, "uninstall read the marks through tmux")
         self.assertEqual(set(first), {"-u"}, f"a tmux call of the tool's own went out without -u: {first}")
+
+    def test_G2_57_every_place_in_the_tools_code_that_turns_bytes_into_text_or_back_says_how(self):
+        """T114, the code read beside the planted run (which holds the roads it walks): a file opened as text, a
+        program's output read as text and a decode each either name what happens to a byte that is not text
+        (errors=...), or are a read inside a try that takes the ValueError such a byte raises (the answer there is
+        "could not be read"). A write always names it: a write that raises ends the run. The kernel's own two files
+        of digits are the only reads left as they are. And the screen's two streams are set before anything prints."""
+        src = fread(SCRIPT)
+        tree = ast.parse(src)
+        above = {c: n for n in ast.walk(tree) for c in ast.iter_child_nodes(n)}
+
+        def caught(node):
+            """the exception names of the nearest try whose body holds this node"""
+            x = node
+            while x in above:
+                p = above[x]
+                if isinstance(p, ast.Try) and x in p.body:
+                    return " ".join(ast.unparse(h.type) if h.type else "BaseException" for h in p.handlers)
+                x = p
+            return ""
+        kernel = {"'/proc/sys/kernel/random/boot_id'", "'/proc/uptime'"}
+        loose, seen = [], {"open": 0, "program": 0, "decode": 0}
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            f, kw = ast.unparse(n.func), {k.arg for k in n.keywords}
+            if f in ("open", "os.fdopen"):
+                mode = ast.literal_eval(n.args[1]) if len(n.args) > 1 else "r"
+                if "b" in mode:
+                    continue
+                seen["open"] += 1
+                reads = mode == "r"
+                takes = reads and any(w in caught(n) for w in ("ValueError", "UnicodeDecodeError"))
+                if not ("errors" in kw or takes or (reads and ast.unparse(n.args[0]) in kernel)):
+                    loose.append(f"line {n.lineno}: {f} in mode {mode!r} says nothing about a byte that is not text")
+            elif f in ("subprocess.run", "subprocess.Popen", "subprocess.check_output"):
+                if kw & {"text", "encoding", "universal_newlines"}:
+                    seen["program"] += 1
+                    if "errors" not in kw:
+                        loose.append(f"line {n.lineno}: {f} reads a program's output as text and names no errors=")
+            elif isinstance(n.func, ast.Attribute) and n.func.attr in ("decode", "encode") and not (
+                    isinstance(n.func.value, ast.Constant)):
+                seen["decode"] += 1
+                if "errors" not in kw and len(n.args) < 2 and "Error" not in caught(n):
+                    loose.append(f"line {n.lineno}: {ast.unparse(n)[:60]} names no errors")
+        self.assertEqual(loose, [])
+        self.assertTrue(seen["open"] >= 20 and seen["program"] >= 3 and seen["decode"] >= 5, f"too little read: {seen}")
+        main = [n for n in tree.body if isinstance(n, ast.If) and "__main__" in ast.unparse(n.test)]
+        self.assertEqual(len(main), 1)
+        first = ast.unparse(main[0].body[0])
+        self.assertIn("sys.stdout, sys.stderr", first, "the streams are not the first thing the run sets")
+        self.assertIn("reconfigure(errors='backslashreplace')", first)
 
     def test_G5_28_the_tools_code_puts_the_tmux_program_into_a_call_in_one_place_only(self):
         """the wrapper test above holds the roads it walks; this one reads the code, so that a road it does not walk

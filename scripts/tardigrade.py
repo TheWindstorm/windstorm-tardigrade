@@ -214,13 +214,16 @@ def log(msg):
     os.makedirs(STATE, exist_ok=True)
     fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as f:
+    # G2.57 (T114): a line may name a folder, and a byte of a folder's name that is not UTF-8 is a lone surrogate
+    # here. Written strictly it raised, and a boot's revive ended at its first start line with nothing brought back.
+    with os.fdopen(fd, "a", encoding="utf-8", errors="backslashreplace") as f:
         f.write(line + "\n")
 
 
 def run(argv, timeout=30, env=None):
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+        r = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout,
+                           env=env)
         return r.returncode, r.stdout
     except (subprocess.TimeoutExpired, OSError):
         return 99, ""
@@ -229,7 +232,8 @@ def run(argv, timeout=30, env=None):
 def run_err(argv, timeout=30, env=None):
     """run(), with what the program wrote to stderr as a third answer"""
     try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+        r = subprocess.run(argv, capture_output=True, text=True, errors="surrogateescape", timeout=timeout,
+                           env=env)
         return r.returncode, r.stdout, r.stderr
     except (subprocess.TimeoutExpired, OSError):
         return 99, "", ""
@@ -298,7 +302,7 @@ def write_private(path, text):
     tmp = path + ".new"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     os.fchmod(fd, 0o600)                  # a .new left from before keeps its old mode otherwise
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
         f.write(text)
     os.replace(tmp, path)
 
@@ -432,7 +436,8 @@ def env_facts(pid):
             facts["carry"][k] = v
     facts["token_keys"].sort()
     if tok:
-        facts["token_print"] = hashlib.sha256(("tardigrade:" + "\n".join(sorted(tok))).encode()).hexdigest()[:8]
+        facts["token_print"] = hashlib.sha256(
+            ("tardigrade:" + "\n".join(sorted(tok))).encode("utf-8", "surrogateescape")).hexdigest()[:8]
     return facts
 
 
@@ -706,7 +711,7 @@ def panes():
             try:
                 r = subprocess.run(tmux_own(s) + ["list-panes", "-a", "-F",
                                                   "#{pane_pid}\t#{session_attached}\t#{session_name}"],
-                                   capture_output=True, text=True, timeout=6)
+                                   capture_output=True, text=True, errors="surrogateescape", timeout=6)
                 rc, out, err = r.returncode, r.stdout, r.stderr
             except (subprocess.TimeoutExpired, OSError):
                 pass
@@ -1668,7 +1673,7 @@ def tsv_labels():
     another tool before this one took over. Read only; a table that is not there gives nothing."""
     out = {}
     try:
-        with open(os.path.expanduser(str(CFG.get("tsv_path") or "")), encoding="utf-8") as f:
+        with open(os.path.expanduser(str(CFG.get("tsv_path") or "")), encoding="utf-8", errors="replace") as f:
             for line in f:
                 c = line.rstrip("\n").split("\t")
                 if line.startswith("#") or len(c) < 8:
@@ -1882,7 +1887,7 @@ def write_launch_file(r):
         except OSError:
             pass
     fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
+    with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as f:
         f.write(launch_text(r))
     os.replace(path + ".new", path)
     return path
@@ -2886,7 +2891,7 @@ def revive():
         log("revive: a lock was left by a revive that did not finish (a reboot or a power cut during it); taking over")
         free_lock(lock)
         os.mkdir(lock)
-    with open(owner, "w") as f:
+    with open(owner, "w", encoding="utf-8", errors="backslashreplace") as f:
         f.write(f"{boot_id()} {os.getpid()}\n")
     try:
         return _revive(boot)
@@ -4332,7 +4337,7 @@ def stored_programs():
             else os.path.basename(p)[:-len(".plist")]
         row = {"file": p, "what": what, "program": "", "state": "unread", "why": ""}
         try:
-            with open(p) as f:
+            with open(p, encoding="utf-8", errors="surrogateescape") as f:
                 text = f.read()
         except OSError as e:
             row["why"] = e.strerror or type(e).__name__
@@ -4430,7 +4435,7 @@ def setup():
                 ("ai.thewindstorm.tardigrade-record", "exec", "<key>StartInterval</key><integer>300</integer>")):
             p = os.path.join(la, label + ".plist")
             arg = " revive --boot" if "revive" in label else " record"
-            with open(p, "w") as f:
+            with open(p, "w", encoding="utf-8", errors="surrogateescape") as f:
                 f.write(plist(label, py, script + arg, verb, extra))
             wrote.append(p)
             # G5.27 (T107), family rule 30: the job from before is told off and READ gone before this one is loaded
@@ -4469,7 +4474,7 @@ def setup():
         ud = os.path.join(HOME, ".config", "systemd", "user")
         os.makedirs(ud, exist_ok=True)
         for name, text in units(py, script).items():
-            with open(os.path.join(ud, name), "w") as f:
+            with open(os.path.join(ud, name), "w", encoding="utf-8", errors="surrogateescape") as f:
                 f.write(text)
         env = user_env()
         run(["systemctl", "--user", "daemon-reload"], env=env)
@@ -5548,6 +5553,14 @@ COMMANDS = {"wait": wait_screen, "report": report_cmd, "trust": trust_cmd, "reco
             "setup": setup, "uninstall": uninstall}
 
 if __name__ == "__main__":
+    # G2.57 (T114): THE TOOL NEVER ENDS ON A CHARACTER. A value it did not write (a folder's name, a session's name,
+    # another program's words) may hold what the screen's encoding cannot say; such a character is written out as
+    # a backslash form instead of raising in the middle of a run.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass
     cmd = (sys.argv[1:] or ["census"])[0]
     if cmd in ("-h", "--help", "help"):
         print(__doc__)
@@ -5571,7 +5584,7 @@ if __name__ == "__main__":
         print(said, file=sys.stderr, flush=True)
         try:        # a run that only reads adds this line to a log that is there, and makes none (G3.30)
             fd = os.open(LOG, os.O_WRONLY | os.O_APPEND | (0 if READS[0] else os.O_CREAT), 0o600)
-            with os.fdopen(fd, "a", encoding="utf-8") as f:
+            with os.fdopen(fd, "a", encoding="utf-8", errors="backslashreplace") as f:
                 f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {said}\n")
         except OSError:
             pass
