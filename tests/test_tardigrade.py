@@ -1433,7 +1433,7 @@ class Revive(Base):
         envf = os.path.join(self.home, "desk.env")
         with open(envf, "w") as f:
             f.write("DISPLAY=:10.0\n")
-        seen = self.script("tmux-seen", '#!/bin/sh\nprintf "%s %s\\n" "$1" "$2" >> "$HOME/tmux-calls.log"\n'
+        seen = self.script("tmux-seen", '#!/bin/sh\nprintf "%s %s %s\\n" "$1" "$2" "$3" >> "$HOME/tmux-calls.log"\n'
                            f'exec {shlex.quote(TMUX)} "$@"\n')
         self.cfg({"env_file": envf, "tmux": seen})
         # before: what this person's tmux settings say, asked of a server that reads them and ends again
@@ -1477,13 +1477,14 @@ class Revive(Base):
         pane = ask("display", "-p", "-t", "=alpha:", "#{pane_pid} #{pane_current_command}").split()
         self.assertEqual(cmdline_of(int(pane[0])).split()[:2], ["bash", "-ic"])
         self.assertNotIn(pane[1], ("sh", "dash", "bash"), "tmux names the session's program, not a shell above it")
-        # tmux always gets its socket: every call of this record, census and revive
+        # tmux always gets its socket: every call of this record, census and revive (after -u, which every call
+        # of the tool's own starts with since T109)
         self.tg("record", "--force")
         rc, census = self.tg("census")
         self.assertIn("Running: 1 ", census)
         calls = fread(os.path.join(self.home, "tmux-calls.log")).splitlines()
         self.assertGreater(len(calls), 5)
-        self.assertEqual([c for c in calls if not (c.startswith("-S " + self.tmp + os.sep) or c == "-V ")], [])
+        self.assertEqual([c for c in calls if not (c.startswith("-u -S " + self.tmp + os.sep) or c == "-V  ")], [])
         # (a) the mark is the tool's own, in its state folder; the session's folder and the home got nothing; the
         # census counts no session for it
         mark = self.state(os.path.join("launch", sid + ".mark"))
