@@ -252,6 +252,7 @@ version it is due in, and the tests refuse that version while the row is not bui
 | G2.69 | Due in 0.1.11 (T149). A login that starts the account's user manager anew brings back what the record holds, as after a restart. | Not built yet. |
 | G2.70 | Due in 0.1.11 (T154; a direction, the one design makes it final). Nothing Tardigrade starts leaves the account's service manager failed at a last logout. | Not built yet. |
 | G2.71 | Due in 0.1.11 (T155; a direction, the one design makes it final). A revive that finds the lock of a run that did not finish says what it knows, that a revive did not finish, and names no cause it cannot tell; where it can tell that a logout ended the boot run, it says so. | Not built yet. |
+| G2.72 | Due in 0.1.11 (T156). A command given a word it does not read does nothing: before its first act it names the word it could not use and the form it does read, and ends with exit 2, as an unknown command does. | Not built yet. |
 
 ### G3 Census: say what is running and what is not
 
