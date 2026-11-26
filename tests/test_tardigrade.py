@@ -3539,8 +3539,9 @@ class Setup(Base):
             self.assertEqual(rc, 1, (named, out))
             self.assertIn("boot service: enabled   record timer: active   start lines: not as written", out)
             self.assertIn(f"NOT set up: {why}. Setup wrote the service files and the service manager does not hold "
-                          "them as written: run uninstall, and tell the maintainer what this said. Nothing comes back "
-                          "by itself yet.", out)
+                          "them as written: run uninstall, and tell the maintainer what this said.\n", out)
+            # the tool read that the list differs, not what the held line starts: it does not say nothing comes back
+            self.assertNotIn("Nothing comes back by itself yet", out)
             self.assertNotIn("is set up.", out)
             self.assertNotIn("come back by themselves", out)
             self.assertEqual(census(), f"Comes back after a reboot: NO: {why} (run setup)")
@@ -4047,7 +4048,7 @@ elif "start" in a:
                   "setup asked of it after writing them (daemon-reload) ended with exit code %d. Run setup again; if "
                   "this line comes back, run uninstall, and tell the maintainer what this said.")
         uninstall = (" Setup wrote the service files and the service manager does not hold them as written: run "
-                     "uninstall, and tell the maintainer what this said. Nothing comes back by itself yet.")
+                     "uninstall, and tell the maintainer what this said.\n")
 
         def setup(reload_exit, held, **more):
             self.boot_answers("enabled", "active", copy=False)
@@ -4072,6 +4073,7 @@ elif "start" in a:
         self.assertEqual(rc, 1, out)
         self.assertIn("NOT set up: " + not_held + "." + uninstall, out)
         self.assertNotIn("daemon-reload", out)
+        self.assertNotIn("Nothing comes back by itself yet", out)       # here too: neither case says it
         # a drop-in file of the person's own stands on the unit: theirs, whatever the reload answered
         rc, out = setup(1, "another", dropins='as 1 "/home/you/unit.d/override.conf"')
         self.assertEqual(rc, 1, out)

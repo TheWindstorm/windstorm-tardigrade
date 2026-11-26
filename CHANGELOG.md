@@ -40,6 +40,8 @@
   a drop-in that is not meant, then run setup again), and gives the service manager's own listing of that service
   and its drop-in files (`systemctl --user cat` and the service's name) as the last thing on a line of its own;
   the census does the same. The census says NO only where it read that setup's line is not held, or held changed.
+  That NO is more than it read: the list differs, and what the held line starts was not read. It errs to the
+  safe side (T136, due 0.1.11).
   Where the line is held as written, only not once and first, it says "not known", neither yes nor no, and names
   the place or the count: Tardigrade read the manager's list, not what the service then does. Recorded on stock
   virtual machines with systemd 237, 239, 245, 249 and 255, with drop-in files of made-up values: each manager's

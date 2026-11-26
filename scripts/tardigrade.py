@@ -3687,7 +3687,9 @@ def setup():
             " Setup wrote the service files and the service manager does not hold them as written: run uninstall, "
             "and tell the maintainer what this said." if other else "" if MAC else " The units are written in "
             "~/.config/systemd/user/. Log out and in, then run setup again.")
-            + ("" if theirs_only or moment else " Nothing comes back by itself yet."))
+            # where the manager's list holds another line, the tool read that it differs, not what that line
+            # starts: it says neither that sessions come back nor that nothing does
+            + ("" if other else " Nothing comes back by itself yet."))
         if step_line(missing, []):      # the words first; the command last on a line of its own
             print(OWN_AFTER[0].upper() + OWN_AFTER[1:] + ".")
             print(step_line(missing, []))
