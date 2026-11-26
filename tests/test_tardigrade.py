@@ -4564,7 +4564,8 @@ class Revive(Base):
         # the stop line at the end of the run names the next step: by hand, and where the README has it
         gave = re.search(r"Hash Before A Letter: GAVE UP after \d+ attempt\(s\); its tmux session is gone(.*)", out)
         self.assertEqual(gave and gave.group(1), ". It was not started for the # in the name of its tmux session "
-                         "(its NOT STARTED line above). To bring it back by hand: the README, under "
+                         "(its NOT STARTED line above). The next revive asks tmux again: the one after the next "
+                         "restart, or one you run now. To bring it back by hand: the README, under "
                          "\"A # in a name or a folder (T119, cured in 0.1.10.3)\"", out)
         self.assertEqual(fread(os.path.join(ROOT, "README.md")).count("\nA # in a name or a folder (T119, cured in 0.1.10.3): "), 1,
                          "the README has that heading, once")
@@ -4573,6 +4574,20 @@ class Revive(Base):
         self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", "=own:", "#{pane_title}")[1],
                          "Own W name (coming back)\n", "the title went over without its hash")
         self.assertEqual(self.logged("asked once how it takes a #"), 0)
+        # the census never shows that session with no why, and never with the why of a start that failed (no start
+        # was made): under its row stands the reason its NOT STARTED line gave. A record keeps the row on the list a
+        # revive reads (G1.20) and the reason with it: the census says the same after it
+        why = ("\n      A revive did not start it: the name of its tmux session holds a # and tmux could not be asked "
+               "how it takes one (the made-up name it asks with is taken by a tmux session that is there: one of "
+               "Tardigrade's own ends by itself within a minute, any other is a person's and is left alone), so it "
+               "is not started under a guessed name. Nothing of it is lost. Next step: run revive again; it asks "
+               "tmux again\n")
+        for after in ("the give-up", "a record"):
+            census = self.tg("census")[1]
+            self.assertEqual((census.count(why), census.count("A revive did not"), census.count("it ended at once")),
+                             (1, 1, 0), after + "\n" + census)
+            rc, out = self.tg("record")
+            self.assertEqual((rc, [r["name"] for r in self.table()["down"]]), (0, []), out)
         # the made-up name is free again: the next revive asks, and the third session is back under its own name
         self.tmux(self.sock, "kill-session", "-t", f"={taken[0]}")
         out, started = revive()
@@ -6684,8 +6699,10 @@ end(0)
                 os.remove(log) if os.path.exists(log) else None
                 rc, out = self.tg(*args)
                 self.assertEqual(rc, 1, out)
-                self.assertIn("NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl "
-                              f'--user` answered "{said}" (exit 1).', out)
+                # the line says what was read (G5.32, T133): that this shell reached none, not that there is none
+                self.assertIn("NOT set up: this shell cannot reach a systemd user manager to hand the boot service to. "
+                              f'`systemctl --user` answered "{said}" (exit 1).', out)
+                self.assertNotIn("no systemd user manager", out)
                 self.assertIn("Nothing was installed, and no file or folder was made.", out)
                 # the words beside the step are T133's (0.1.10.4): what was read, not that there is none
                 self.assertTrue(out.rstrip().endswith("Log out and in (this shell cannot reach the systemd user manager), "
@@ -6697,7 +6714,7 @@ end(0)
         systemctl("Failed to get unit file state for windstorm-tardigrade-revive.service: Access denied")
         rc, out = self.tg("setup")
         self.assertEqual(rc, 3, out)
-        self.assertNotIn("has no systemd user manager to hand", out)
+        self.assertNotIn("user manager to hand the boot service to", out)
         self.assertTrue(os.path.exists(copy))
 
     def test_G5_23_setup_writes_the_settings_file_only_when_a_value_changes(self):

@@ -2256,7 +2256,10 @@ ASK_WHYS = {                       # every cause there is for no answer, in this
 # give-up line says after "its tmux session is gone": the next step is by hand, and the README has it
 NOT_ASKED_NOW = set()
 NOT_ASKED_NEXT = ('. It was not started for the # in the name of its tmux session (its NOT STARTED line above). '
+                  'The next revive asks tmux again: the one after the next restart, or one you run now. '
                   'To bring it back by hand: the README, under "A # in a name or a folder (T119, cured in 0.1.10.3)"')
+# how the reason of such a session begins wherever it is kept (the run's report and progress file, the record)
+NOT_ASKED_HEAD = "the name of its tmux session holds a # and tmux could not be asked how it takes one ("
 
 
 def hashes_doubled(v):
@@ -2359,6 +2362,13 @@ def title_for_tmux(sock, text):
     return hashes_doubled(text) if a["title"] else text
 
 
+def not_asked_why(r):
+    """the reason a session was not started for the # in its tmux name, with the cause of the last asking: the
+    words of its NOT STARTED line, kept as its why so that it is never shown without one"""
+    return (f"{NOT_ASKED_HEAD}{ASK_WHY[r['tmux_socket']]}), so it is not started under a guessed name. "
+            "Nothing of it is lost")
+
+
 def not_asked(r):
     """a session whose tmux name holds a # is not started under a guessed name: said once in a run, with the
     cause. The line names no step by hand: the session is down then, and this run asks again by itself."""
@@ -2366,9 +2376,8 @@ def not_asked(r):
     if r["session_id"] in SAID.setdefault("not_asked", set()):
         return
     SAID["not_asked"].add(r["session_id"])
-    log(f"  {display(r)}: NOT STARTED. The name of its tmux session holds a # and tmux could not be asked how it "
-        f"takes one ({ASK_WHY[r['tmux_socket']]}), so it is not started under a guessed name. "
-        "Nothing of it is lost. This run asks again at each try")
+    why = not_asked_why(r)
+    log(f"  {display(r)}: NOT STARTED. {why[0].upper()}{why[1:]}. This run asks again at each try")
 
 
 def new_session(sock, name, cwd, cmd, then=(), sid=""):
@@ -2516,10 +2525,13 @@ def in_way_text(r, ours):
             "`tardigrade revive`.")
 
 
-def down_why(r, tried):
+def down_why(r, tried, kept=""):
     """G5.19, G1.20: what holds a row that is not running back, read now: ("start it" | "bring it back", the words
     with the one next step). tried: a revive started it and gave up. "" where there is nothing to say: its place
-    holds a waiting screen, or is free and no start was tried."""
+    holds a waiting screen, or is free and no start was tried. kept: the why the last revive or the record kept for
+    the row. Where that is the reason of a session not started for the # in its tmux name (T119) and its place is
+    free, the kept reason is the answer: no start was made, so the why of a start that failed is not its why, and
+    what tmux would answer now is not read here (asking makes a tmux session, and a census only reads)."""
     sock, name = r["tmux_socket"], r["tmux_session"]
     if has_session(sock, name):
         if is_waiting(sock, name):
@@ -2529,6 +2541,8 @@ def down_why(r, tried):
         if ours is None or mark != str(r["session_id"]):
             return "start it", in_way_text(r, ours)
         return "bring it back", not_back_text(r)
+    if kept.startswith(NOT_ASKED_HEAD):
+        return "start it", kept + ". Next step: run revive again; it asks tmux again"
     return ("bring it back", not_back_text(r)) if tried else ("", "")
 
 
@@ -3613,12 +3627,15 @@ def _revive(boot):
             tries_done = True
             for sid, (r, n) in pending.items():
                 # a session not started for the # in its tmux name (T119) was never started: the why of a start
-                # that failed (G5.19) is not its why, and its line ends with its own next step
-                why = "" if sid in NOT_ASKED_NOW else not_back_text(r)
+                # that failed (G5.19) is not its why. Its why is the reason its NOT STARTED line gave: kept, so
+                # that the census never shows it with none. Its give-up line does not say it twice (the NOT
+                # STARTED line stands above) and ends with its own next step
+                why = not_asked_why(r) if sid in NOT_ASKED_NOW else not_back_text(r)
+                said = "" if sid in NOT_ASKED_NOW else why
                 prog["sessions"].setdefault(sid, {}).update(state="failed", why=why)
                 log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}"
-                    + (f": {why}" if why else "")
-                    + (f"{' ' if why else '. '}Not started at the last pass: {cannot_tell}" if cannot_tell else "")
+                    + (f": {said}" if said else "")
+                    + (f"{' ' if said else '. '}Not started at the last pass: {cannot_tell}" if cannot_tell else "")
                     + (NOT_ASKED_NEXT if sid in NOT_ASKED_NOW else ""))
                 report["failed"].append(display(r))
                 if why:
@@ -4229,7 +4246,8 @@ def census():
                         and r.get("tmux_session") and not r.get("ended"):
                     # G5.19, G1.20: said under the row while it is down, and read NOW, so that the step it names
                     # is true for the state the row's place is in at this moment, not the one a revive found
-                    kind, why = down_why(r, bool(not_back.get(display(r)) or r.get("not_started_why")))
+                    kept = not_back.get(display(r)) or r.get("not_started_why") or ""
+                    kind, why = down_why(r, bool(kept), kept if isinstance(kept, str) else "")
                     if why:
                         how_not = f"\n      A revive did not {kind}: {why}"
                 t = r.get("last_seen") or r.get("down_since") or 0
@@ -4581,9 +4599,11 @@ NO_BUS = re.compile(r"Failed to connect to (?:\S+ ){0,3}bus\b")
 def will_refuse():
     """G5.17 (T83 a) and G5.22 (T95), family rule 11: what will refuse is asked before the first write. On a Mac,
     launchd loads a job for an account only while that account is logged in at the screen: `launchctl print
-    gui/<uid>` answers exit 125 when it is not. On Linux, systemctl --user with no user manager answers nothing on
-    stdout and "Failed to connect to bus" on stderr. Returns the stop line for those two answers and None for every
-    other one: any other answer is not a "no", so setup goes on as it did before this read."""
+    gui/<uid>` answers exit 125 when it is not. On Linux, systemctl --user that reaches no user manager answers
+    nothing on stdout and "Failed to connect to bus" on stderr: there is none, or one runs that this shell cannot
+    reach (G5.32, T133: seen), and the line says only that none was reached. Returns the stop line for those two
+    answers and None for every other one: any other answer is not a "no", so setup goes on as it did before this
+    read."""
     if MAC:
         uid = os.getuid()
         rc, _, err = run_err(["launchctl", "print", f"gui/{uid}"], timeout=10)
@@ -4597,8 +4617,8 @@ def will_refuse():
     said = [x.strip() for x in cut_lines(err) if NO_BUS.search(x)]
     if out.strip() or not said:
         return None
-    return (f"NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl --user` "
-            f"answered \"{said[0][:200]}\" (exit {rc}).")
+    return ("NOT set up: this shell cannot reach a systemd user manager to hand the boot service to. "
+            f"`systemctl --user` answered \"{said[0][:200]}\" (exit {rc}).")
 
 
 SYSTEM_PY = "/usr/bin/python3"

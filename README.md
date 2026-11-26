@@ -82,9 +82,10 @@ settings and the record are in `~/.config/windstorm-tardigrade/`, the log and Ta
 list. `setup --dry-run` names the links and those folders before anything is written, and census names them after.
 `uninstall` takes away the units, the links, the copy and the list, then each folder on the list that is empty now,
 deepest first. It keeps your settings, record and log, says what a setup after it does with each, and says that
-`auto_revive` now reads false in your settings and why that line stays. A copy set up by a version before 0.1.11 has
-no list: uninstall then removes no folder above its own, and says so. A census, a report, a dry run and a setup that
-stops before its first write make no file and no folder; a dry run's lines go to the screen only, not to the log.
+`auto_revive` now reads false in your settings and why that line stays. The two paths setup wrote into your settings
+for its own read back go out of them with the service files. A copy set up by a version before 0.1.11 has no list:
+uninstall then removes no folder above its own, and says so. A census, a report, a dry run and a setup that stops
+before its first write make no file and no folder; a dry run's lines go to the screen only, not to the log.
 
 The boot service and the record timer run with the python that ran setup, by the path you ran it with. Where that
 path lies in a folder that goes when something else is updated or removed, setup writes another and says so:
@@ -316,7 +317,9 @@ already there (one of Tardigrade's own, left by a run that was cut off, ends by 
 yours and is left alone); tmux made no session (the line carries tmux's own words if it said any; else it says that
 tmux said nothing, gave no answer in 30 seconds, or could not be run); tmux held the made-up name as something else.
 The run asks again at each try, once a minute for 25 minutes (`retry_min`). If it gives up, that is a start that
-failed like any other (T103, T104). To bring such a session back by hand (its lines in the log say NOT STARTED and
+failed like any other (T103, T104): the session stays on the list a revive reads, the census shows it with that
+reason, and the next revive asks tmux again.
+To bring such a session back by hand (its lines in the log say NOT STARTED and
 GAVE UP): start it yourself in its folder with Claude Code's own `claude --resume` (its help, at 2.1.331: "Resume a
 conversation by session ID or name, or pick from a list"), in a tmux session whose name has no #: it is on the list
 under that name from the next record on (not walked by us). Seen with stand-in sessions: in this version's six tests
