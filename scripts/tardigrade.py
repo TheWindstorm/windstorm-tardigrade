@@ -508,6 +508,30 @@ def in_boot_window():
     return uptime_s() < float(CFG["boot_window_min"]) * 60
 
 
+RECORD_WAITS = ", and the record waits for this boot's revive: run tardigrade revive"
+
+
+def record_waits():
+    """T138: the record job is skipped until this boot's revive has run, and the boot run does nothing any more
+    (auto revive on, no marker of this boot, the machine up for longer than the boot window). A whole revive by
+    hand ends it, and so does setup."""
+    return bool(CFG["auto_revive"]) and not in_boot_window() and not os.path.exists(marker())
+
+
+def record_file_whole():
+    """T138: is the record file one the record job can go on from: not there (nothing recorded yet), or an object
+    whose list of sessions is a list. A revive by hand writes no marker over anything else (what the tool does
+    with such a file is row T142's, not this one's)."""
+    try:
+        with open(TABLE, encoding="utf-8") as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return isinstance(d, dict) and isinstance(d.get("lanes"), list)
+
+
 # ---------- tmux ----------
 def tmux_dir():
     return os.path.join(CFG.get("tmux_tmpdir") or os.environ.get("TMUX_TMPDIR") or "/tmp", f"tmux-{os.getuid()}")
@@ -2736,9 +2760,21 @@ def _revive(boot):
             write_json(os.path.join(STATE, "last-revive.json"), report)
             if boot:
                 write_marker(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+            # T138: outside the window the boot run does nothing any more (its own gate reads the same function), so
+            # the person's own whole revive is this boot's revive: with its report written, the record job goes on.
+            # Not inside the window (the boot run is still to come, and a session that failed here keeps it); not with
+            # --only (the sessions not asked for would leave the list a later revive reads); never over a record
+            # file that is not whole (the next record would write over its older copy).
+            whole_by_hand = not boot and not DRY and "--only" not in ARGS and not in_boot_window()
+            if whole_by_hand and record_file_whole():
+                write_marker("by hand " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
+                whole_by_hand = False
             log(f"revive: {len(report['started'])} started, {len(report['skipped'])} already running, "
                 f"{len(report['failed'])} failed, {len(report['needs_you'])} need you"
                 + (f", {len(report['left_out'])} never started (print-mode runs, folders left alone)" if report["left_out"] else ""))
+            if whole_by_hand:
+                log(f"revive: the record file ({TABLE}) could not be read as a record, so this run is not counted as "
+                    "this boot's revive: the record job stays skipped and that file is left as it is.")
         # the sessions that are up are looked after in every pass, also while another start is being retried
         if inflight:
             settle()
@@ -3098,11 +3134,14 @@ def census_data():
     on_record = {r["session_id"] for r in table["lanes"]}
     rec_at = int(table.get("recorded_at") or 0)
     not_kept = []
+    waits = record_waits()      # T138: then the next record takes nothing, and a record run by hand is skipped too
     for r in mine:
         why = left_out_why(r)
         if not why and r["session_id"] not in on_record and r.get("status") != "starting" \
                 and r["session_id"] not in {x["now"] for x in replaced}:     # its old row brings it back (G3.16)
-            why = ("started after the last record: the next record takes it" if r.get("started_at", 0) >= rec_at
+            late = r.get("started_at", 0) >= rec_at
+            why = (("started after the last record" if late else "not on the record") + RECORD_WAITS if waits
+                   else "started after the last record: the next record takes it" if late
                    else "not on the record: run `tardigrade record`")
         if why:
             not_kept.append({"name": display(r), "session_id": r["session_id"], "why": why})
@@ -3284,8 +3323,10 @@ def census():
     table("WITH A WINDOW", d["sessions"]["with_window"])
     table("DOWN: on the record, not running now", d["sessions"]["down"], down=True)
     if d["replaced"]:
-        print(f"\nSTARTED NEW under a new id, in their own place (up, not down; the next record takes the new id): "
-              f"{len(d['replaced'])}")
+        # T138: while the record waits for this boot's revive the next record takes nothing, the new id neither
+        takes = ("the record waits for this boot's revive and takes the new id after it: run tardigrade revive"
+                 if record_waits() else "the next record takes the new id")
+        print(f"\nSTARTED NEW under a new id, in their own place (up, not down; {takes}): {len(d['replaced'])}")
         for x in d["replaced"]:
             print(f"  {x['name']:<34} was {x['was'][:8]}, now {x['now'][:8]}")
     if d["lost"]:
@@ -3714,10 +3755,16 @@ def reload_words(rc):
     return "gave no answer within 30 s, or could not be started" if rc == 99 else f"ended with exit code {rc}"
 
 
+def late_login(machine):
+    """T137, the limit as it is until 0.1.11: the boot window is counted from the machine's start, not from the login"""
+    return (f"If that login comes more than {float(CFG['boot_window_min']):g} minutes after {machine} started, "
+            "nothing comes back by itself: run tardigrade revive to bring the sessions back.")
+
+
 def mac_story(filevault, auto_user, me):
     """(a short phrase for the census, the full lines for setup) from what the Mac says about itself"""
     agent = ("On a Mac the boot agent runs only when YOU are logged in at its screen. A login over ssh does "
-             "not start it, and neither does another user's login.")
+             "not start it, and neither does another user's login. " + late_login("this Mac"))
     if "FileVault is On" in filevault:
         return ("only after a person unlocks this Mac (FileVault) and you are logged in at its screen",
                 ["FileVault is on: after a restart this Mac waits at its unlock screen, and NOTHING comes back "
@@ -4107,6 +4154,16 @@ def who_logs_in():
             out.append("Lingering is on: sessions come back about a minute after boot, with nobody logged in.")
         else:
             out.append("Lingering is OFF: sessions come back only after you log in to this machine.")
+            out.append(late_login("this machine"))
+            # T149, the limit as it is until 0.1.11: they run under this account's systemd, which ends soon after the
+            # last login unless something of a login still runs. T152: once a session runs again, a record run lets
+            # fewer than three that ended go (as closed by their owner), and revive reads the record's sessions only.
+            out.append("Sessions that came back by themselves end soon after your last login on this machine ends (a "
+                       "closed ssh connection is one), unless something you started in a login is still running, and "
+                       "your next login brings nothing back. Run tardigrade revive first at that login, before you "
+                       "start another session: once one is running, Tardigrade can take the ended ones as closed by "
+                       "you within a few minutes, and revive then no longer brings them back. With lingering on they "
+                       "stay.")
             out.append("To bring them back with nobody logged in, a person runs once: sudo loginctl enable-linger "
                        + shlex.quote(user))
     return out

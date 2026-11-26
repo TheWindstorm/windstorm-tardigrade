@@ -2,6 +2,45 @@
 
 ## 0.1.10.4 (2026-11-30)
 
+- **After a boot run that came too late, your own revive lets the record go on (T138).** Where the boot service
+  ran on a machine that had been up for longer than `boot_window_min` (40 minutes), it did nothing, and from then
+  on the record job was skipped for the rest of that start, also after a revive by hand: a session started in
+  that time was not recorded, while the census said "the next record takes it". Seen on 2026-11-26 on a stock
+  Ubuntu 24.04 virtual machine (systemd 255) with this version's work before the change: 5 record runs skipped in
+  24 minutes, 2 of them after a revive by hand. Now a revive by hand that is no dry run, has no `--only` and
+  reaches its report outside that window counts as this boot's revive, and the next record writes. It does not
+  count inside the window, where the boot run is still to come, and never over a record file that is not whole:
+  then the run says in one line that it is not counted as this boot's revive, the record job stays skipped and
+  that file is left as it is. While the record waits, the census says that it waits, and the step,
+  `tardigrade revive`: of a session that is not on the record, and over sessions started new under a new id.
+- **Two limits of lingering off, said where setup and the README say who has to log in.** Until 0.1.11 the boot
+  window is counted from the machine's start and not from your login: after a first login later than 40 minutes,
+  nothing comes back by itself, and the step is `tardigrade revive`. On a Mac the gate's line was seen at a
+  direct run of the boot gate on a Mac up 100 hours (2026-11-26, macOS 27, no restart made); the boot job's own
+  run at a late login was not seen, and the step after it was not typed on a Mac in that state. And with
+  lingering off the sessions that came back by themselves end soon after your last login on the machine ends,
+  unless something you started in a login is still running, and the next login brings nothing back. The step
+  is `tardigrade revive`, first at that login, before you start another session: once one is running,
+  Tardigrade can take the ended ones as closed by you within a few minutes, and revive then no longer brings
+  them back. After that no command of this version brings them back (read in the code; `revive` and
+  `revive --only` with the name and with the session id were typed, and none did); the census still lists
+  them under DOWN with their folders. When sessions end this way, the system lists your account's service
+  manager as failed until your next login. Lingering on keeps the sessions. Seen on 2026-11-26 on that
+  virtual machine, lingering off, stand-in sessions throughout: with nothing else of the account running,
+  the sessions were gone 15 s after the last login ended, and what was still running of them at the end of
+  the service manager's stop time was killed; a command a login had left running kept them until it ended,
+  and a session started by hand in a tmux server of its own kept them too; the step typed before another
+  session was started brought back what the logout had ended (three accounts), and in one of them they then
+  stayed over the next logout (watched for three minutes, seen once); typed after a record run with one
+  session of the person's own running, it brought nothing back (two trials); where three sessions, all of
+  the record, had ended at one logout, it brought all three back even then (seen once). Not seen: three or
+  more ended sessions that are half of the record or less; how long sessions brought back by the typed step
+  stay; a real Claude Code session in any of this.
+- **When to run setup again after an update, said in the README and in the skill.** While your sessions are
+  running, or after `tardigrade revive`; never between a restart and their return. Until 0.1.11, setup typed
+  in that gap with one session of yours already running lets the others go, and neither the boot run nor
+  revive brings them back: seen once on 2026-11-26 on that virtual machine, lingering off, stand-in sessions.
+  Not seen: setup typed there with no session running.
 - **A home folder whose path holds a space, and every other path a service file reads in its own way (T132).** Up
   to 0.1.10.3 setup wrote two paths into its two service files as they stood: the Python that ran setup, and its
   installed copy, which lies under the home folder. A service file reads some characters in its own way, so a path

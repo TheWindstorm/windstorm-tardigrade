@@ -48,7 +48,11 @@ If neither file exists, this skill was installed without its plugin. Get the scr
    it decides that their processes keep running when they are logged out. That is their call.
 5. Run `census` and show it.
 
-After the plugin is updated, run `setup` again so the installed copy matches.
+After the plugin is updated, run `setup` again so the installed copy matches: while the person's sessions are
+running, or after `revive`. Never run it between a restart and the sessions' return: until 0.1.11, setup typed in
+that gap with one session already running lets the others go, and neither the boot run nor `revive` brings them
+back. If the machine has just restarted, run `census` first, and run `setup` only once the sessions are back: by
+themselves, or by `revive` as below.
 
 ## Census
 
