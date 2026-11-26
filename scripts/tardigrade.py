@@ -924,8 +924,53 @@ EXIT_SIDS = []                  # the session ids on the record, so the history 
 HISTORY_SAY = []                # set by revive and record, which say in the log when the history cannot be used
 UNREAD_SAID = set()             # G2.61: the sessions whose unread lines after an /exit this run has said
 HISTORY_SID = re.compile(r'"sessionId"\s*:\s*"([0-9A-Za-z-]{8,64})"')
-JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
-JSON_BARE = re.compile(r'(?:[\s{}\[\]:,]|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null)*')
+NOT_PUNCT = re.compile(r"[^\s{}\[\]:,]+")       # a run of what stands outside the strings and is no punctuation
+BRACKETS = re.compile(r"[{}\[\]]")
+BARE_WORDS = ("true", "false", "null")
+_BARE_STEPS = {}                # (the places so far, the next character's kind) -> the places after it
+_AFTER_A_DIGIT = {"M": "I", "I": "I", "P": "F", "F": "F", "E": "X", "G": "X", "X": "X"}
+
+
+def _bare_step(places, k):
+    """One character further in a run of numbers and true, false, null written one after another: every place the
+    read may stand at after it. The places: S between two of them; M after a minus; I, F, X in a number's digits
+    (its whole part, its part after the point, its exponent), where a number may end; P after its point; E after
+    its e; G after the exponent's sign; (word, n) after n letters of a word."""
+    out = set()
+    for st in places:
+        if st in ("S", "I", "F", "X"):          # a new number or word may begin here
+            if k == "-":
+                out.add("M")
+            elif k == "0":
+                out.add("I")
+            out.update((w, 1) for w in BARE_WORDS if w[0] == k)
+        if k == "0" and st in _AFTER_A_DIGIT:
+            out.add(_AFTER_A_DIGIT[st])
+        elif k == "." and st == "I":
+            out.add("P")
+        elif k in ("e", "E") and st in ("I", "F"):
+            out.add("E")
+        elif k in ("+", "-") and st == "E":
+            out.add("G")
+        if isinstance(st, tuple) and st[0][st[1]] == k:
+            out.add("S" if st[1] + 1 == len(st[0]) else (st[0], st[1] + 1))
+    return frozenset(out)
+
+
+def bare_words(piece):
+    """Is this run of characters, met outside the strings, numbers and the words true, false, null written one
+    after another and nothing else. One pass, the same small work for each character: the places the read may
+    stand at are kept together, never tried one way after another."""
+    places = frozenset(("S",))
+    for c in piece:
+        k = "0" if c.isdecimal() else c
+        nxt = _BARE_STEPS.get((places, k))
+        if nxt is None:
+            nxt = _BARE_STEPS[(places, k)] = _bare_step(places, k)
+        if not nxt:
+            return False
+        places = nxt
+    return bool(places & {"S", "I", "F", "X"})
 
 
 def whole_line(line):
@@ -936,20 +981,45 @@ def whole_line(line):
     torn anywhere before its end is not whole. Neither is such a piece with the next line written right after
     it: torn outside a string it leaves a brace open, torn inside one it puts the next line's first key outside
     the strings (a key that is a word, as every key Claude Code writes there is), and cut after its closing
-    brace, with only the line feed missing, its first brace is closed before the end."""
+    brace, with only the line feed missing, its first brace is closed before the end.
+    The read takes time in proportion to the line's length, whatever the line holds: each string is passed over
+    once, from its opening quote to its closing one, and what stands outside the strings is read in one pass.
+    (Up to this form a pattern tried every way of cutting a run of digits into numbers: 26 digits and then a
+    letter took seconds.)"""
     if not (line.startswith("{") and line.endswith("}")):
         return False
-    bare = JSON_STRING.sub("", line)
-    if JSON_BARE.fullmatch(bare) is None:
-        return False
-    open_ones = []
-    for i, c in enumerate(bare):
+    out, i = [], 0
+    while True:
+        q = line.find('"', i)
+        if q < 0:
+            out.append(line[i:])
+            break
+        out.append(line[i:q])
+        i, j = q + 1, -1
+        while True:                     # to this string's closing quote; a backslash takes the next character with it
+            if j < i:
+                j = line.find('"', i)
+                if j < 0:
+                    return False        # a string left open
+            k = line.find("\\", i, j)
+            if k < 0:
+                break
+            if line[k + 1] == "\n":
+                return False
+            i = k + 2
+        i = j + 1
+    bare = "".join(out)
+    for piece in NOT_PUNCT.findall(bare):
+        if not (piece in BARE_WORDS or piece.isdecimal() or bare_words(piece)):
+            return False
+    open_ones, marks = [], BRACKETS.findall(bare)
+    for i, c in enumerate(marks):
         if c in "{[":
             open_ones.append(c)
-        elif c in "}]":
+        else:
             if not open_ones or open_ones.pop() != ("{" if c == "}" else "["):
                 return False
-            if not open_ones and i != len(bare) - 1:
+            if not open_ones and i != len(marks) - 1:
                 return False
     return not open_ones
 

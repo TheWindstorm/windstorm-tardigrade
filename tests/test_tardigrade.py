@@ -9285,9 +9285,13 @@ class Names(Base):
         typed again after it (Again typed /exit before the piece and after it: skipped, and not counted among
         those set aside). An empty line and a line of spaces are no pieces: they stand after After's /exit here,
         and After stays skipped. The line says how many pieces and how many sessions. Nothing typed reaches a line
-        of ours."""
-        a, b, c, d = (self.start_lane(s, n) for s, n in (("named", "Named Lane"), ("before", "Before Lane"),
-                                                         ("after", "After Lane"), ("again", "Again Lane")))
+        of ours.
+        How narrow the price is: a session that a record has ALREADY taken as ended by its owner, before the piece
+        appeared, stays ended (Ended: its /exit was read while the history was whole, and a record moved it to
+        the down list). It is not asked about again, does not come back, and is not counted among those set aside."""
+        a, b, c, d, e = (self.start_lane(s, n) for s, n in (("named", "Named Lane"), ("before", "Before Lane"),
+                                                            ("after", "After Lane"), ("again", "Again Lane"),
+                                                            ("ended", "Ended Lane")))
         rc, out = self.tg("record", "--force")
         self.assertEqual(rc, 0, out)
         seen = self.table()["lanes"][0]["last_seen"]
@@ -9295,16 +9299,24 @@ class Names(Base):
         def prompt(sid, words, t):
             return (json.dumps({"display": words, "pastedContents": {}, "timestamp": int(t * 1000),
                                 "project": self.work, "sessionId": sid}) + "\n").encode("utf-8")
+        # Ended: /exit typed, the session gone, and a record that read the history while it was whole
+        with open(os.path.join(self.home, ".claude", "history.jsonl"), "wb") as f:
+            f.write(prompt(e, "/exit", seen + 0.5))
+        self.kill([x for x in self.launches() if x["sid"] == e][-1]["pid"])
+        time.sleep(2)
+        rc, out = self.tg("record")
+        self.assertEqual([(r["name"], r.get("ended")) for r in self.table()["down"]], [("Ended Lane", "exit")], out)
         torn = ('{"sessionId": "%s", "timestamp": %d, "project": "/w", "display": "go on PRIVATE-WORDS-7d2\n'
                 % (a, int((seen + 4) * 1000))).encode("utf-8")
-        data = (prompt(d, "/exit", seen + 1) + prompt(a, "/exit", seen + 2) + prompt(b, "/exit", seen + 3) + torn
+        data = (prompt(e, "/exit", seen + 0.5) + prompt(d, "/exit", seen + 1) + prompt(a, "/exit", seen + 2)
+                + prompt(b, "/exit", seen + 3) + torn
                 + prompt(c, "/exit", seen + 5) + b"\n   \n" + prompt(d, "/exit", seen + 6))
         # the premise: one line that does not parse, and it names Named's session
         lines = data.split(b"\n")[:-1]
-        self.assertEqual([i for i, x in enumerate(lines) if x.strip() and not self.parses(x)], [3],
+        self.assertEqual([i for i, x in enumerate(lines) if x.strip() and not self.parses(x)], [4],
                          "one line that does not parse")
-        self.assertEqual([i for i, x in enumerate(lines) if not x.strip()], [5, 6], "an empty line and one of spaces")
-        self.assertIn(a.encode(), lines[3])
+        self.assertEqual([i for i, x in enumerate(lines) if not x.strip()], [6, 7], "an empty line and one of spaces")
+        self.assertIn(a.encode(), lines[4])
         with open(os.path.join(self.home, ".claude", "history.jsonl"), "wb") as f:
             f.write(data)
         self.reboot()
@@ -9321,6 +9333,8 @@ class Names(Base):
         self.assertIn("skip  Again Lane: its owner ended it with /exit", out)
         self.assertNotIn("skip  Named Lane", out)
         self.assertNotIn("skip  Before Lane", out)
+        self.assertNotIn(e, back, "Ended was on the down list as ended before the piece appeared: it stays ended")
+        self.assertNotIn("Ended Lane", out)
         self.assertIn("1 piece(s) could not be read as a line; what was typed there, and into which session, is not "
                       "known, so the /exit of 2 session(s) on the record before such a piece is not taken from the "
                       "history as its last prompt (its conversation decides)", out)
@@ -9363,6 +9377,51 @@ class Names(Base):
                 self.assertFalse(tg.whole_line(first[:k] + nxt),
                                  f"a piece cut after {k} characters with the next line after it is read as a whole line")
             self.assertTrue(tg.whole_line(first) and tg.whole_line(nxt))
+
+    def test_G2_61_the_shape_read_takes_time_in_proportion_to_the_lines_length(self):
+        """T118, the mend after the maintainer's read: the shape read of a prompt-history line takes time in
+        proportion to the line's length, whatever the line holds. The first form used a pattern that tried every
+        way of cutting a run of digits into numbers: 26 digits and then a letter took seconds, a few more took
+        longer than any wait. Hard lines here: a run of some thousand digits then a letter; many numbers before a
+        word that is none of true, false, null; digits and points; escaped quotes with no closing quote;
+        backslashes before the closing quote; open brackets. Each alone and written right after a torn piece (torn
+        inside what was typed, and torn between two keys), at 4,000 and at 400,000 characters. The read runs in a
+        child that has an end, so a read that does not end fails this test and does not hold the suite."""
+        code = """
+import importlib.util, json, sys, time
+spec = importlib.util.spec_from_file_location("tardigrade", sys.argv[1])
+tg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tg)
+out = []
+for n in (4000, 400000):
+    hard = {"digits then a letter": '{"timestamp":' + "7" * n + 'x}',
+            "numbers before a word": '{"a":[' + ",".join(["1764000000000"] * (n // 14)) + '],"b":nul,"c":x}',
+            "digits and points": '{"a":' + "1.5" * (n // 3) + 'x}',
+            "escaped quotes, no closing quote": '{"a":"' + chr(92) + '"' + (chr(92) + '"') * (n // 2) + '}',
+            "backslashes before the closing quote": '{"a":"' + chr(92) * 2 * (n // 2) + '"}',
+            "open brackets": '{"a":' + "[" * n + '}'}
+    for name, line in list(hard.items()):
+        hard[name + ", after a piece torn in what was typed"] = '{"display":"half a prom' + line
+        hard[name + ", after a piece torn between two keys"] = '{"display":"half a prompt",' + line
+    for name, line in hard.items():
+        t0 = time.perf_counter()
+        whole = tg.whole_line(line)
+        out.append([name, n, len(line), whole, time.perf_counter() - t0])
+print(json.dumps(out))
+"""
+        try:
+            p = subprocess.run([sys.executable, "-I", "-B", "-c", code, SCRIPT], capture_output=True, text=True,
+                               timeout=90, env=dict(self.env, HOME=self.home))
+        except subprocess.TimeoutExpired:
+            self.fail("the shape read of 36 hard lines did not end in 90 s")
+        self.assertEqual(p.returncode, 0, p.stderr[-600:])
+        got = json.loads(p.stdout)
+        self.assertEqual(len(got), 36)
+        for name, n, size, whole, took in got:
+            self.assertGreater(size, n * 0.9, name)
+            # one of them is a whole line: a string of backslash pairs, closed; everything else is a piece
+            self.assertEqual(whole, name == "backslashes before the closing quote", f"{name}, {size} characters")
+            self.assertLess(took, 2 if n == 4000 else 30, f"{name}, {size} characters: {took:.2f} s")
 
     def test_G2_61_no_place_in_the_tools_code_cuts_a_text_where_splitlines_cuts(self):
         """T118, the code read beside the planted run: the tool has one function that cuts what another program
