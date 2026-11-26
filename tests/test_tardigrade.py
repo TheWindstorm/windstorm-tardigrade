@@ -279,6 +279,61 @@ for _sig in (signal.SIGTERM, signal.SIGHUP):
 import atexit  # noqa: E402
 atexit.register(_end_live)
 
+# G5.31 (T132): the two services and the tool's own words on their start lines; and the managers' own answers,
+# recorded on real systems and kept beside this file
+SERVICE_WORDS = {"windstorm-tardigrade-revive.service": ["revive", "--boot"],
+                 "windstorm-tardigrade-record.service": ["record"]}
+ANSWERS = os.path.join(ROOT, "tests", "manager-answers")
+ANSWER_FILES = ["almalinux-8.10-systemd-239.txt", "ubuntu-18.04-systemd-237.txt", "ubuntu-20.04-systemd-245.txt",
+                "ubuntu-22.04-systemd-249.txt", "ubuntu-24.04-systemd-255.txt"]
+
+
+def manager_answers(kind="case"):
+    """[{file, name, python, home, units: {unit: {written, loadunit, held[, started]}}}] from the recorded files: a
+    line is a key, then (for a unit's lines) the unit's name, then the recording's own line as it was. A "case" is
+    one home with the lines this version writes for it; a "state" is a unit with drop-in files of the recorder's
+    own on it, with the manager's environment and dropins answers beside its held line"""
+    out = []
+    for n in sorted(os.listdir(ANSWERS)):
+        case = None
+        for line in fread(os.path.join(ANSWERS, n)).split("\n"):
+            key, _, rest = line.partition(" ")
+            if key in ("case", "state"):
+                case = {"file": n, "name": rest, "kind": key, "units": {}}
+                out.append(case)
+            elif key in ("python", "home"):
+                case[key] = rest
+            elif key in ("written", "loadunit", "held", "started", "environment", "dropins"):
+                unit, _, text = rest.partition(" ")
+                case["units"].setdefault(unit, {})[key] = text
+    return [c for c in out if c["kind"] == kind]
+
+
+JOBS = os.path.join(ROOT, "tests", "launchd-answers")
+JOB_FILES = ["macos-27.2.1.txt"]
+
+
+def launchd_answers():
+    """[{file, label, print}] from the recorded files: between a "print" line and the next "end-print" line stands
+    what "launchctl print" gave for that job, as it was"""
+    out = []
+    for n in sorted(os.listdir(JOBS)):
+        job, block = None, None
+        for line in fread(os.path.join(JOBS, n)).split("\n"):
+            key, _, rest = line.partition(" ")
+            if block is not None:
+                if line == "end-print":
+                    job["print"], block = "".join(x + "\n" for x in block), None
+                else:
+                    block.append(line)
+            elif key == "job":
+                job = {"file": n, "label": rest}
+                out.append(job)
+            elif line == "print":
+                block = []
+    return out
+
+
 # THE SUITE'S GUARD (T78, family rule 23). From 0.1.10 the test setting counts only with the suite's marker in the
 # test's own scratch home (G5.15); anywhere else the tool acts for real, and the home of the account that runs the
 # suite may hold a live install and running sessions. So no test but T78's own may run the tool with the setting
@@ -556,6 +611,11 @@ class Base(unittest.TestCase):
         # G5.27 (T107): uninstall asks the process list for a systemd user manager when systemctl gives no answer. A
         # test gets this stand-in's "none" (pgrep's exit 1), never the manager of whoever runs the suite
         self.manager(1)
+        # G5.31 (T132): setup and the census also ask the bus tool what the manager holds. The same rule: a test that
+        # plants no answer gets "no answer" from this stand-in, never this machine's own user manager
+        self.busdir = os.path.join(self.tmp, "bus")
+        os.makedirs(self.busdir)
+        self.bus_tool()
         self.path = f"{self.bin}:{STUBS}:/usr/local/bin:/usr/bin:/bin"       # the loud stand-ins before the system's
         self.env = {"HOME": self.home, "TMUX_TMPDIR": self.tmp, "PATH": self.path, "SHELL": "/bin/bash",
                     "USER": os.environ.get("USER", "u"), "LANG": "C.UTF-8", "LC_ALL": "C", "TERM": "xterm-256color",
@@ -755,13 +815,24 @@ class Base(unittest.TestCase):
         """What a reboot does to this user: every session and the tmux server end. Each by exact pid."""
         for row in self.launches():
             self.kill(row["pid"])
+        servers = []
         for s in self.sockets():
             rc, out = self.tmux(s, "display", "-p", "#{pid}")
             if rc == 0 and out.strip().isdigit():
-                self.kill(int(out.strip()))
+                servers.append(int(out.strip()))
+                self.kill(servers[-1])
         end = time.time() + WAIT
-        while time.time() < end and any(self.tmux(s, "list-sessions")[0] == 0 for s in self.sockets()):
+        while time.time() < end and (any(self.tmux(s, "list-sessions")[0] == 0 for s in self.sockets())
+                                     or any(self.pid_there(p) for p in servers)):
             time.sleep(0.3)
+
+    @staticmethod
+    def pid_there(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
 
     def table(self):
         return jload(os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json"))
@@ -825,6 +896,71 @@ class Base(unittest.TestCase):
             shutil.copyfile(SCRIPT, target)
         elif os.path.exists(target):
             os.remove(target)
+        self.bus_meant()            # G5.31: the stand-in manager holds the start lines as this version means them
+        self.set_up_record()
+
+    # ----- G5.31 (T132): the stand-in bus tool, and what the stand-in manager holds -----
+    def bus_tool(self):
+        """a busctl in front of the real one: for a unit it gives the answers planted in this test's bus folder, each
+        in busctl's plain form (to LoadUnit; then the properties ExecStart, Environment and DropInPaths), and for a
+        unit with no planted answer nothing (exit 1). Every call is noted in the folder's asked.log."""
+        self.script("busctl", f'''#!{sys.executable}
+import os, sys
+a, d = sys.argv[1:], {self.busdir!r}
+PROPS = {{"ExecStart": 1, "Environment": 2, "DropInPaths": 3}}
+with open(os.path.join(d, "asked.log"), "a") as f:
+    f.write(" ".join(a) + "\\n")
+held = {{}}
+for n in os.listdir(d):
+    if n.endswith(".service"):
+        with open(os.path.join(d, n), "rb") as f:
+            held[n] = f.read().split(b"\\n")
+out = []
+if a[:2] == ["--user", "call"] and a[-3:-1] == ["LoadUnit", "s"] and a[-1] in held:
+    out = [held[a[-1]][0]]
+elif a[:2] == ["--user", "get-property"] and a[-1] in PROPS:
+    out = [t[PROPS[a[-1]]] for t in held.values() if t[0] == b'o "' + os.fsencode(a[3]) + b'"']
+if len(out) != 1:
+    sys.exit(1)
+sys.stdout.buffer.write(out[0] + b"\\n")
+''')
+
+    @staticmethod
+    def bus_plain(program, words):
+        """one start line in busctl's plain form, the form of the recorded answers in tests/manager-answers"""
+        def q(s):
+            return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return " ".join(["a(sasbttttuii)", "1", q(program), str(len(words))] + [q(w) for w in words] + ["false"] + ["0"] * 7)
+
+    def bus_holds(self, unit, held, load=None, variables="as 0", dropins="as 0"):
+        """the stand-in manager's answers for a unit (held None: it gives none for it): its start lines, and by
+        default no Environment entry and no drop-in file"""
+        p = os.path.join(self.busdir, unit)
+        if held is None:
+            if os.path.exists(p):
+                os.remove(p)
+            return
+        load = load or 'o "/org/freedesktop/systemd1/unit/' + unit.replace("-", "_2d").replace(".", "_2e") + '"'
+        with open(p, "w", encoding="utf-8", errors="surrogateescape") as f:
+            f.write("\n".join([load, held, variables, dropins]) + "\n")
+
+    def set_up_record(self):
+        """setup's own record of the two paths it wrote into the service files, as this version's setup keeps it in
+        the settings: a world a test plants by hand as set up stands for a setup this version made"""
+        self.cfg({"service_python": sys.executable, "service_script": os.path.join(
+            self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")})
+
+    def bus_meant(self, home=None, py=None):
+        """the stand-in manager holds both services' start lines as this version means them for a home: the Python
+        that runs the tool, -I, the installed copy's path (a dollar sign in it doubled: the manager makes one of the
+        two only when it starts the program), then the tool's own words. Returns {unit: (program, words)}."""
+        script = os.path.join(home or self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        out = {}
+        for unit, verb in SERVICE_WORDS.items():
+            words = [py or sys.executable, "-I", script.replace("$", "$$")] + verb
+            self.bus_holds(unit, self.bus_plain(words[0], words))
+            out[unit] = (words[0], words)
+        return out
 
     def start_loose(self, name):
         """a session that runs outside tmux, as in a plain terminal window"""
@@ -1500,11 +1636,13 @@ class Revive(Base):
         self.assertEqual(len(self.table()["lanes"]), 1)
         # the units hand nothing on, and run the installed copy
         tool = self.load_tool()
-        texts = list(tool.units("/PY", "/COPY").values()) + [tool.plist("l", "/PY", "/COPY revive --boot", "exec", "")]
+        texts = list(tool.units("/PY", "/COPY").values()) + [
+            tool.plist(label, "/PY", "/COPY", "") for label in ("ai.thewindstorm.tardigrade-revive",
+                                                                "ai.thewindstorm.tardigrade-record")]
         for text in texts:
             self.assertNotIn("Environment", text)
         self.assertEqual(re.findall(r"^ExecStart=(.*)$", "\n".join(texts), re.M),
-                         ["/PY -I /COPY revive --boot", "/PY -I /COPY record"])
+                         ['"/PY" -I "/COPY" revive --boot', '"/PY" -I "/COPY" record'])
         # uninstall takes the mark, and keeps a file of the person's that only has its ending
         own = self.state(os.path.join("launch", "my-own.mark"))
         with open(own, "w") as f:
@@ -3269,6 +3407,8 @@ class Revive(Base):
                 f.write(text)
         rc, out = self.tg("revive", "--boot", TARDIGRADE_FAKE_UPTIME_S=100)
         self.assertIn("Beta Lane: GAVE UP after", out)
+        # T119: only a session not started for a # in its tmux name is pointed to the README by its give-up line
+        self.assertNotIn("the README, under", out)
         self.assertIn("its tmux session holds a shell", out)        # what is in its place now (G4.9)
         self.assertLess(out.index('Alpha Lane: answered Yes to "trust this folder?"'), out.index("Beta Lane: GAVE UP"), out)
         rep = jload(self.state("last-revive.json"))
@@ -4213,6 +4353,422 @@ class Revive(Base):
         with open(self.state("tardigrade.log"), "rb") as f:
             self.assertNotIn(b"Traceback", f.read())
 
+    def name_for_this_tmux(self, name):
+        """The plant is the test's own. How this machine's tmux must be handed a session name to hold exactly it is
+        asked once, with a made-up name in a session that is ended at once: tmux from 3.0 on reads the name as a
+        format (each hash doubled comes back as one), tmux 2.6 leaves it as it stands."""
+        if not hasattr(self, "reads_names"):
+            os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+            rc, out = self.tmux(self.sock, "new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}\t#{pid}",
+                                "-s", "plant##asks", "sleep 30")
+            made, got, server = (out.rstrip("\n").split("\t") + ["", ""])[:3]
+            self.assertIn((rc, got), ((0, "plant#asks"), (0, "plant##asks")))
+            self.reads_names = got == "plant#asks"
+            self.tmux(self.sock, "kill-session", "-t", made)
+            # that was this server's only session if nothing else is there: tmux then ends the server, and a start
+            # that reaches it while it ends fails (seen once in a whole run, and by hand on tmux 3.4)
+            if not self.tmux(self.sock, "list-sessions", "-F", "#{session_id}")[1].strip():
+                self.until(lambda: not self.pid_there(int(server)), "the tmux server of the plant's asking to end")
+        return name.replace("#", "##") if self.reads_names else name
+
+    def a_hash_in_each_place(self):
+        """T119's world. Seven sessions: a plain one (the control), three whose TMUX SESSION NAME holds a hash (before
+        a letter tmux has a short format for; two hashes in a row; the form in parentheses, which tmux may run as a
+        command), two whose FOLDER does, and one whose OWN NAME does (the tool hands that to tmux as the title of the
+        waiting screen). Recorded, a restart, a revive typed in this test's own folder. Then everything is read back
+        from tmux and from the stand-ins, letter for letter, and compared in one piece."""
+        form = "#(touch hashproof-%s)"
+        plan = [("plain", "Plain Lane", "plain"),
+                ("lane#Work", "Hash Before A Letter", "f2"),
+                ("two##hashes", "Two Hashes", "f3"),
+                ("par " + form % "s", "The Form In A Tmux Name", "f4"),
+                ("sheet", "Folder Hash Before A Letter", "notes#Sheet"),
+                ("fform", "The Form In A Folder", "run " + form % "c"),
+                ("own", "Own #W ##name " + form % "t", "f7")]
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        sid, folder = {}, {}
+        for s, n, f in plan:
+            folder[s] = os.path.join(self.tmp, f)
+            os.makedirs(folder[s])
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            # the folder after -c is read as a format by every tmux seen; that tmux holds what is meant is read back
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c",
+                              folder[s].replace("#", "##"), f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        fmt = "#{session_name}\t#{pane_current_path}\t#{session_path}\t#{pane_title}\t#{pane_start_path}"
+
+        def held():
+            rc, out = self.tmux(self.sock, "list-panes", "-a", "-F", fmt)
+            return {x.split("\t")[0]: x.split("\t")[1:] for x in out.split("\n") if x} if rc == 0 else {}
+        planted = held()
+        self.assertEqual(sorted(planted), sorted(s for s, _, _ in plan), "the plant: tmux holds the names meant")
+        self.assertEqual([r["cwd"] for r in self.launches()], [folder[s] for s, _, _ in plan], "the plant: the folders")
+        # an older tmux has no session_path (3.0a) or no pane_start_path: each is read only where the plain session has it
+        knows_path, knows_start = planted["plain"][1] == folder["plain"], planted["plain"][3] == folder["plain"]
+        rc, out = self.tg("record", "--force")
+        self.assertEqual(rc, 0, out)
+        t = {r["session_id"]: r for r in self.table()["lanes"]}
+        self.assertEqual({s: (t[sid[s]]["tmux_session"], t[sid[s]]["name"], t[sid[s]]["cwd"]) for s, _, _ in plan},
+                         {s: (s, n, folder[s]) for s, n, _ in plan}, "the record holds each value as it is")
+        self.reboot()
+        n0 = len(self.launches())
+        # typed in this test's own folder: what a form runs lands where the tmux server was started
+        r = subprocess.run([sys.executable, "-I", SCRIPT, "revive"], capture_output=True, encoding="utf-8",
+                           errors="surrogateescape", env=self.env, timeout=240, cwd=self.tmp)
+        out = r.stdout + r.stderr
+        end = time.time() + WAIT
+        while time.time() < end and len(self.launches()) < n0 + len(plan):
+            time.sleep(0.3)
+        time.sleep(1)
+        back, now = {}, held()
+        for x in self.launches()[n0:]:
+            back.setdefault(x["sid"], []).append(x["cwd"])
+        got = {s: {"tmux holds a session of this name": s in now,
+                   "starts, each with its folder": back.get(sid[s], []),
+                   "the pane's folder": now.get(s, [None])[0],
+                   "the session's folder in tmux": now.get(s, [None] * 2)[1] if knows_path else "(not read)",
+                   "the folder the pane was started with": now.get(s, [None] * 4)[3] if knows_start else "(not read)",
+                   "the title": now.get(s, [None] * 3)[2] if s in ("plain", "own") else "(not read)"}
+               for s, _, _ in plan}
+        want = {s: {"tmux holds a session of this name": True,
+                    "starts, each with its folder": [folder[s]],
+                    "the pane's folder": folder[s],
+                    "the session's folder in tmux": folder[s] if knows_path else "(not read)",
+                    "the folder the pane was started with": folder[s] if knows_start else "(not read)",
+                    "the title": f"{n} (coming back)" if s in ("plain", "own") else "(not read)"}
+                for s, n, _ in plan}
+        self.maxDiff = None
+        self.assertEqual(got, want, out[-3000:])
+        self.assertEqual(sorted(now), sorted(s for s, _, _ in plan), "no tmux session under another name")
+        self.assertEqual(r.returncode, 0, out)
+        self.assertIn(f"revive: {len(plan)} started, 0 already running, 0 failed, 0 need you", out)
+        self.assertEqual(self.logged("asked once how it takes a #"), 1, "tmux is asked once in a run")
+
+        # "no file" proves something only beside a control that DID run in this same world: the same server is
+        # handed the form in a place where tmux is known to run it, and the test waits until its file is there.
+        # The client that asks STAYS until then. tmux signals the shell it started for a format as soon as the
+        # client that asked for it is gone, and the command runs only if that shell had already started it (read
+        # in tmux's source, seen in its own log). So a client that asks and goes makes the file only when it wins
+        # that race; asked again every 0.1 s it lost for a whole 40 s in one run on the test image. So after
+        # display -p the same client waits (wait-for) on a name of this test's own, and the test lets it go once
+        # the file was seen or the wait is over.
+        def proofs():
+            found = [os.path.join(dp, f) for dp, _, fs in os.walk(self.tmp) for f in fs if f.startswith("hashproof")]
+            return sorted(found + [os.path.join(os.getcwd(), f) for f in os.listdir(os.getcwd()) if f.startswith("hashproof")])
+
+        held = "tardigrade-control-" + os.path.basename(self.tmp)
+        asking = subprocess.Popen([TMUX, "-S", self.sock, "display", "-p", form % "control", ";", "wait-for", held],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  env=self.env, cwd=self.tmp)
+        try:
+            self.until(lambda: any(x.endswith("hashproof-control") for x in proofs()),
+                       "the control: the form handed to display -p makes its file in this world")
+        finally:
+            subprocess.run([TMUX, "-S", self.sock, "wait-for", "-S", held], capture_output=True, env=self.env,
+                           cwd=self.tmp, timeout=30)
+            try:
+                asking.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                asking.kill()
+                asking.wait()
+        time.sleep(1)
+        self.assertEqual([os.path.basename(x) for x in proofs()], ["hashproof-control"],
+                         "only the control's file: no name, folder or title was run as a command")
+
+    def test_G2_62_a_hash_in_a_tmux_name_a_folder_or_a_session_name_comes_back_letter_for_letter_and_runs_nothing(self):
+        # T119, on this machine's own tmux. Seen red first on the released 0.1.10.2.
+        self.a_hash_in_each_place()
+
+    def test_G2_62_the_same_on_a_tmux_that_reads_no_name_and_no_title_as_a_format(self):
+        """T119: the tool asks its tmux, it knows no versions. tmux 2.6 reads the folder after -c as a format and
+        hands a session's name and a pane's title on as they stand (seen on a stock Ubuntu 18.04). This stand-in
+        in front of the real tmux behaves that way: it doubles each hash after -s and -T before the real one reads
+        it. A tool that doubled every hash without asking would bring back sessions under doubled names here.
+        On a machine whose own tmux already leaves names as they stand, the stand-in hands everything on unchanged
+        and this test is the one above."""
+        self.name_for_this_tmux("")
+        double = "x.replace('#', '##') if keep else x" if self.reads_names else "x"
+        p = self.script("tmux-keeps-names", f"#!{sys.executable}\n" + "import os, sys\nout, keep = [], False\n"
+                        f"for x in sys.argv[1:]:\n    out.append({double})\n"
+                        "    keep = x in ('-s', '-T')\n" + f"os.execv({TMUX!r}, [{TMUX!r}] + out)\n")
+        self.cfg({"tmux": p})
+        self.a_hash_in_each_place()
+
+
+    def test_G2_62_a_tmux_that_cannot_be_asked_starts_no_session_under_a_guessed_name_and_says_so(self):
+        """T119: three sessions, a plain one, one whose tmux session name holds a hash and one whose own name does.
+        A run with no hash anywhere asks tmux nothing. Then a tmux session stands under the made-up name the tool
+        asks with (a person's, or one left by a run that was cut off): it is not touched, tmux is not asked, the
+        session with the hash in its tmux name is not started under any name and its line says so with the cause;
+        the other two come back, the title without its hash (a title never stops a start). Once that tmux session
+        is gone, the next revive brings the third back under its own name."""
+        self.cfg({"retry_min": 0.1, "retry_gap_s": 1})
+        plan = [("plain", "Plain Lane"), ("lane#Work", "Hash Before A Letter"), ("own", "Own #W name")]
+        sid = {}
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        for s, n in plan:
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                              f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        names = lambda: sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        self.assertEqual(names(), sorted(s for s, _ in plan))
+
+        def revive():
+            n0 = len(self.launches())
+            r = subprocess.run([sys.executable, "-I", SCRIPT, "revive"], capture_output=True, encoding="utf-8",
+                               errors="surrogateescape", env=self.env, timeout=240, cwd=self.tmp)
+            time.sleep(1)
+            return r.stdout + r.stderr, [x["sid"] for x in self.launches()[n0:]]
+        # the control: only the plain session on the record, and tmux is asked nothing
+        self.tmux(self.sock, "kill-session", "-t", "=lane#Work")
+        self.tmux(self.sock, "kill-session", "-t", "=own")
+        for row in self.launches()[1:]:
+            self.kill(row["pid"])
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, [r["tmux_session"] for r in self.table()["lanes"]]), (0, ["plain"]), out)
+        self.reboot()
+        out, started = revive()
+        self.assertEqual(started, [sid["plain"]], out)
+        self.assertEqual((self.logged("asked once how it takes a #"), names()), (0, ["plain"]), "no hash: nothing is asked")
+        # all three on the record; then the made-up name is taken
+        for s, n in plan[1:]:
+            before = len(self.launches())
+            self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                      f"MY_SETTING=byhand claude --resume {sid[s]}")
+            self.wait_launches(before + 1)
+        rc, out = self.tg("record", "--force")
+        t = {r["session_id"]: (r["tmux_session"], r["name"]) for r in self.table()["lanes"]}
+        self.assertEqual((rc, t), (0, {sid[s]: (s, n) for s, n in plan}), out)
+        self.reboot()
+        self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", "tardigrade-asks-##", "sleep 600")[0], 0)
+        taken = [x for x in names() if x.startswith("tardigrade-asks-")]
+        self.assertEqual(len(taken), 1, names())
+        pane = self.tmux(self.sock, "display", "-p", "-t", f"={taken[0]}:", "#{pane_pid}")[1]
+        self.addCleanup(lambda: pane.strip().isdigit() and self.kill(int(pane)))
+        out, started = revive()
+        self.assertEqual(sorted(started), sorted([sid["plain"], sid["own"]]), out)
+        self.assertEqual(names(), sorted(["plain", "own"] + taken), "no tmux session under a guessed name")
+        self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", f"={taken[0]}:", "#{pane_pid}")[1], pane,
+                         "the tmux session under the made-up name was not touched")
+        line = ("Hash Before A Letter: NOT STARTED. The name of its tmux session holds a # and tmux could not be asked "
+                "how it takes one (the made-up name it asks with is taken by a tmux session that is there: one of "
+                "Tardigrade's own ends by itself within a minute, any other is a person's and is left alone), so it "
+                "is not started under a guessed name. Nothing of it is lost. This run asks again at each try")
+        # the session is down at that moment: the line ends there, with no step by hand, and no line names a rename
+        self.assertEqual((self.logged(line + "\n"), self.logged(": NOT STARTED."), self.logged("rename")), (1, 1, 0), out)
+        # the stop line at the end of the run names the next step: by hand, and where the README has it
+        gave = re.search(r"Hash Before A Letter: GAVE UP after \d+ attempt\(s\); its tmux session is gone(.*)", out)
+        self.assertEqual(gave and gave.group(1), ". It was not started for the # in the name of its tmux session "
+                         "(its NOT STARTED line above). To bring it back by hand: the README, under "
+                         "\"A # in a name or a folder (T119, cured in 0.1.10.3)\"", out)
+        self.assertEqual(fread(os.path.join(ROOT, "README.md")).count("\nA # in a name or a folder (T119, cured in 0.1.10.3): "), 1,
+                         "the README has that heading, once")
+        self.assertEqual(len(re.findall(r"GAVE UP after .*README", out)), 1, "and no other session's line points there")
+        self.assertIn("revive: 2 started, 0 already running, 1 failed, 0 need you", out)
+        self.assertEqual(self.tmux(self.sock, "display", "-p", "-t", "=own:", "#{pane_title}")[1],
+                         "Own W name (coming back)\n", "the title went over without its hash")
+        self.assertEqual(self.logged("asked once how it takes a #"), 0)
+        # the made-up name is free again: the next revive asks, and the third session is back under its own name
+        self.tmux(self.sock, "kill-session", "-t", f"={taken[0]}")
+        out, started = revive()
+        self.assertEqual(started, [sid["lane#Work"]], out)
+        self.assertEqual(names(), sorted(s for s, _ in plan))
+        self.assertIn("revive: 1 started, 2 already running, 0 failed, 0 need you", out)
+        self.assertEqual(self.logged("asked once how it takes a #"), 1)
+
+    def test_G2_62_every_cause_tmux_could_not_be_asked_stands_in_one_list_and_each_is_said_on_the_line(self):
+        """T119: the causes for "tmux could not be asked" stand in one place in the tool, and this test walks every
+        one of them in a world of its own making: the made-up name taken (in the form the test above does not plant),
+        a tmux that makes no session and says why (its words carry a backtick, a dollar sign, an escape character
+        and a second line: the line shows the first line with a ? for each), one that makes none and says nothing,
+        one that never answers (the line says so with the time allowed, and never "in its own words"), and a tmux
+        that holds the made-up name as a third thing (that session is ended by its id). Each time: the plain
+        session comes back, the one with a hash in its tmux name is not started under any name, and its line
+        carries that cause. A tmux that cannot be run starts nothing at all, so that way is read from the tool's
+        own answer, with the tool loaded in this test."""
+        self.cfg({"retry_min": 0.1, "retry_gap_s": 1})
+        src = fread(SCRIPT)
+        listed = re.search(r"^ASK_WHYS = (\{.*?^\})", src, re.S | re.M)
+        self.assertTrue(listed, "the tool lists every cause for no answer in one place")
+        whys = ast.literal_eval(listed.group(1))
+        self.assertEqual(re.findall(r"ASK_WHY\[sock\] = (?!ASK_WHYS\[)", src), [], "no cause outside the list")
+        plan = [("plain", "Plain Lane"), ("lane#Work", "Hash Before A Letter")]
+        sid = {}
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        for s, n in plan:
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                              f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, sorted(r["tmux_session"] for r in self.table()["lanes"])), (0, ["lane#Work", "plain"]), out)
+        names = lambda: sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        head = "import os, sys\na = sys.argv[1:]\nif 'new-session' in a and 'tardigrade-asks-##' in a:\n"
+        tail = f"os.execv({TMUX!r}, [{TMUX!r}] + a)\n"
+        none = self.script("tmux-makes-none", f"#!{sys.executable}\n" + head
+                           + "    sys.stderr.write('no room for it: ' + chr(96) + 'x' + chr(96) + ' ' + chr(36) + '(y) '"
+                           " + chr(27) + '[1m' + chr(10) + 'a second line' + chr(10))\n    sys.exit(1)\n" + tail)
+        silent = self.script("tmux-makes-none-and-says-nothing", f"#!{sys.executable}\n" + head + "    sys.exit(1)\n" + tail)
+        hung = self.script("tmux-never-answers", f"#!{sys.executable}\n" + head
+                           + "    import time\n    time.sleep(600)\n" + tail)
+        other = self.script("tmux-other-name", f"#!{sys.executable}\n" + head
+                            + "    a[a.index('tardigrade-asks-##')] = 'tardigrade-asks-other'\n" + tail)
+        # the form of the made-up name that the test above does not plant on this machine's tmux
+        held = "tardigrade-asks-##" if self.reads_names else "tardigrade-asks-#"
+        seen = {}
+        for key, way, stand_in, left in (("taken", "", TMUX, [held]), ("none_made", "said", none, []),
+                                         ("none_made", "nothing", silent, []), ("none_made", "no_answer", hung, []),
+                                         ("other_name", "", other, [])):
+            self.reboot()
+            self.cfg({"tmux": stand_in})
+            if key == "taken":
+                self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(held),
+                                           "sleep 600")[0], 0)
+                self.assertEqual(names(), [held])
+                pane = self.tmux(self.sock, "display", "-p", "-t", f"={held}:", "#{pane_pid}")[1]
+                self.addCleanup(lambda p=pane: p.strip().isdigit() and self.kill(int(p)))
+            n0 = len(self.launches())
+            r = subprocess.run([sys.executable, "-I", SCRIPT, "revive"], capture_output=True, encoding="utf-8",
+                               errors="surrogateescape", env=self.env, timeout=240, cwd=self.tmp)
+            out = r.stdout + r.stderr
+            time.sleep(1)
+            why = (whys[key][way] if way else whys[key]).format(said="no room for it: ?x? ?(y) ?[1m", s=3)
+            self.assertEqual("in its own words" in why, way == "said", why)
+            line = ("Hash Before A Letter: NOT STARTED. The name of its tmux session holds a # and tmux could not be "
+                    f"asked how it takes one ({why}), so it is not started under a guessed name. Nothing of it is lost. "
+                    "This run asks again at each try")
+            seen[key, way] = (self.logged(line), [x["sid"] for x in self.launches()[n0:]], names(),
+                              "revive: 1 started, 0 already running, 1 failed, 0 need you" in out)
+            self.assertEqual(seen[key, way], (1, [sid["plain"]], sorted(["plain"] + left), True),
+                             f"{key} {way}\n" + out[-2500:])
+        # a tmux that cannot be run: the tool's own answer, and the cause it keeps for the line
+        tg = self.load_tool()
+        tg.load_cfg()
+        tg.CFG["tmux"] = self.script("tmux-not-a-program", "no program\n")
+        os.chmod(tg.CFG["tmux"], 0o644)
+        # the guard (G7.11): a child of this test's own process carries the test's tmux folder; the tool's own
+        # environment for a server does not hand TMUX_TMPDIR on, and the program here is never run
+        tg.server_env = lambda: dict(self.env)
+        self.assertEqual((tg.tmux_asked(self.sock), tg.ASK_WHY.get(self.sock)),
+                         (None, whys["none_made"]["not_run"].format(err="PermissionError")))
+        seen["none_made", "not_run"] = True
+        listed = [(k, w) for k, v in whys.items() for w in (v if isinstance(v, dict) else [""])]
+        self.assertEqual(sorted(seen), sorted(listed), "every cause and every way in the list was walked, no other")
+        self.assertEqual(sorted(whys), ["none_made", "other_name", "taken"], "three causes")
+        self.assertEqual(self.logged("asked once how it takes a #"), 0)
+
+    def test_G2_62_a_start_that_fails_for_another_cause_once_tmux_could_be_asked_is_not_laid_to_the_hash(self):
+        """T119: the give-up line points to the README's edge for the hash only when the LAST try was not made
+        because tmux could not be asked. Here the made-up name is taken at the first tries (NOT STARTED is said),
+        then it is free in the same run: tmux is asked, the session is started under its own name, and its start
+        fails for a cause of its own (the stand-in ends at once). Its give-up line names no README edge."""
+        self.cfg({"retry_min": 0.5, "retry_gap_s": 1})
+        plan = [("plain", "Plain Lane"), ("lane#Work", "Hash Before A Letter")]
+        sid = {}
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        for s, n in plan:
+            before = len(self.launches())
+            sid[s] = str(uuid.uuid4())
+            rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux(s), "-c", self.work,
+                              f"FAKE_SID={sid[s]} FAKE_NAME='{n}' claude --model claude-opus-5-5")
+            self.assertEqual(rc, 0, s)
+            self.wait_launches(before + 1)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, sorted(r["tmux_session"] for r in self.table()["lanes"])), (0, ["lane#Work", "plain"]), out)
+        self.reboot()
+        with open(os.path.join(self.home, "failsid"), "w") as f:
+            f.write(sid["lane#Work"])
+        self.assertEqual(self.tmux(self.sock, "new-session", "-d", "-s", "tardigrade-asks-##", "sleep 600")[0], 0)
+        names = lambda: sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        taken = names()
+        self.assertEqual(len(taken), 1, taken)
+        pane = self.tmux(self.sock, "display", "-p", "-t", f"={taken[0]}:", "#{pane_pid}")[1]
+        self.addCleanup(lambda: pane.strip().isdigit() and self.kill(int(pane)))
+        n0 = len(self.launches())
+        p = subprocess.Popen([sys.executable, "-I", SCRIPT, "revive"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             encoding="utf-8", errors="surrogateescape", env=self.env, cwd=self.tmp)
+        try:
+            self.until(lambda: self.logged(": NOT STARTED.") == 1, "the first try is not made: tmux cannot be asked")
+            self.tmux(self.sock, "kill-session", "-t", f"={taken[0]}")
+            out = p.communicate(timeout=240)[0]
+        finally:
+            if p.poll() is None:
+                p.kill()
+        gave = re.findall(r"Hash Before A Letter: GAVE UP after \d+ attempt\(s\); its tmux session .*", out)
+        self.assertEqual((len(gave), "README" in "".join(gave)), (1, False), out[-3000:])
+        self.assertEqual(self.logged("asked once how it takes a #"), 1, "it was asked in the same run, once free")
+        self.assertIn(sid["lane#Work"], [x["sid"] for x in self.launches()[n0:]], "and started under its own name")
+        self.assertEqual([x for x in names() if x not in ("plain", "lane#Work")], [], "no tmux session under another name")
+        self.assertEqual(self.logged(": NOT STARTED."), 1)
+
+    def test_G2_62_a_start_right_after_the_asking_waits_until_the_tmux_server_has_ended(self):
+        """T119: when the session the tool asks with was the tmux server's only one, tmux ends the server, and a
+        start that reaches it while it ends fails (seen on tmux 3.4: "server exited unexpectedly"). Here
+        ONE session is on the record and its tmux name holds a hash, so after a restart the asking session is alone
+        on its server. The tmux is a stand-in for that moment made wide: its server takes a second and a half to
+        end after its last session was ended, says so by its process number, and refuses every start that reaches
+        it before. The session comes back at the first try, under its own name, and no start was refused."""
+        self.cfg({"retry_min": 0.2, "retry_gap_s": 1})
+        os.makedirs(os.path.dirname(self.sock), mode=0o700, exist_ok=True)
+        sid = str(uuid.uuid4())
+        rc, _ = self.tmux(self.sock, "new-session", "-d", "-s", self.name_for_this_tmux("lane#Work"), "-c", self.work,
+                          f"FAKE_SID={sid} FAKE_NAME='Hash Before A Letter' claude --model claude-opus-5-5")
+        self.assertEqual(rc, 0)
+        self.wait_launches(1)
+        rc, out = self.tg("record", "--force")
+        self.assertEqual((rc, [r["tmux_session"] for r in self.table()["lanes"]]), (0, ["lane#Work"]), out)
+        self.reboot()
+        d = os.path.join(self.tmp, "ends-slowly")
+        os.makedirs(d)
+        slow = self.script("tmux-ends-slowly", f"#!{sys.executable}\n" + f"D, TMUX = {d!r}, {TMUX!r}\n" + r"""
+import os, subprocess, sys, time
+a = sys.argv[1:]
+P, K, R = (os.path.join(D, x) for x in ("server-pid", "last-session-ended", "refused"))
+
+
+def ending():
+    try:
+        os.kill(int(open(P).read()), 0)
+        return os.path.exists(K)
+    except (OSError, ValueError):
+        return False
+
+
+if "new-session" in a and "tardigrade-asks-##" in a:        # the server this stand-in speaks for: gone 1.5 s after K
+    p = subprocess.Popen([sys.executable, "-c", "import os, sys, time\nwhile not os.path.exists(sys.argv[1]):\n"
+                          "    time.sleep(0.02)\ntime.sleep(1.5)\n", K], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    open(P, "w").write(str(p.pid))
+elif any("#{pid}" in x for x in a) and os.path.exists(P):
+    print(open(P).read())
+    sys.exit(0)
+elif "kill-session" in a and os.path.exists(P) and not os.path.exists(K):
+    rc = subprocess.run([TMUX] + a, stdin=subprocess.DEVNULL).returncode
+    open(K, "w").close()
+    sys.exit(rc)
+elif "new-session" in a and ending():
+    open(R, "a").write("x")
+    sys.stderr.write("server exited unexpectedly\n")
+    sys.exit(1)
+os.execv(TMUX, [TMUX] + a)
+""")
+        self.cfg({"tmux": slow})
+        rc, out = self.tg("revive")
+        names = sorted(x for x in self.tmux(self.sock, "list-sessions", "-F", "#{session_name}")[1].split("\n") if x)
+        refused = os.path.getsize(os.path.join(d, "refused")) if os.path.exists(os.path.join(d, "refused")) else 0
+        self.assertEqual((os.path.exists(os.path.join(d, "last-session-ended")), refused, names,
+                          [x["sid"] for x in self.launches()[1:]],
+                          "revive: 1 started, 0 already running, 0 failed, 0 need you" in out),
+                         (True, 0, ["lane#Work"], [sid], True), out[-3000:])
+        self.assertEqual(self.logged("asked once how it takes a #"), 1)
+
 
 class Census(Base):
     def test_G3_1_census_names_hidden_and_down_sessions(self):
@@ -4464,6 +5020,7 @@ class Setup(Base):
         self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\n'
                     'case "$*" in *is-enabled*) echo enabled;; *is-active*) echo active;; esac\nexit 0\n')
         self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+        self.bus_meant()
         for nm in ("alpha", "beta", "gamma", "delta"):
             self.start_lane(nm, nm.title() + " Lane")
         self.tg("record", "--force")
@@ -4502,7 +5059,7 @@ class Setup(Base):
         line = said()
         self.assertIn("could not be read: systemctl gave no answer about the boot service (exit 1); systemctl gave "
                       "no answer about the record timer (exit 1)", line)
-        self.assertIn(". Next: log out and in (this login has no systemd user manager to ask), then run setup again", line)
+        self.assertIn(". Next: log out and in (this shell cannot reach the systemd user manager), then run setup again", line)
         self.assertNotIn("NO", line)
         self.assertNotIn("yes", line)
         self.boot_answers("enabled", None, copy=True)               # one part there, one unread: not yes
@@ -4541,13 +5098,876 @@ class Setup(Base):
         self.assertEqual(rc, 3, out)
         self.assertIn("Setup could not read whether it is set up: systemctl gave no answer about the boot service "
                       "(exit 1); systemctl gave no answer about the record timer (exit 1). So it does not say it is.", out)
-        self.assertIn("So it does not say it is. Log out and in (this login has no systemd user manager to ask), "
+        self.assertIn("So it does not say it is. Log out and in (this shell cannot reach the systemd user manager), "
                       "then run setup again.", out)
         self.assertNotIn("NOT set up", out)
         self.assertNotIn("is set up.", out)
         self.assertIn("boot service: no answer   record timer: no answer", out)
 
-    def stand_in_services(self):
+    # ----- G5.32 (T133): where systemctl gives no answer, the words beside the step say only what was read -----
+    def test_G5_32_where_systemctl_gives_no_answer_both_lines_say_this_shell_cannot_reach_the_user_manager(self):
+        # seen 2026-11-25 on a stock virtual machine: the account's user manager ran, the shell could not reach it,
+        # and both lines said "this login has no systemd user manager to ask". The step itself is G5.33 (T134).
+        said = "(this shell cannot reach the systemd user manager)"
+        self.cfg({"auto_revive": True})
+        self.boot_answers(None, None, copy=True)                    # systemctl gives no answer
+        census = self.tg("census", TARDIGRADE_FAKE_LINGER="yes")[1]
+        line = [x for x in census.splitlines() if x.startswith("Comes back after a reboot: could not be read")]
+        self.assertEqual(len(line), 1, census)
+        self.assertEqual(line[0].count(said), 1, census)
+        rc, setup = self.tg("setup")
+        self.assertEqual(rc, 3, setup)
+        line = [x for x in setup.splitlines() if x.startswith("Setup could not read whether it is set up")]
+        self.assertEqual(len(line), 1, setup)
+        self.assertEqual(line[0].count(said), 1, setup)
+        for out in (census, setup):                                 # and neither says there is none
+            self.assertEqual(out.count(said), 1, out)
+            self.assertNotIn("no systemd user manager", out)
+
+    # ----- G5.31 (T132), family rule 31 (v.5): each path in a service file is one word of that file's grammar, or
+    # setup refuses before its first write; and "set up" is said only when the service manager holds, word for word,
+    # what was meant. "Could not be read" is the third answer. -----
+    def other_home(self, name):
+        """a second scratch home of this test, its folder named `name`: the suite's marker and this test's settings"""
+        home = os.path.join(self.tmp, name)
+        os.makedirs(home)
+        with open(os.path.join(home, "tardigrade-test-home"), "w") as f:
+            f.write(MARK_TEXT + "\n")
+        shutil.copytree(os.path.join(self.home, ".config"), os.path.join(home, ".config"))
+        return home
+
+    def other_python(self, name):
+        """this run's Python under a path of this test's own: a folder named `name` with a link python3 in it"""
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d)
+        os.symlink(sys.executable, os.path.join(d, "python3"))
+        return os.path.join(d, "python3")
+
+    def run_as(self, py, *a, **over):
+        r = subprocess.run([py, "-I", SCRIPT, *a], capture_output=True, encoding="utf-8", errors="surrogateescape",
+                           env=dict(self.env, **over), timeout=240)
+        return r.returncode, r.stdout + r.stderr
+
+    @staticmethod
+    def start_lines(home):
+        """{unit: its ExecStart lines} as the two service files in a home have them"""
+        out = {}
+        for unit in SERVICE_WORDS:
+            with open(os.path.join(home, ".config", "systemd", "user", unit), encoding="utf-8") as f:
+                out[unit] = [x for x in f.read().split("\n") if x.startswith("ExecStart=")]
+        return out
+
+    @staticmethod
+    def one_word(s, program=False):
+        """this suite's own statement of how a systemd start line carries ONE word: in double quotes, a percent sign
+        doubled; in an argument the backslash and the double quote behind a backslash and a dollar sign doubled. The
+        recorded answers of real managers (tests/manager-answers) are what holds it true."""
+        s = s.replace("%", "%%")
+        if not program:
+            s = s.replace("\\", "\\\\").replace('"', '\\"').replace("$", "$$")
+        return '"' + s + '"'
+
+    HOME_NAMES = ("h plain", "h sp ace", "h%pct", "h$dol", 'h"quo', "h\\bsl", "h'apo", 'h s%p$d"q\\b\'a')
+
+    def test_G5_30_setup_writes_each_path_into_a_service_file_as_one_word(self):
+        # seen 2026-11-25 on a stock Ubuntu 24.04 virtual machine: in a home whose path holds a space the services
+        # did not start Tardigrade while setup said it was set up. Each special character of the grammar alone in
+        # the home's path, then all together; and a Python whose path holds those a program's path can hold.
+        self.stand_in_services()
+        py = self.other_python("py s%p")
+        for name in self.HOME_NAMES:
+            home = self.other_home(name)
+            script = os.path.join(home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+            self.bus_meant(home=home, py=py)
+            rc, out = self.run_as(py, "setup", HOME=home)
+            self.assertEqual(self.start_lines(home), {
+                unit: [f"ExecStart={self.one_word(py, True)} -I {self.one_word(script)} " + " ".join(verb)]
+                for unit, verb in SERVICE_WORDS.items()}, name)
+            self.assertEqual(rc, 0, (name, out))
+            self.assertIn("start lines: as written", out, name)
+            self.assertEqual(jload(os.path.join(home, ".config", "windstorm-tardigrade", "config.json"))["service_python"], py)
+            # what --print-units shows is what was written
+            rc, out = self.run_as(py, "setup", "--print-units", HOME=home)
+            for unit, lines in self.start_lines(home).items():
+                self.assertIn(lines[0] + "\n", out, (name, unit))
+            # the service files carry no Environment line: the start line is all of ours the manager holds
+            for unit in SERVICE_WORDS:
+                self.assertNotIn("Environment", fread(os.path.join(home, ".config", "systemd", "user", unit)), unit)
+
+    def test_G5_30_systemds_own_checker_takes_the_start_lines_setup_writes(self):
+        checker = shutil.which("systemd-analyze")
+        if not checker:
+            self.skipTest("this machine has no systemd-analyze")
+        rt = os.path.join(self.tmp, "rt")       # a runtime folder of this test's own: no running manager is asked
+        os.makedirs(rt, mode=0o700)
+
+        def check(unit_file, home):
+            r = subprocess.run([checker, "--user", "verify", unit_file], capture_output=True, text=True, timeout=120,
+                               env={"PATH": self.path, "HOME": home, "XDG_RUNTIME_DIR": rt, "TMUX_TMPDIR": self.tmp})
+            return r.returncode, [x for x in (r.stdout + r.stderr).splitlines() if os.path.basename(unit_file) in x]
+        # the control: a unit of this test's own that the checker must take, and one it must refuse, or it is not
+        # a checker here (a runner where it cannot start says nothing about our lines)
+        good, bad = os.path.join(self.tmp, "tg-control-good.service"), os.path.join(self.tmp, "tg-control-bad.service")
+        for p, line in ((good, "/bin/true"), (bad, os.path.join(self.tmp, "no such program") + " x")):
+            with open(p, "w") as f:
+                f.write(f"[Unit]\nDescription=control\n\n[Service]\nType=oneshot\nExecStart={line}\n")
+        if check(good, self.home)[0] != 0 or check(bad, self.home)[0] == 0:
+            self.skipTest("systemd-analyze does not tell this test's two control units apart on this machine")
+        self.stand_in_services()
+        py = self.other_python("py s%p")
+        for name in self.HOME_NAMES:
+            home = self.other_home(name)
+            self.bus_meant(home=home, py=py)
+            rc, out = self.run_as(py, "setup", HOME=home)
+            self.assertEqual(rc, 0, (name, out))
+            for unit in SERVICE_WORDS:
+                rc, said = check(os.path.join(home, ".config", "systemd", "user", unit), home)
+                self.assertEqual((rc, said), (0, []), (name, unit))
+
+    def test_G5_31_the_manager_holds_each_path_in_a_start_line_as_one_word(self):
+        # the managers' own answers, recorded on real systems and kept beside this file (each file says where, when
+        # and how): the line this version writes for that Python and that home is, letter for letter, the line the
+        # manager was given there, and what the manager answered is, word for word, what was meant
+        tg = self.load_tool()
+        cases = manager_answers()
+        self.assertEqual(sorted({c["file"] for c in cases}), sorted(ANSWER_FILES))
+        for f in ANSWER_FILES:
+            homes = [c["home"] for c in cases if c["file"] == f]
+            for ch in ' %$"\\':
+                self.assertTrue(any(ch in os.path.basename(h) for h in homes), (f, ch))
+            self.assertTrue(any(" " in c["python"] and "%" in c["python"] for c in cases if c["file"] == f), f)
+        for c in cases:
+            script = os.path.join(c["home"], ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+            self.assertEqual(sorted(c["units"]), sorted(SERVICE_WORDS), (c["file"], c["name"]))
+            for unit, verb in SERVICE_WORDS.items():
+                u, where = c["units"][unit], (c["file"], c["name"], unit)
+                self.assertEqual("ExecStart=" + tg.exec_line(c["python"], script, verb), u["written"], where)
+                for other in SERVICE_WORDS:
+                    self.bus_holds(other, None)
+                self.bus_holds(unit, u["held"], load=u["loadunit"])
+                self.assertEqual(tg.start_lines(tg.bus_words(u["held"])),
+                                 [(c["python"], tg.held_words(c["python"], script, verb))], where)
+                held = tg.unit_held(unit, self.env)             # and the same through the bus tool's own road
+                self.assertEqual(held["lines"], [(c["python"], tg.held_words(c["python"], script, verb))], where)
+                held = held["lines"][0]
+                # and with one dollar sign made of two in each argument, as the manager does when it starts the
+                # program, the words are the Python, -I, the copy's own path and the tool's words
+                self.assertEqual([held[1][0]] + [w.replace("$$", "$") for w in held[1][1:]],
+                                 [c["python"], "-I", script] + verb, where)
+                if "started" in u:      # the record unit was started there against a script that kept its words
+                    got = json.loads(u["started"])
+                    self.assertEqual((got["program"], got["argv"]), (c["python"], [script] + verb), where)
+
+    def test_G5_31_the_managers_answers_about_a_persons_own_drop_ins_are_read_as_what_they_are(self):
+        # the managers' own answers for this version's record unit with drop-in files of the recorder's own on it,
+        # recorded on the same five systems and kept in the same files (each says which drop-in held what): the
+        # reader gives every start line the manager holds, the NAMES of the Environment entries and the count of
+        # drop-in files. One variable set more than once stood in every recorded list once.
+        tg = self.load_tool()
+        unit, verb = "windstorm-tardigrade-record.service", ["record"]
+        three = ["TG_MADE_UP", "TG_TWO", "TG_THREE"]
+        want = {"state-0-no-drop-in": (["ours"], [], 0),
+                "state-1-own-entries": (["ours"], three, 1),
+                "state-2-a-start-line-beside": (["ours", "beside"], three, 2),
+                "state-3-a-start-line-over": (["over", "beside"], three, 3),
+                "state-4-as-before": (["ours"], [], 0),
+                "state-6-one-variable-on-two-lines": (["ours"], ["TG_SAME"], 1),
+                "state-7-the-same-variable-in-a-second-file": (["ours"], ["TG_SAME"], 2),
+                "state-10-one-variable-twice-on-one-line": (["ours"], ["TG_SAME"], 1)}
+        states = manager_answers("state")
+        for f in ANSWER_FILES:
+            self.assertEqual(sorted(s["name"] for s in states if s["file"] == f), sorted(want), f)
+        self.assertEqual(len(states), len(want) * len(ANSWER_FILES))
+        for s in states:
+            script = os.path.join(s["home"], ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+            own = {"ours": (s["python"], tg.held_words(s["python"], script, verb)),
+                   "beside": ("/bin/true", ["/bin/true", "made-up"]), "over": ("/bin/true", ["/bin/true", "over"])}
+            which, names, count = want[s["name"]]
+            lines = [own[k] for k in which]
+            self.assertEqual(sorted(s["units"]), [unit], (s["file"], s["name"]))
+            u, where = s["units"][unit], (s["file"], s["name"])
+            self.assertEqual(tg.start_lines(tg.bus_words(u["held"])), lines, where)
+            entries = tg.string_list(tg.bus_words(u["environment"]))
+            self.assertEqual([e.split("=", 1)[0] for e in entries], names, where)
+            self.assertEqual(len(tg.string_list(tg.bus_words(u["dropins"]))), count, where)
+            # the stand-in manager of this suite's other tests writes its answers in the recorded form
+            self.assertEqual("a(sasbttttuii) %d " % len(lines) + " ".join(
+                self.bus_plain(*x).split(" ", 2)[2] for x in lines), u["held"], where)
+            if not count:
+                self.assertEqual((u["environment"], u["dropins"]), ("as 0", "as 0"), where)
+            # and the same through the bus tool's own road, one question each
+            for other in SERVICE_WORDS:
+                self.bus_holds(other, None)
+            self.bus_holds(unit, u["held"], load=u["loadunit"], variables=u["environment"], dropins=u["dropins"])
+            self.assertEqual(tg.unit_held(unit, self.env), {"lines": lines, "variables": names, "dropins": count},
+                             where)
+
+    def test_G5_30_setup_refuses_a_path_no_service_file_can_carry_before_its_first_write(self):
+        import shlex
+        self.stand_in_services()
+        self.bus_meant()
+        made_by_every_command = {".local", ".local/state", ".local/state/windstorm-tardigrade"}
+
+        def refused(run, home, words):
+            before = self.whole_home(home)
+            for a in (["setup"], ["setup", "--print-units"], ["setup", "--dry-run"]):
+                rc, out = run(*a)
+                self.assertEqual(rc, 1, (a, out))
+                for w in words:
+                    self.assertIn(w, out, a)
+                self.assertIn("Nothing was installed and no file was written", out, a)
+                self.assertNotIn("[Unit]", out, a)
+                self.assertNotIn("is set up", out, a)
+            after = self.whole_home(home)
+            self.assertEqual({k: v for k, v in after.items() if before.get(k) != v and k not in made_by_every_command}, {})
+            self.assertEqual([k for k in before if k not in after], [])
+            self.assertFalse(os.path.exists(os.path.join(home, "systemctl.log")))       # the manager was asked nothing
+            return out
+        # a program's path: systemd takes none of the first three, and this writer takes no dollar sign there at
+        # all (one rule). The line names each kind it found, and no other.
+        kinds = ("a double quote", "an apostrophe", "a backslash", "a dollar sign")
+        for name, found in (('py"q', kinds[:1]), ("py'a", kinds[1:2]), ("py\\b", kinds[2:3]), ("py$d", kinds[3:]),
+                            ("p'y\"q", kinds[:2])):
+            py = self.other_python(name)
+            out = refused(lambda *a: self.run_as(py, *a), self.home,
+                          ["NOT set up: a systemd service file cannot carry the path of the Python that ran setup, "
+                           + "[" + py + "]: it holds " + " and ".join(found) + ". Nothing was installed and no file "
+                           "was written (", "). Run setup with a Python whose path holds none of these, for example: "])
+            for kind in kinds:
+                self.assertEqual(kind in out, kind in found, (name, kind))
+            # the command it gives instead stands last on its line and holds the script's path as one shell word
+            self.assertEqual(shlex.split(out.split("for example: ", 1)[1].split("\n")[0]),
+                             ["/usr/bin/python3", "-I", os.path.abspath(SCRIPT), "setup"])
+        # family rule 31 (B): where a path holds a backtick, a dollar sign before a parenthesis, or a character a
+        # line breaks on or a terminal acts on, the line shows it CHANGED and says so; none of them goes out raw
+        control = ("a control character (a line break or the like) or is not text",)
+        for name, shows, n, found in (('py"`q', 'py"?q', 1, kinds[:1]), ("py$(id)d", "py?(id)d", 1, kinds[3:]),
+                                      ("py\x1bq", "py?q", 1, control), ("p\ny\u2028`q", "p?y??q", 3, control)):
+            py = self.other_python(name)
+            self.assertEqual(py.count(name), 1)
+            out = refused(lambda *a: self.run_as(py, *a), self.home,
+                          ["NOT set up: a systemd service file cannot carry the path of the Python that ran setup, ["
+                           + py.replace(name, shows) + f"] (shown changed: {n} character(s) stand as a question "
+                           "mark): it holds " + " and ".join(found) + ". Nothing was installed and no file was "
+                           "written (", "for example: /usr/bin/python3 -I "])
+            self.assertNotIn("`", out, name)
+            self.assertNotIn("$(", out, name)
+            self.assertEqual([c for c in out if not c.isprintable() and c != "\n"], [], name)
+        # and a command is never printed with a path it would have to change: where this script's own path holds
+        # such a character, the step stands in words and the path is shown changed
+        odd = os.path.join(self.tmp, "sc`ript $(id)")
+        os.makedirs(odd)
+        shutil.copy(SCRIPT, os.path.join(odd, "tardigrade.py"))
+        r = subprocess.run([self.other_python('py"z'), "-I", os.path.join(odd, "tardigrade.py"), "setup"],
+                           capture_output=True, encoding="utf-8", errors="surrogateescape", env=self.env, timeout=240)
+        out = r.stdout + r.stderr
+        self.assertEqual(r.returncode, 1, out)
+        self.assertIn("Run setup with a Python whose path holds none of these, for example /usr/bin/python3; this "
+                      "script's own path cannot stand in a command on one line: ["
+                      + os.path.join(self.tmp, "sc?ript ?(id)", "tardigrade.py")
+                      + "] (shown changed: 2 character(s) stand as a question mark)\n", out)
+        for never in ("`", "$(", "for example: ", "/usr/bin/python3 -I"):
+            self.assertNotIn(never, out)
+        home = self.other_home("h line\nbreak")           # the copy's path: a control character
+        out = refused(lambda *a: self.tg(*a, HOME=home), home,
+                      ["NOT set up: a systemd service file cannot carry the path of Tardigrade's installed copy, ["
+                       + os.path.join(home, ".local", "share", "windstorm-tardigrade", "tardigrade.py").replace("\n", "?")
+                       + "] (shown changed: 1 character(s) stand as a question mark): it holds a control character"])
+        self.assertNotIn("line\nbreak", out)
+        # a path the file can carry is taken afterwards, in the same home
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Windstorm Tardigrade is set up.", out)
+
+    def test_G5_31_set_up_is_said_only_when_the_manager_holds_the_start_lines_as_written(self):
+        self.boot_answers("enabled", "active", copy=False)
+        meant = self.bus_meant()
+        boot, rec = "windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service"
+        not_held = "the service manager does not hold the start line of the %s as setup wrote it"
+
+        def census():
+            rc, out = self.tg("census", TARDIGRADE_FAKE_LINGER="yes")
+            line = [x for x in out.splitlines() if x.startswith("Comes back after a reboot:")]
+            self.assertEqual(len(line), 1, out)
+            return line[0].split("   Last record:")[0]
+
+        def cut(w):             # one word arrives as two
+            return w[:2] + [w[2][:len(w[2]) // 2], w[2][len(w[2]) // 2:]] + w[3:]
+        others = [                                       # what the manager holds instead, and which service is named
+            ({boot: cut, rec: cut}, ["boot service", "record service"]),
+            ({boot: cut}, ["boot service"]),
+            ({rec: cut}, ["record service"]),
+            ({rec: lambda w: w[:2] + [w[2] + "x"] + w[3:]}, ["record service"]),         # another path
+            ({boot: lambda w: w + ["--all"]}, ["boot service"]),                           # one word more
+            ({boot: lambda w: w[:-1]}, ["boot service"]),                                  # one word fewer
+            ({rec: lambda w: ["/bin/true"] + w[1:]}, ["record service"]),                 # another program
+            ({boot: lambda w: [w[0][1:]] + w[1:]}, ["boot service"]),                      # a program with no folder
+        ]
+        for change, named in others:
+            for unit, (program, words) in meant.items():
+                w = change[unit](list(words)) if unit in change else list(words)
+                self.bus_holds(unit, self.bus_plain(w[0], w))
+            why = "; ".join(not_held % n for n in named)
+            rc, out = self.tg("setup")
+            self.assertEqual(rc, 1, (named, out))
+            self.assertIn("boot service: enabled   record timer: active   start lines: not as written", out)
+            self.assertIn(f"NOT set up: {why}. Setup wrote the service files and the service manager does not hold "
+                          "them as written: run uninstall, and tell the maintainer what this said.\n", out)
+            # the tool read that the list differs, not what the held line starts: it does not say nothing comes back
+            self.assertNotIn("Nothing comes back by itself yet", out)
+            self.assertNotIn("is set up.", out)
+            self.assertNotIn("come back by themselves", out)
+            self.assertEqual(census(), f"Comes back after a reboot: NO: {why} (run setup)")
+        # the program's own path as the manager holds it apart from the words (its first answer) counts too, and a
+        # unit with no start line is an answer and not the one that was meant (setup's own line held twice has a
+        # test of its own)
+        program, words = meant[rec]
+        for held in (self.bus_plain("/bin/true", words), "a(sasbttttuii) 0"):
+            self.bus_meant()
+            self.bus_holds(rec, held)
+            rc, out = self.tg("setup")
+            self.assertEqual(rc, 1, (held, out))
+            self.assertIn("NOT set up: " + not_held % "record service", out)
+            self.assertNotIn("is set up.", out)
+        # as written: said, by setup and by the census, and the manager was asked for it
+        self.bus_meant()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("boot service: enabled   record timer: active   start lines: as written", out)
+        self.assertIn("Windstorm Tardigrade is set up.", out)
+        self.assertEqual(census(), "Comes back after a reboot: yes, by itself")
+        self.assertIn("--user get-property org.freedesktop.systemd1", fread(os.path.join(self.busdir, "asked.log")))
+
+    def test_G5_31_where_the_word_list_cannot_be_asked_the_answer_is_could_not_be_read_and_the_step_tells(self):
+        import shlex
+        said = ("the service manager's word list could not be asked (the bus tool busctl gave no answer); as text, "
+                "the two service files' start lines are the lines this version writes for this home: ")
+        step = ('ee it yourself: wait a minute, start the record service (its command is on the next line), then '
+                'run the census: where the service starts Tardigrade, "Last record" reads a few seconds; where it '
+                'reads a minute or more, it does not, and uninstall is the step')
+        start = "Start the record service with: systemctl --user start windstorm-tardigrade-record.service"
+        rec = "windstorm-tardigrade-record.service"
+        self.start_lane("alpha", "Alpha Lane")
+        self.boot_answers("enabled", "active", copy=False)
+        meant = self.bus_meant()
+
+        def census():
+            rc, out = self.tg("census", TARDIGRADE_FAKE_LINGER="yes")
+            line = [x for x in out.splitlines() if x.startswith("Comes back after a reboot:")]
+            self.assertEqual(len(line), 1, out)
+            return rc, line[0]
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        rc_read, line = census()
+        self.assertIn("Comes back after a reboot: yes, by itself", line)
+        plain = {u: self.bus_plain(*meant[u]) for u in meant}
+        no_answer = {
+            "no answer": lambda u: None,
+            "an answer in another form": lambda u: '{"type":"a(sasbttttuii)","data":[]}',
+            "an answer that breaks off": lambda u: plain[u][:len(plain[u]) // 2],
+            "another property's form": lambda u: 's "' + meant[u][0] + '"',
+        }
+        for why, answer in no_answer.items():
+            for u in meant:
+                self.bus_holds(u, answer(u))
+            rc, out = self.tg("setup")
+            self.assertEqual(rc, 3, (why, out))
+            self.assertIn("boot service: enabled   record timer: active   start lines: not asked", out, why)
+            self.assertIn("Setup could not read whether it is set up: " + said + "yes. So it does not say it is. S"
+                          + step + ".\n" + start + "\n", out, why)       # the command: last on a line of its own
+            for never in ("is set up.", "NOT set up", "come back by themselves", "by itself"):
+                self.assertNotIn(never, out, why)
+            rc, line = census()
+            self.assertEqual(rc, rc_read, why)
+            self.assertEqual(line.split("   Last record:")[0],
+                             "Comes back after a reboot: could not be read: " + said + "yes. Next: s" + step, why)
+            # the command: alone on the next line (read from one census: its seconds differ from run to run)
+            lines = self.tg("census", TARDIGRADE_FAKE_LINGER="yes")[1].splitlines()
+            at = [i for i, x in enumerate(lines) if x.startswith("Comes back after a reboot:")]
+            self.assertEqual([lines[i + 1] for i in at], [start], why)
+        # the bus tool answers some of the questions and not the others: the same
+        self.bus_meant()
+        whole = fread(os.path.join(self.bin, "busctl"))
+        for prop in ("ExecStart", "Environment", "DropInPaths"):
+            self.assertIn(f'"{prop}": ', whole)
+            self.script("busctl", whole.replace(f'"{prop}": ', f'"no {prop}": '))
+            self.assertIn("could not be read: " + said + "yes.", census()[1], prop)
+        # a bus tool that does not come back: the tool's own time limit ends the wait, and that is "could not be read"
+        self.script("busctl", "#!/bin/sh\nexec sleep 40\n")
+        t0 = time.time()
+        rc, line = census()
+        self.assertLess(time.time() - t0, 30, "the read of the word list has a time limit")
+        self.assertIn("could not be read: " + said + "yes.", line)
+        self.bus_tool()
+        for u in meant:
+            self.bus_holds(u, None)
+        # the comparison of text is a comparison of text: a start line changed by hand reads "no"
+        unit_file = os.path.join(self.home, ".config", "systemd", "user", rec)
+        text = fread(unit_file)
+        with open(unit_file, "w", encoding="utf-8") as f:
+            f.write(text.replace(" record\n", " record --force\n"))
+        self.assertIn("could not be read: " + said + "no.", census()[1])
+        with open(unit_file, "w", encoding="utf-8") as f:
+            f.write(text)
+        # THE STEP, run as printed, in the state it was printed in (the bus tool gives no answer). Where the person
+        # waits a minute the test moves the record's time back 90 s. A stand-in manager starts, as a manager starts
+        # a oneshot service and waits for its end, the words it holds for the unit.
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 3, out)
+        cmd = [x for x in out.splitlines() if x.startswith("Start the record service with: ")][0].split(": ", 1)[1]
+        self.assertEqual(cmd, "systemctl --user start " + rec)
+        starts = os.path.join(self.tmp, "starts.json")
+        self.script("systemctl", f'''#!{sys.executable}
+import json, os, subprocess, sys
+a = sys.argv[1:]
+with open(os.path.join(os.environ["HOME"], "systemctl.log"), "a") as f:
+    f.write(" ".join(a) + "\\n")
+if "is-enabled" in a or "is-active" in a:
+    print("enabled" if "is-enabled" in a else "active")
+elif "start" in a:
+    with open({starts!r}) as f:
+        argv = json.load(f)[a[-1]]
+    try:
+        sys.exit(subprocess.run(argv).returncode)
+    except OSError:
+        print("Job for " + a[-1] + " failed.")
+        sys.exit(1)
+''')
+        copy = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        as_meant = [sys.executable, "-I", copy, "record"]
+        for held, works in ((as_meant, True),
+                            (as_meant[:2] + [copy[:len(copy) // 2], copy[len(copy) // 2:], "record"], False),
+                            ([copy[:len(copy) // 2]], False),             # a program that is not there
+                            (["/bin/true"] + as_meant[1:], False)):       # another program, which ends well
+            jdump({rec: held}, starts)
+            t = jload(table)
+            t["recorded_at"] = int(time.time()) - 90
+            jdump(t, table)
+            self.assertIn("Last record: 1 min ago", census()[1])
+            subprocess.run(shlex.split(cmd), env=self.env, capture_output=True, timeout=120)
+            age = re.search(r"Last record: (\d+) (s|min) ago", census()[1])
+            self.assertTrue(age, held)
+            if works:
+                self.assertEqual(age.group(2), "s", held)
+                self.assertLess(int(age.group(1)), 30, held)
+            else:
+                self.assertEqual(age.group(2), "min", held)
+
+    def test_G5_31_what_is_the_persons_own_on_a_service_is_named_as_theirs_and_no_line_holds_its_value(self):
+        # family rule 31 (v.5) (3): a person's own drop-in may hold an address with a password, and a line a
+        # person is told to pass on would carry it. Names and counts only; and their own entry is never a stop.
+        self.boot_answers("enabled", "active", copy=False)
+        meant = self.bus_meant()
+        boot, rec = "windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service"
+        secret = "made-up-secret"
+
+        def all_said():
+            rc, out = self.tg("setup")
+            said = out + self.tg("census", TARDIGRADE_FAKE_LINGER="yes")[1]
+            for line in said.splitlines():      # a command stands last on its line: nothing follows it
+                if "systemctl --user " in line:
+                    self.assertRegex(line, r": systemctl --user (cat|start)( windstorm-tardigrade-[a-z]+\.service)+$")
+            said += self.tg("census", "--json")[1]
+            said += fread(self.state("tardigrade.log")) if os.path.exists(self.state("tardigrade.log")) else ""
+            for never in (secret, "proxy.example", "override.conf", "mine.conf"):
+                self.assertNotIn(never, said)
+            return rc, out, said
+        # entries of their own for two variables, one with a name that is not plain
+        self.bus_holds(rec, self.bus_plain(*meant[rec]), dropins='as 1 "/home/you/unit.d/mine.conf"', variables=(
+            f'as 3 "HTTPS_PROXY=http://ann:{secret}@proxy.example:8080" "TG_OWN=a b" "x y={secret}"'))
+        rc, out, said = all_said()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Windstorm Tardigrade is set up.", out)
+        yours = ("Yours, not Tardigrade's, and left as it is: the record service has entries of your own for the "
+                 "variable(s) HTTPS_PROXY, TG_OWN, 1 more (names only; setup's own service files set none).")
+        self.assertEqual(said.count(yours), 3, said)       # setup, the census and its JSON: a line of its own each
+        self.assertIn("Comes back after a reboot: yes, by itself", said)
+        self.assertEqual(json.loads(self.tg("census", "--json")[1])["yours_on_the_services"], [yours])
+        # a start line of their own beside the one setup wrote: named, and still set up
+        own = self.bus_plain(f"/opt/{secret}/run", [f"/opt/{secret}/run", "--token", secret])
+        both = "a(sasbttttuii) 2 " + " ".join(x.split(" ", 2)[2] for x in (self.bus_plain(*meant[boot]), own))
+        self.bus_meant()
+        self.bus_holds(boot, both, dropins='as 1 "/home/you/unit.d/override.conf"')
+        rc, out, said = all_said()
+        self.assertEqual(rc, 0, out)
+        see = "See the service and its drop-in files with: systemctl --user cat windstorm-tardigrade-revive.service"
+        self.assertIn("Yours, not Tardigrade's, and left as it is: the boot service has 1 start line(s) of your own "
+                      "beside the one setup wrote. " + see + "\n", out)
+        self.assertIn("Windstorm Tardigrade is set up.", out)
+        # the same two lines with theirs FIRST: the manager would not run ours first, so it is a stop
+        first = "a(sasbttttuii) 2 " + " ".join(x.split(" ", 2)[2] for x in (own, self.bus_plain(*meant[boot])))
+        self.bus_holds(boot, first, dropins='as 1 "/home/you/unit.d/override.conf"')
+        rc, out, said = all_said()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT set up: the service manager holds the start line of the boot service as setup wrote it, "
+                      "but not first: 1 start line(s) stand before it (the unit has drop-in files of your own: 1). A "
+                      "drop-in file of your own changes the start lines of the service,", out)
+        self.assertIn("\nChange or remove a drop-in that is not meant, then run setup again.\n" + see + "\n", out)
+        # what the manager does with a start line of theirs before ours was not read: the tool does not say it
+        self.assertNotIn("Nothing comes back by itself yet", out)
+        self.assertNotIn("is set up.", out)
+        self.assertNotIn("Yours, not Tardigrade's", out)
+        # their drop-in stands over the start line setup wrote: not set up, said so, and never "run uninstall"
+        self.bus_holds(boot, own, dropins='as 2 "/home/you/unit.d/override.conf" "/home/you/unit.d/mine.conf"')
+        rc, out, said = all_said()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT set up: the service manager does not hold the start line of the boot service as setup "
+                      "wrote it (the unit has drop-in files of your own: 2). A drop-in file of your own changes "
+                      "the start lines of the service, and Tardigrade changes no file of yours. It says set up only "
+                      "where the service manager's list holds the line setup wrote once, as written and first; with "
+                      "your drop-in as it is, it does not say that sessions come back by themselves.\nChange or "
+                      "remove a drop-in that is not meant, then run setup again.\n" + see
+                      + "\n", out)
+        self.assertNotIn("uninstall", out)
+        self.assertNotIn("is set up.", out)
+        # the census: the same step, "(run setup)" would cure nothing there; the listing alone on the next line
+        line = [x for x in said.splitlines() if x.startswith("Comes back after a reboot:")][0]
+        self.assertEqual(line.split("   Last record:")[0], "Comes back after a reboot: NO: the service manager does "
+                         "not hold the start line of the boot service as setup wrote it (the unit has drop-in files "
+                         "of your own: 2). Next: change or remove a drop-in that is not meant, then run setup again "
+                         "(the next line lists the service and its drop-in files)")
+        self.assertIn(line + "\n" + see + "\n", said)
+        self.assertEqual(json.loads(self.tg("census", "--json")[1])["next_step_line"], see)
+        self.assertNotIn("(run setup)", said)
+        # with no drop-in of theirs the same difference is ours to hear of, and still no value is in the line
+        self.bus_holds(boot, own)
+        rc, out, said = all_said()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("as setup wrote it. Setup wrote the service files and the service manager does not hold them "
+                      "as written: run uninstall, and tell the maintainer what this said.", out)
+
+    def held_but(self, lines, why):
+        """one state in which the manager holds setup's own start line of the boot service AS WRITTEN, only not once
+        and first, beside a drop-in file of the person's own: setup stops and names the why by place or count; the
+        census says neither yes nor no, and gives the listing as its step, the command alone on the next line"""
+        self.boot_answers("enabled", "active", copy=False)
+        meant = self.bus_meant()
+        boot, rec = "windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service"
+        ours = self.bus_plain(*meant[boot]).split(" ", 2)[2]
+        theirs = self.bus_plain("/opt/made-up/run", ["/opt/made-up/run", "--made-up"]).split(" ", 2)[2]
+        held = [ours if x == "ours" else theirs for x in lines]
+        self.bus_holds(boot, f"a(sasbttttuii) {len(held)} " + " ".join(held),
+                       dropins='as 1 "/home/you/unit.d/override.conf"')
+        reason = ("the service manager holds the start line of the boot service as setup wrote it" + why
+                  + " (the unit has drop-in files of your own: 1)")
+        see = "See the service and its drop-in files with: systemctl --user cat " + boot
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("boot service: enabled   record timer: active   start lines: as written, but not once and "
+                      "first\n", out)
+        self.assertIn("NOT set up: " + reason + ". A drop-in file of your own changes the start lines of the "
+                      "service,", out)
+        self.assertIn("\nChange or remove a drop-in that is not meant, then run setup again.\n" + see + "\n", out)
+        for never in ("Nothing comes back by itself yet", "is set up.", "uninstall", "made-up"):
+            self.assertNotIn(never, out)
+
+        def census():
+            rc, out = self.tg("census", TARDIGRADE_FAKE_LINGER="yes")
+            said = out.splitlines()
+            at = [i for i, x in enumerate(said) if x.startswith("Comes back after a reboot:")]
+            self.assertEqual(len(at), 1, out)
+            return said[at[0]].split("   Last record:")[0], said[at[0] + 1]
+        line, after = census()
+        self.assertEqual(line, "Comes back after a reboot: not known: " + reason + ". Next: change or remove a "
+                         "drop-in that is not meant, then run setup again (the next line lists the service and its "
+                         "drop-in files)")
+        self.assertEqual(after, see)
+        for never in ("NO", "yes", "made-up"):
+            self.assertNotIn(never, line)
+        self.assertTrue(json.loads(self.tg("census", "--json")[1])["comes_back"].startswith("not known: "))
+        # NO stays where the tool READ that setup's line is not held: here, on the other service
+        self.bus_holds(rec, self.bus_plain("/bin/true", ["/bin/true"]))
+        line, after = census()
+        self.assertTrue(line.startswith("Comes back after a reboot: NO: " + reason + "; the service manager does "
+                                        "not hold the start line of the record service as setup wrote it"), line)
+
+    def test_G5_31_where_setups_line_is_held_but_not_first_the_census_says_neither_yes_nor_no(self):
+        self.held_but(("theirs", "ours"), ", but not first: 1 start line(s) stand before it")
+
+    def test_G5_31_where_setups_line_is_held_more_than_once_the_census_says_neither_yes_nor_no(self):
+        self.held_but(("ours", "theirs", "ours"), " 2 times, not once")
+
+    def test_G5_31_the_read_back_compares_with_what_setup_wrote_not_with_this_terminals_own(self):
+        self.boot_answers("enabled", "active", copy=False)
+        self.bus_meant()
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        cfg = jload(os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json"))
+        script = os.path.join(self.home, ".local", "share", "windstorm-tardigrade", "tardigrade.py")
+        self.assertEqual((cfg["service_python"], cfg["service_script"]), (sys.executable, script))
+
+        def census(**env):
+            out = self.tg("census", TARDIGRADE_FAKE_LINGER="yes", **env)[1]
+            line = [x for x in out.splitlines() if x.startswith("Comes back after a reboot:")]
+            self.assertEqual(len(line), 1, out)
+            return line[0].split("   Last record:")[0]
+        # the same home under another spelling in a later terminal: the manager holds what setup wrote, and it is
+        # setup's record that is compared
+        link = os.path.join(self.tmp, "another way home")
+        os.symlink(self.home, link)
+        self.assertEqual(census(HOME=link), "Comes back after a reboot: yes, by itself")
+        self.assertEqual(census(HOME=self.home + os.sep), "Comes back after a reboot: yes, by itself")
+        # A SETUP FROM A VERSION THAT KEPT NO RECORD. Its unit files are its record where their start lines are
+        # plain words, which every reader takes alike; any other line is "could not be read", and its step is taken.
+        for k in ("service_python", "service_script"):
+            del cfg[k]
+        jdump(cfg, os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json"))
+        units = os.path.join(self.home, ".config", "systemd", "user")
+        before = {u: fread(os.path.join(units, u)) for u in SERVICE_WORDS}
+
+        def older(py, path):
+            for u, verb in SERVICE_WORDS.items():
+                line = [x for x in before[u].split("\n") if x.startswith("ExecStart=")]
+                self.assertEqual(len(line), 1)
+                with open(os.path.join(units, u), "w", encoding="utf-8") as f:
+                    f.write(before[u].replace(line[0], f"ExecStart={py} -I {path} " + " ".join(verb)))
+                self.bus_holds(u, self.bus_plain(py, [py, "-I", path] + verb))
+        plain = self.tmp.replace(" ", "").replace("'", "").replace("$", "") == self.tmp
+        # the older setup's python is one that is there: from 0.1.11 on the census also reads whether the python a
+        # service file names still exists (G5.26), and says NO where it is gone
+        old_py = os.path.realpath(sys.executable)
+        self.assertRegex(old_py, r"^/[A-Za-z0-9._/+:,=@-]*$", "this suite's python has a path of plain words")
+        older(old_py, script)
+        if plain:
+            self.assertEqual(census(), "Comes back after a reboot: yes, by itself")
+            self.bus_holds("windstorm-tardigrade-record.service", self.bus_plain(old_py, [
+                old_py, "-I", script + "x", "record"]))
+            self.assertEqual(census(), "Comes back after a reboot: NO: the service manager does not hold the start "
+                             "line of the record service as setup wrote it (run setup)")
+        older(old_py, "/home/you space/.local/share/windstorm-tardigrade/tardigrade.py")
+        self.assertEqual(census(), "Comes back after a reboot: could not be read: this setup was made by an older "
+                         "version of Tardigrade, which kept no record of the start lines it wrote. Next: run setup again")
+        self.bus_meant()                    # what the manager holds once setup has written its lines again
+        rc, out = self.tg("setup")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Windstorm Tardigrade is set up.", out)
+        self.assertEqual(census(), "Comes back after a reboot: yes, by itself")
+
+    def test_G5_31_the_lingering_line_gives_the_account_name_as_one_shell_word(self):
+        self.boot_answers("enabled", "active", copy=False)
+        args = os.path.join(self.tmp, "sudo.args")
+        self.script("sudo", f'#!{sys.executable}\nimport json, sys\njson.dump(sys.argv[1:], open({args!r}, "w"))\n')
+        self.assertEqual(shutil.which("sudo", path=self.path), os.path.join(self.bin, "sudo"))     # only the stand-in
+        import pwd
+        me = pwd.getpwuid(os.getuid()).pw_name
+        # the name is the account's own, read by its number: a USER left behind by a changed login is not taken
+        for user, env in [(u, {"TARDIGRADE_FAKE_ACCOUNT": u}) for u in (
+                "ann", "ann lee", "ann$HOME", "ann's", 'ann"q', "ann;b", "ann*")] + [(me, {"USER": "someone else"})]:
+            rc, out = self.tg("setup", TARDIGRADE_FAKE_LINGER="no", **env)
+            self.assertEqual(rc, 0, out)
+            line = [x.split("a person runs once: ", 1)[1] for x in out.splitlines() if "a person runs once: " in x]
+            self.assertEqual(len(line), 1, out)
+            # the printed line, read as a shell reads it
+            subprocess.run(["/bin/sh", "-c", line[0]], env=self.env, timeout=30, check=True)
+            self.assertEqual(jload(args), ["loginctl", "enable-linger", user], line[0])
+
+    def test_G5_30_a_launchd_file_holds_each_argument_as_one_string_and_no_path_in_a_shell_line(self):
+        import plistlib
+        tg = self.load_tool()
+        d = os.path.join(self.tmp, "p <&> \"q\" 'a' $d %p \\b")
+        os.makedirs(d)
+        py, script = os.path.join(d, "python3"), os.path.join(d, "share", "tardigrade.py")
+        boot, rec = "ai.thewindstorm.tardigrade-revive", "ai.thewindstorm.tardigrade-record"
+        got = {}
+        for label in (boot, rec):
+            got[label] = plistlib.loads(tg.plist(label, py, script, "<key>RunAtLoad</key><true/>").encode("utf-8"))
+            self.assertEqual(got[label]["Label"], label)
+            self.assertEqual(got[label]["StandardOutPath"], os.path.join(tg.STATE, label + ".out"))
+            self.assertEqual(got[label]["ProgramArguments"], tg.job_words(label, py, script))
+        self.assertEqual(got[rec]["ProgramArguments"], [py, "-I", script, "record"])
+        words = got[boot]["ProgramArguments"]
+        self.assertEqual(words[:2] + words[3:4] + words[5:], ["/bin/sh", "-c", "tardigrade", py, "-I", script, "revive", "--boot"])
+        self.assertTrue(words[4].isdigit(), words)
+        # the one line a shell is handed is the same for every path: no path is part of it
+        self.assertEqual(words[2], tg.job_words(boot, "/usr/bin/python3", "/Users/you/tardigrade.py")[2])
+        self.assertNotIn(d, words[2])
+        # and that line, run for real with a wait of 0, hands a program each argument whole
+        kept = os.path.join(self.tmp, "kept.args")
+        with open(py, "w") as f:
+            f.write(f'#!{sys.executable}\nimport json, sys\njson.dump(sys.argv, open({kept!r}, "w"))\n')
+        os.chmod(py, 0o755)
+        subprocess.run(words[:4] + ["0"] + words[5:], env=self.env, timeout=30, check=True)
+        self.assertEqual(jload(kept), [py, "-I", script, "revive", "--boot"])
+
+    def test_G5_31_on_a_mac_the_read_back_compares_a_jobs_own_arguments_with_what_setup_wrote(self):
+        # launchd's own answers for six trial jobs, recorded on a real Mac and kept beside this file (the file says
+        # where, when and how): two that this version's writer composed for paths with a space, a percent sign, a
+        # dollar sign, both quotes, a backslash, an ampersand and angle brackets; two for a path with an accented
+        # letter, once as one character and once as a letter and a combining mark; two as the version before this
+        # one wrote them (a shell, -c, one line). The reader gives each argument whole, character for character,
+        # and the read back takes the jobs as written only against setup's own record, never this terminal's home.
+        tg = self.load_tool()
+        self.assertEqual(sorted(j["file"] for j in launchd_answers()), sorted(JOB_FILES * 6))
+        jobs = {j["label"]: j["print"] for j in launchd_answers()}
+        pre = "ai.thewindstorm.tardigrade-trial-"
+        self.assertEqual(sorted(jobs), sorted(pre + n for n in (
+            "revive", "record", "acc-revive", "acc-record", "old-revive", "old-record")))
+        odd = "/private/tmp/tg-trial-1125/p s%p$d \"q\" 'a' \\b <&>"
+        acc = "/private/tmp/tg-trial-1125b/acc é one and é two"
+        plain = "/private/tmp/tg-trial-1125b/plain"
+        tg.CFG["boot_wait_s"] = 0                   # the recordings' own wait
+        for kind, folder in (("", odd), ("acc-", acc)):
+            for name in ("revive", "record"):
+                self.assertEqual(tg.job_held(jobs[pre + kind + name]), tg.job_words(
+                    pre + kind + name, folder + "/keep-words", folder + "/share/tardigrade.py"), kind + name)
+        self.assertEqual(tg.job_held(jobs[pre + "record"]),
+                         [odd + "/keep-words", "-I", odd + "/share/tardigrade.py", "record"])
+        older = plain + "/keep-words -I " + plain + "/.local/share/windstorm-tardigrade/tardigrade.py "
+        self.assertEqual(tg.job_held(jobs[pre + "old-revive"]), ["/bin/sh", "-c", "sleep 0; exec " + older + "revive --boot"])
+        self.assertEqual(tg.job_held(jobs[pre + "old-record"]), ["/bin/sh", "-c", "exec " + older + "record"])
+        tg.CFG["boot_wait_s"] = 20
+        boot, rec = tg.BOOT_JOBS
+        by = {boot: jobs[pre + "revive"], rec: jobs[pre + "record"]}
+        py, script = odd + "/keep-words", odd + "/share/tardigrade.py"
+        os.makedirs(tg.INSTALL_DIR, exist_ok=True)
+        shutil.copyfile(SCRIPT, os.path.join(tg.INSTALL_DIR, "tardigrade.py"))
+        held, asked = {}, []
+
+        def launchctl(argv, timeout=30, env=None):      # launchd's stand-in: the recorded answer for a job, or its
+            asked.append(argv)                          # own answer for a job it does not have (exit 113)
+            self.assertEqual(argv[:2] + [argv[2].rpartition("/")[0]], ["launchctl", "print", f"gui/{os.getuid()}"])
+            return held.get(argv[2].rpartition("/")[2], (113, ""))
+
+        def block(label, words):            # a recorded answer with other arguments in its own block
+            head, _, rest = by[label].partition("\targuments = {\n")
+            self.assertTrue(rest, label)
+            return head + "\targuments = {\n" + "".join("\t\t" + w + "\n" for w in words) + "\t}" + rest.partition("\n\t}")[2]
+
+        def read(python, wrote, **other):
+            tg.CFG["service_python"], tg.CFG["service_script"] = python, wrote
+            held.clear()
+            held.update({label: (0, other.get("revive" if label == boot else "record", by[label]))
+                         for label in tg.BOOT_JOBS})
+            missing, unread, seen = tg.boot_read()
+            self.assertEqual(seen, f"{boot}: loaded   {rec}: loaded")
+            return missing, unread
+        tg.MAC, tg.run = True, launchctl
+        differs = [tg.NOT_AS_WRITTEN + label + " as setup wrote it" for label in tg.BOOT_JOBS]
+        self.assertNotEqual(script, os.path.join(tg.INSTALL_DIR, "tardigrade.py"))
+        # as written: against the record, in a terminal whose own home is another one; the wait is any number
+        self.assertEqual(read(py, script), ([], []))
+        self.assertEqual(block(boot, tg.job_held(by[boot])), by[boot])
+        self.assertEqual([a[2] for a in asked], [f"gui/{os.getuid()}/{label}" for label in tg.BOOT_JOBS])
+        # the accented letter in both forms: a compare character for character takes the sound jobs as written
+        self.assertEqual(read(acc + "/keep-words", acc + "/share/tardigrade.py", revive=jobs[pre + "acc-revive"],
+                              record=jobs[pre + "acc-record"]), ([], []))
+        # the record names another script, or another Python: both jobs differ, and the line holds no value
+        self.assertEqual(read(py, os.path.join(tg.INSTALL_DIR, "tardigrade.py")), (differs, []))
+        self.assertEqual(read(sys.executable, script), (differs, []))
+        # one job with an argument more, and with one fewer (made up from the recorded answer)
+        words = tg.job_held(by[rec])
+        self.assertEqual(read(py, script, record=block(rec, words + ["--made-up"])), (differs[1:], []))
+        self.assertEqual(read(py, script, record=block(rec, words[:-1])), (differs[1:], []))
+        words = tg.job_held(by[boot])
+        self.assertEqual(read(py, script, revive=block(boot, words[:4] + ["soon"] + words[5:])), (differs[:1], []))
+        # a setup with no record: this version's jobs are not what an older version wrote, so it could not be read,
+        # and the step is setup again
+        self.assertEqual(read("", ""), ([], [tg.OLDER_SETUP]))
+        self.assertEqual(read(py, ""), ([], [tg.OLDER_SETUP]))
+        self.assertEqual(tg.unread_step([tg.OLDER_SETUP]), "run setup again")
+        # the older version's own jobs as launchd gave them, plain words only: as that version wrote them
+        old = {"revive": jobs[pre + "old-revive"], "record": jobs[pre + "old-record"]}
+        self.assertEqual(read("", "", **old), ([], []))
+        # the same shape with a word that is not plain, or with the tool's words changed (made up from the recorded
+        # answer): not a record
+        copy = plain + "/.local/share/windstorm-tardigrade/tardigrade.py"
+        for line in (f"exec {plain} b/keep-words -I {copy} record", f"exec {plain}/keep-words -I {copy} record --made-up",
+                     f"exec {plain}/keep-words {copy} record",
+                     f"exec {plain}/keep-words -I {copy.replace('.local', 'local')} record"):
+            self.assertEqual(read("", "", revive=old["revive"], record=block(rec, ["/bin/sh", "-c", line])),
+                             ([], [tg.OLDER_SETUP]), line)
+        # an answer with no block of arguments could not be read; a job launchd does not have is missing
+        self.assertEqual(read(py, script, record="made-up = {\n}\n"),
+                         ([], [tg.NO_ARGUMENTS + rec]))
+        held.clear()
+        self.assertEqual(tg.boot_read(), ([f"launchd has not loaded {label}" for label in tg.BOOT_JOBS], [],
+                                          f"{boot}: not loaded   {rec}: not loaded"))
+
+    def test_G5_31_on_a_mac_an_answer_with_no_block_of_arguments_gets_a_step_of_its_own(self):
+        # launchd answered (exit 0) and the answer holds no block of arguments this version can read: the person
+        # is logged in and launchd is there, so "log in at this Mac's screen" is no step for that state
+        tg = self.load_tool()
+        boot, rec = tg.BOOT_JOBS
+        os.makedirs(tg.INSTALL_DIR, exist_ok=True)
+        shutil.copyfile(SCRIPT, os.path.join(tg.INSTALL_DIR, "tardigrade.py"))
+        tg.CFG.update(auto_revive=True, service_python="/usr/bin/python3", service_script="/Users/you/tardigrade.py")
+        answers = {boot: (0, "made-up = {\n}\n"), rec: (0, "made-up = {\n}\n")}
+        tg.MAC, tg.run = True, lambda argv, timeout=30, env=None: answers[argv[2].rpartition("/")[2]]
+        login = "log in at this Mac's screen as this user, then run setup again"
+        own = "tell the maintainer this line and this Mac's macOS version"
+        missing, unread, seen = tg.boot_read()
+        self.assertEqual((missing, unread), ([], [tg.NO_ARGUMENTS + boot, tg.NO_ARGUMENTS + rec]))
+        self.assertEqual(seen, f"{boot}: loaded   {rec}: loaded")
+        self.assertEqual(tg.unread_step(unread), own)
+        said = tg.comes_back()
+        self.assertEqual(said, "could not be read: launchd answered, and this version did not find the job's "
+                         f"arguments in its answer: {boot}; launchd answered, and this version did not find the "
+                         f"job's arguments in its answer: {rec}. Next: {own}")
+        self.assertNotIn("log in", said)
+        self.assertEqual(tg.step_line(missing, unread), "")
+        # where launchctl itself gave no answer about a job, the login step stands as before
+        answers[rec] = (5, "")
+        missing, unread, seen = tg.boot_read()
+        self.assertEqual(unread, [tg.NO_ARGUMENTS + boot, f"launchctl gave no answer about {rec} (exit 5)"])
+        self.assertEqual(tg.unread_step(unread), login)
+        answers[boot] = (5, "")
+        self.assertEqual(tg.unread_step(tg.boot_read()[1]), login)
+
+    def test_G5_31_where_the_reload_did_not_answer_setup_says_so_and_the_step_is_setup_again(self):
+        # setup writes the two service files and asks the manager to read them again. Where that reload did not
+        # answer 0 and the manager's list then holds another start line, with no drop-in file of the person's own
+        # on the unit, the moment's failure is said as what it is: the step is setup again, and uninstall and the
+        # maintainer only where the line comes back. No new stop: where the lines are held as written it is set up.
+        rec = "windstorm-tardigrade-record.service"
+        not_held = "the service manager does not hold the start line of the record service as setup wrote it"
+        moment = (" Setup wrote the service files and the service manager does not hold them as written; the reload "
+                  "setup asked of it after writing them (daemon-reload) ended with exit code %d. Run setup again; if "
+                  "this line comes back, run uninstall, and tell the maintainer what this said.")
+        uninstall = (" Setup wrote the service files and the service manager does not hold them as written: run "
+                     "uninstall, and tell the maintainer what this said.\n")
+
+        def setup(reload_exit, held, **more):
+            self.boot_answers("enabled", "active", copy=False)
+            program, words = self.bus_meant()[rec]
+            if held == "another":       # what the manager held before: the same line with another path
+                self.bus_holds(rec, self.bus_plain(program, words[:2] + [words[2] + "x"] + words[3:]), **more)
+            self.script("systemctl", '#!/bin/sh\necho "$@" >> "$HOME/systemctl.log"\ncase "$*" in\n'
+                        f'  *daemon-reload*) exit {reload_exit};;\n  *is-enabled*) echo enabled;;\n'
+                        '  *is-active*) echo active;;\nesac\nexit 0\n')
+            rc, out = self.tg("setup")
+            self.assertIn("--user daemon-reload\n", fread(os.path.join(self.home, "systemctl.log")))
+            return rc, out
+        for code in (1, 5):
+            rc, out = setup(code, "another")
+            self.assertEqual(rc, 1, out)
+            self.assertIn("boot service: enabled   record timer: active   start lines: not as written", out)
+            self.assertIn("NOT set up: " + not_held + "." + moment % code + "\n", out)
+            self.assertNotIn("Nothing comes back by itself yet.", out)
+            self.assertNotIn("is set up.", out)
+        # the reload answered 0: the line as it was, uninstall first
+        rc, out = setup(0, "another")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NOT set up: " + not_held + "." + uninstall, out)
+        self.assertNotIn("daemon-reload", out)
+        self.assertNotIn("Nothing comes back by itself yet", out)       # here too: neither case says it
+        # a drop-in file of the person's own stands on the unit: theirs, whatever the reload answered
+        rc, out = setup(1, "another", dropins='as 1 "/home/you/unit.d/override.conf"')
+        self.assertEqual(rc, 1, out)
+        self.assertIn("A drop-in file of your own changes the start lines of the service", out)
+        self.assertNotIn("daemon-reload)", out)
+        self.assertNotIn("tell the maintainer", out)
+        # the reload did not answer 0 and the lines are held as written: set up, and no word about the reload
+        rc, out = setup(1, "as written")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Windstorm Tardigrade is set up.", out)
+        self.assertNotIn("reload", out)
+        # no answer in its time, or a program that could not be started, has words of its own
+        tg = self.load_tool()
+        self.assertEqual(tg.reload_words(99), "gave no answer within 30 s, or could not be started")
+        self.assertEqual(tg.reload_words(1), "ended with exit code 1")
+
+    def stand_in_services(self, record=True):
         """a stand-in `systemctl --user` that keeps state as systemd does: enable makes the link under <target>.wants
         (and that folder), disable removes it (and the folder when empty), --now starts or stops, and is-enabled and
         is-active answer from that state: "not-found" for a unit whose file is not there"""
@@ -4642,6 +6062,9 @@ if os.path.exists(P):
 sys.exit(rc)
 '''.lstrip())
         self.script("loginctl", '#!/bin/sh\necho "Linger=yes"\nexit 0\n')
+        self.bus_meant()            # G5.31: the stand-in manager holds the start lines as this version means them
+        if record:                  # not in a home that is to be empty: there setup itself writes its record
+            self.set_up_record()
 
     def plant(self, **answers):
         """what the stand-in systemd of stand_in_services() answers from now on (nothing given: as it is by itself):
@@ -4668,6 +6091,9 @@ sys.exit(rc)
         - `bootout`: returns at once; a job whose process is still ending stays readable for `linger` seconds (seen:
           gone at the first read with a process that ends at once, 0.2 s later with one that takes time).
         - `bootstrap` over a job launchd still holds: 5 "Bootstrap failed: 5: Input/output error", nothing loaded.
+        - `print gui/<uid>/<job>` of a job it holds also prints an "arguments = {" block, one line for each string of
+          the ProgramArguments in the file the job was loaded from (the block's form: tests/launchd-answers, recorded
+          2026-11-25 on macOS 27.2.1); a job planted with `loaded` is read from the launch agents folder of HOME.
         Not from a sighting, for the tool's words only: refuse=(parts of job names launchd never takes),
         never=(jobs a bootout does nothing to), unread={job: the exit code its print answers}, and the answer to a
         bootout of a job that is not loaded (3; the tool reads no answer of bootout).
@@ -4715,7 +6141,25 @@ if verb == "print":
     label = target.split("/")[-1]
     if label in s["unread"]:
         end(s["unread"][label])
-    end(0) if held(label) else end(113, "Bad request.")
+    if not held(label):
+        end(113, "Bad request.")
+    # G5.31: what launchd holds as the job's arguments, in the form of the recorded answer (tests/launchd-answers):
+    # one line for each string of the ProgramArguments of the file it was handed; no block where no file is read
+    import re
+    from xml.sax.saxutils import unescape
+    f = s["jobs"].get(label, {}).get("plist") or os.path.join(
+        os.environ.get("HOME", ""), "Library", "LaunchAgents", label + ".plist")
+    try:
+        with open(f, encoding="utf-8") as fh:
+            m = re.search(r"<key>ProgramArguments</key><array>(.*?)</array>", fh.read(), re.S)
+    except OSError:
+        m = None
+    print(target + " = {\n\tstate = not running")
+    if m:
+        print("\targuments = {\n" + "".join(
+            "\t\t" + unescape(w) + "\n" for w in re.findall(r"<string>(.*?)</string>", m.group(1), re.S)) + "\t}")
+    print("}")
+    end(0)
 if verb == "bootout":
     label = target.split("/")[-1]
     if not held(label):
@@ -4727,7 +6171,7 @@ if verb == "bootstrap":
     label = os.path.basename(a[2])[:-len(".plist")]
     if any(x in label for x in s["refuse"]) or held(label):
         end(5, "Bootstrap failed: 5: Input/output error")
-    s["jobs"][label] = {"loaded": True, "going": 0}
+    s["jobs"][label] = {"loaded": True, "going": 0, "plist": a[2]}
 end(0)
 '''.lstrip())
 
@@ -4755,13 +6199,13 @@ end(0)
             return rc, out.getvalue()
         return tg, call
 
-    def whole_home(self):
+    def whole_home(self, home=None):
         """{path under HOME: (kind, sha256 or '')} for every file, folder and link, hidden ones too"""
-        out = {}
-        for d, dirs, files in os.walk(self.home):
+        out, home = {}, home or self.home
+        for d, dirs, files in os.walk(home):
             for n in dirs + files:
                 p = os.path.join(d, n)
-                rel = os.path.relpath(p, self.home)
+                rel = os.path.relpath(p, home)
                 if os.path.islink(p):
                     out[rel] = ("link", os.readlink(p))
                 elif os.path.isdir(p):
@@ -5243,7 +6687,8 @@ end(0)
                 self.assertIn("NOT set up: this login has no systemd user manager to hand the boot service to. `systemctl "
                               f'--user` answered "{said}" (exit 1).', out)
                 self.assertIn("Nothing was installed, and no file or folder was made.", out)
-                self.assertTrue(out.rstrip().endswith("Log out and in (this login has no systemd user manager to ask), "
+                # the words beside the step are T133's (0.1.10.4): what was read, not that there is none
+                self.assertTrue(out.rstrip().endswith("Log out and in (this shell cannot reach the systemd user manager), "
                                                       "then run setup again."), out)
                 self.assertNotIn("would copy", out)
                 self.assertEqual(self.whole_home(), before)
@@ -5259,6 +6704,8 @@ end(0)
         # seen 2026-11-24 on an upgrade from 0.1.8.1: a settings file laid out by hand came out of setup sorted, with
         # a final newline, though no value had changed (T96)
         p = os.path.join(self.home, ".config", "windstorm-tardigrade", "config.json")
+        # the world first (it plants setup's own record of the two paths in the settings), then the hand-laid file
+        self.boot_answers("enabled", "active", copy=False)
         d = json.loads(fread(p))
         hand = dict(sorted(d.items(), reverse=True), auto_revive=True)
 
@@ -5268,7 +6715,6 @@ end(0)
             return fread(p)
         laid = lay(hand)
         self.assertNotEqual(laid, json.dumps(hand, indent=1, sort_keys=True) + "\n")
-        self.boot_answers("enabled", "active", copy=False)
         rc, out = self.tg("setup")
         self.assertEqual(rc, 0, out)
         self.assertEqual(fread(p), laid)                # byte for byte
@@ -5429,7 +6875,7 @@ end(0)
         """this test's home with no settings file of the suite's, and its listing less the one file the suite's
         stand-in systemctl writes about itself"""
         shutil.rmtree(os.path.join(self.home, ".config"))
-        self.stand_in_services()
+        self.stand_in_services(record=False)
         return lambda: {k: v for k, v in self.whole_home().items() if k != "systemctl.log"}
 
     def test_G3_26_setup_keeps_the_list_of_folders_it_made_and_uninstall_takes_the_empty_ones_away(self):
@@ -5702,7 +7148,11 @@ end(0)
                 f"  the log: {self.state('tardigrade.log')}. A setup after this goes on writing it."]
         for x in said:
             self.assertIn(x, out)
-        self.assertEqual(jload(cfgf), dict(settings, auto_revive=False))
+        # setup's own two keys (the paths it wrote into the service files, G5.31) go with those files (G3.31); every
+        # other setting is as it was, and automatic revive is off
+        own = ("service_python", "service_script")
+        self.assertTrue(all(settings.get(k) for k in own), settings)
+        self.assertEqual(jload(cfgf), {k: v for k, v in dict(settings, auto_revive=False).items() if k not in own})
         rc, out = self.tg("census")
         self.assertIn("Comes back after a reboot: NO (run setup)", out)
         self.assertIn("Tardigrade was taken off this computer (uninstall). Kept, and what a setup does with each:", out)
@@ -6198,14 +7648,18 @@ end(0)
             os.symlink(os.path.realpath(sys.executable), link)
         return link
 
-    def setup_with(self, py, **env):
+    def setup_with(self, py, written=None, **env):
+        """setup run by the python `py`. The stand-in manager holds the start lines as this version means them for
+        the python that setup is to WRITE (G5.31: setup reads them back): `written`, or `py` itself"""
+        self.bus_meant(py=written or py)
         r = subprocess.run([py, "-I", SCRIPT, "setup"], capture_output=True, text=True, env=dict(self.env, **env),
                            timeout=240)
         return r.returncode, r.stdout + r.stderr
 
     def unit_pythons(self):
         ud = os.path.join(self.home, ".config", "systemd", "user")
-        return [re.search(r"^ExecStart=(.+?) -I ", fread(os.path.join(ud, u)), re.M).group(1)
+        # from 0.1.10.4 on the start line holds the python as one quoted word (T132); these paths hold no percent sign
+        return [re.search(r'^ExecStart="([^"]*)" -I ', fread(os.path.join(ud, u)), re.M).group(1)
                 for u in ("windstorm-tardigrade-revive.service", "windstorm-tardigrade-record.service")]
 
     def test_G5_26_the_units_name_the_python_as_it_was_run_and_the_census_reads_whether_it_is_still_there(self):
@@ -6282,7 +7736,7 @@ end(0)
                 self.assertFalse(os.path.lexists(os.path.join(self.home, d)), f"nothing was made: {d}")
         stays = self.python_at("opt", "python", "bin")
         self.cfg({"python": stays})                         # the step, taken: the person's own word
-        rc, out = self.setup_with(py, TARDIGRADE_FAKE_SYSTEM_PYTHON=gone)
+        rc, out = self.setup_with(py, written=stays, TARDIGRADE_FAKE_SYSTEM_PYTHON=gone)
         self.assertEqual((rc, self.unit_pythons()), (0, [stays, stays]), out)
         self.cfg({"python": gone})                          # a word that names no python stops too, with its step
         rc, out = self.setup_with(py, TARDIGRADE_FAKE_SYSTEM_PYTHON=system)
@@ -6293,7 +7747,7 @@ end(0)
         self.cfg({"python": ""})                            # that step, taken
         for parts, what in shapes:                          # with a system python: that one is written, and said
             py = self.python_at(*parts)
-            rc, out = self.setup_with(py, TARDIGRADE_FAKE_SYSTEM_PYTHON=system)
+            rc, out = self.setup_with(py, written=system, TARDIGRADE_FAKE_SYSTEM_PYTHON=system)
             self.assertEqual((rc, self.unit_pythons()), (0, [system, system]), out)
             self.assertIn(f"The python written into the boot service and the record timer is {system}, not {py} that "
                           f"runs this setup: that one is in {what}, which goes when it is updated or removed.", out)
@@ -6338,8 +7792,12 @@ end(0)
             with mock.patch.object(sys, "executable", ran), contextlib.redirect_stdout(out):
                 rc = tg.setup()
             self.assertEqual(rc, 0, out.getvalue())
-            got = [re.search(r"<string>(?:sleep \d+; )?exec (.+?) -I ", fread(os.path.join(
-                la, f"ai.thewindstorm.tardigrade-{x}.plist"))).group(1) for x in ("revive", "record")]
+            def named(x):       # from 0.1.10.4 on a launchd file holds each argument as a string of its own (T132)
+                words = re.findall(r"<string>(.*?)</string>", re.search(
+                    r"<key>ProgramArguments</key><array>(.*?)</array>",
+                    fread(os.path.join(la, f"ai.thewindstorm.tardigrade-{x}.plist")), re.S).group(1), re.S)
+                return words[words.index("-I") - 1]
+            got = [named(x) for x in ("revive", "record")]
             self.assertEqual(got, [want, want], ran)
             self.assertEqual(("The python written into the boot service and the record timer is "
                               f"{want}, not {ran} that runs this setup: " in out.getvalue()), ran != want, out.getvalue())
@@ -8451,11 +9909,18 @@ class Invariants(unittest.TestCase):
     def test_INV1_it_never_ends_a_session(self):
         for word in ("kill-server", "kill-pane", "kill-window", "SIGKILL", "pkill", "killall"):
             self.assertNotIn(word, self.src, word)
-        # the one tmux session it ends is its own waiting screen, from one function, after checking the mark
-        self.assertEqual(self.src.count("kill-session"), 1)
+        # the tmux sessions it ends are its own: its waiting screen, from one function, after checking the mark; and
+        # (T119) the one it makes to ask tmux one thing, in the function that made it, by the id tmux gave for it
+        self.assertEqual(self.src.count("kill-session"), 2)
         end = self.src[self.src.index("def end_waiting_screen("):self.src.index("def write_progress(")]
         self.assertIn("kill-session", end)
         self.assertLess(end.index("if is_waiting(sock, name):"), end.index("kill-session"))
+        ask = self.src[self.src.index("def tmux_asked(sock):"):self.src.index("def name_for_tmux(")]
+        self.assertEqual(ask.count('tmux(sock, "kill-session", "-t", sid)'), 1)
+        self.assertLess(ask.index('"new-session", "-d", "-P", "-F", "#{session_id}'), ask.index("kill-session"))
+        self.assertLess(ask.index('re.fullmatch(r"\\$[0-9]+", sid)'), ask.index("kill-session"))   # an id, never a name
+        self.assertIn('"-s", ASKS_AS,', ask)
+        self.assertIn('"sleep 30"', ask)
         # SIGTERM appears only where the waiting screen says it ignores it
         self.assertEqual([ln.strip() for ln in self.src.splitlines() if "SIGTERM" in ln],
                          ["for sg in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT, signal.SIGTSTP):"])

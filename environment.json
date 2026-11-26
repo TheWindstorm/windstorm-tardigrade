@@ -120,6 +120,10 @@
   {
    "name": "TARDIGRADE_FAKE_SYSTEM_PYTHON",
    "note": "read only with both keys; stands for /usr/bin/python3 in that run, for the test of a system python that is too old or not there"
+  },
+  {
+   "name": "TARDIGRADE_FAKE_ACCOUNT",
+   "note": "read only with both keys"
   }
  ]
 }

@@ -1,0 +1,420 @@
+# launchd's own answers about a job's arguments, as recorded; read by the suite's G5.31 tests. Between a "print"
+# line and the next "end-print" line stands what "launchctl print" gave for that job, as it was, but for what
+# belongs to the machine or the account: the account's number in the job's domain, the number of its login
+# session (in square brackets after the domain, and on the "asid" line) and each job's two "coalition"
+# numbers stand here as the word NUMBER, and the random part of the session's socket folder as the word NAME.
+# where: a Mac, macOS 27.2.1, in a test account that has a desktop session, asked over ssh
+# when: 2026-11-25
+# how: six trial jobs under trial labels of the recorder's own, each loaded once and run at load against a stand-in program. Two composed by this version's writer, for paths with a space, a percent sign, a dollar sign, both quotes, a backslash, an ampersand and angle brackets. Two by this version's writer for a path with an accented letter, once as one character and once as a letter and a combining mark. Two as the 0.1.10.3 writer composes them, with plain paths. Recorded answers for the reader, not a proof that setup runs there: the tool's own setup was not run on that Mac.
+
+job ai.thewindstorm.tardigrade-trial-revive
+print
+gui/NUMBER/ai.thewindstorm.tardigrade-trial-revive = {
+	active count = 0
+	path = /private/tmp/tg-trial-1125/ai.thewindstorm.tardigrade-trial-revive.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /bin/sh
+	arguments = {
+		/bin/sh
+		-c
+		sleep "$1"; shift; exec "$@"
+		tardigrade
+		0
+		/private/tmp/tg-trial-1125/p s%p$d "q" 'a' \b <&>/keep-words
+		-I
+		/private/tmp/tg-trial-1125/p s%p$d "q" 'a' \b <&>/share/tardigrade.py
+		revive
+		--boot
+	}
+
+	stdout path = /private/tmp/tg-trial-1125/ai.thewindstorm.tardigrade-trial-revive.out
+	stderr path = /private/tmp/tg-trial-1125/ai.thewindstorm.tardigrade-trial-revive.out
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.NAME/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => ai.thewindstorm.tardigrade-trial-revive
+	}
+
+	domain = gui/NUMBER [NUMBER]
+	asid = NUMBER
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 0
+
+	resource coalition = {
+		ID = NUMBER
+		type = resource
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-revive
+	}
+
+	jetsam coalition = {
+		ID = NUMBER
+		type = jetsam
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-revive
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	sanitizer flags = 0x0
+
+	properties = runatload | abandon process group | inferred program
+}
+end-print
+
+job ai.thewindstorm.tardigrade-trial-record
+print
+gui/NUMBER/ai.thewindstorm.tardigrade-trial-record = {
+	active count = 0
+	path = /private/tmp/tg-trial-1125/ai.thewindstorm.tardigrade-trial-record.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /private/tmp/tg-trial-1125/p s%p$d "q" 'a' \b <&>/keep-words
+	arguments = {
+		/private/tmp/tg-trial-1125/p s%p$d "q" 'a' \b <&>/keep-words
+		-I
+		/private/tmp/tg-trial-1125/p s%p$d "q" 'a' \b <&>/share/tardigrade.py
+		record
+	}
+
+	stdout path = /private/tmp/tg-trial-1125/ai.thewindstorm.tardigrade-trial-record.out
+	stderr path = /private/tmp/tg-trial-1125/ai.thewindstorm.tardigrade-trial-record.out
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.NAME/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => ai.thewindstorm.tardigrade-trial-record
+	}
+
+	domain = gui/NUMBER [NUMBER]
+	asid = NUMBER
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 0
+
+	resource coalition = {
+		ID = NUMBER
+		type = resource
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-record
+	}
+
+	jetsam coalition = {
+		ID = NUMBER
+		type = jetsam
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-record
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	sanitizer flags = 0x0
+
+	properties = runatload | abandon process group | inferred program
+}
+end-print
+
+job ai.thewindstorm.tardigrade-trial-old-revive
+print
+gui/NUMBER/ai.thewindstorm.tardigrade-trial-old-revive = {
+	active count = 0
+	path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-old-revive.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /bin/sh
+	arguments = {
+		/bin/sh
+		-c
+		sleep 0; exec /private/tmp/tg-trial-1125b/plain/keep-words -I /private/tmp/tg-trial-1125b/plain/.local/share/windstorm-tardigrade/tardigrade.py revive --boot
+	}
+
+	stdout path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-old-revive.out
+	stderr path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-old-revive.out
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.NAME/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => ai.thewindstorm.tardigrade-trial-old-revive
+	}
+
+	domain = gui/NUMBER [NUMBER]
+	asid = NUMBER
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 0
+
+	resource coalition = {
+		ID = NUMBER
+		type = resource
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-old-revive
+	}
+
+	jetsam coalition = {
+		ID = NUMBER
+		type = jetsam
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-old-revive
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	sanitizer flags = 0x0
+
+	properties = runatload | abandon process group | inferred program
+}
+end-print
+
+job ai.thewindstorm.tardigrade-trial-old-record
+print
+gui/NUMBER/ai.thewindstorm.tardigrade-trial-old-record = {
+	active count = 0
+	path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-old-record.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /bin/sh
+	arguments = {
+		/bin/sh
+		-c
+		exec /private/tmp/tg-trial-1125b/plain/keep-words -I /private/tmp/tg-trial-1125b/plain/.local/share/windstorm-tardigrade/tardigrade.py record
+	}
+
+	stdout path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-old-record.out
+	stderr path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-old-record.out
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.NAME/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => ai.thewindstorm.tardigrade-trial-old-record
+	}
+
+	domain = gui/NUMBER [NUMBER]
+	asid = NUMBER
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 0
+
+	resource coalition = {
+		ID = NUMBER
+		type = resource
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-old-record
+	}
+
+	jetsam coalition = {
+		ID = NUMBER
+		type = jetsam
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-old-record
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	sanitizer flags = 0x0
+
+	properties = runatload | abandon process group | inferred program
+}
+end-print
+
+job ai.thewindstorm.tardigrade-trial-acc-revive
+print
+gui/NUMBER/ai.thewindstorm.tardigrade-trial-acc-revive = {
+	active count = 0
+	path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-acc-revive.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /bin/sh
+	arguments = {
+		/bin/sh
+		-c
+		sleep "$1"; shift; exec "$@"
+		tardigrade
+		0
+		/private/tmp/tg-trial-1125b/acc é one and é two/keep-words
+		-I
+		/private/tmp/tg-trial-1125b/acc é one and é two/share/tardigrade.py
+		revive
+		--boot
+	}
+
+	stdout path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-acc-revive.out
+	stderr path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-acc-revive.out
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.NAME/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => ai.thewindstorm.tardigrade-trial-acc-revive
+	}
+
+	domain = gui/NUMBER [NUMBER]
+	asid = NUMBER
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 0
+
+	resource coalition = {
+		ID = NUMBER
+		type = resource
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-acc-revive
+	}
+
+	jetsam coalition = {
+		ID = NUMBER
+		type = jetsam
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-acc-revive
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	sanitizer flags = 0x0
+
+	properties = runatload | abandon process group | inferred program
+}
+end-print
+
+job ai.thewindstorm.tardigrade-trial-acc-record
+print
+gui/NUMBER/ai.thewindstorm.tardigrade-trial-acc-record = {
+	active count = 0
+	path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-acc-record.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /private/tmp/tg-trial-1125b/acc é one and é two/keep-words
+	arguments = {
+		/private/tmp/tg-trial-1125b/acc é one and é two/keep-words
+		-I
+		/private/tmp/tg-trial-1125b/acc é one and é two/share/tardigrade.py
+		record
+	}
+
+	stdout path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-acc-record.out
+	stderr path = /private/tmp/tg-trial-1125b/ai.thewindstorm.tardigrade-trial-acc-record.out
+	inherited environment = {
+		SSH_AUTH_SOCK => /var/run/com.apple.launchd.NAME/Listeners
+	}
+
+	default environment = {
+		PATH => /usr/bin:/bin:/usr/sbin:/sbin
+	}
+
+	environment = {
+		OSLogRateLimit => 64
+		XPC_SERVICE_NAME => ai.thewindstorm.tardigrade-trial-acc-record
+	}
+
+	domain = gui/NUMBER [NUMBER]
+	asid = NUMBER
+	minimum runtime = 10
+	exit timeout = 5
+	runs = 1
+	last exit code = 0
+
+	resource coalition = {
+		ID = NUMBER
+		type = resource
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-acc-record
+	}
+
+	jetsam coalition = {
+		ID = NUMBER
+		type = jetsam
+		state = active
+		active count = 1
+		name = ai.thewindstorm.tardigrade-trial-acc-record
+	}
+
+	spawn type = daemon (3)
+	jetsam priority = 40
+	jetsam memory limit (active) = (unlimited)
+	jetsam memory limit (inactive) = (unlimited)
+	jetsamproperties category = daemon
+	jetsam thread limit = 32
+	cpumon = default
+	sanitizer flags = 0x0
+
+	properties = runatload | abandon process group | inferred program
+}
+end-print

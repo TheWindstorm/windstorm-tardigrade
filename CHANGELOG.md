@@ -1,5 +1,109 @@
 # Changelog
 
+## 0.1.10.4 (2026-11-30)
+
+- **A home folder whose path holds a space, and every other path a service file reads in its own way (T132).** Up
+  to 0.1.10.3 setup wrote two paths into its two service files as they stood: the Python that ran setup, and its
+  installed copy, which lies under the home folder. A service file reads some characters in its own way, so a path
+  that holds one of them was not read as one whole value. In a home folder whose path holds a space, the boot
+  service and the timer did not start Tardigrade, while setup said it was set up and the census said sessions come
+  back by themselves. Seen with 0.1.10.3 on a stock Ubuntu 24.04 virtual machine (systemd 255). Now setup writes
+  each of the two paths so that the service manager holds it as one whole value. The same start lines, placed by
+  hand in unit files on stock virtual machines with systemd 237, 239, 245 and 249 (Ubuntu 18.04, AlmaLinux 8.10,
+  Ubuntu 20.04 and 22.04), were held by each manager as on 255, and the record service started there with each
+  path whole; setup itself was not run on those four.
+- **A path the service file cannot carry is refused before the first write.** On Linux that is a Python whose
+  path holds a double quote, an apostrophe, a backslash or a dollar sign: the service manager's start line has no
+  way to hold one of these in a program's own path. On Linux and on a Mac it is a Python or a home folder whose
+  path holds a control character (a line break or the like). Setup says so in one line that names what it found,
+  gives the command that runs it with another Python, and installs nothing: no file is written. Where the path
+  holds a backtick, a dollar sign before a parenthesis, or a character a line breaks on or a terminal acts on, the
+  line shows the path changed (a question mark for each) and says so. The tool's older lines that show a path
+  show it as it stands (T135, due 0.1.11).
+- **Setup and the census read back what the service manager holds.** "Enabled" and "active" say that a service is
+  there, not what it would start. From this version on, "is set up" and "Comes back after a reboot: yes" are said
+  only after the service manager's own list of each service's start line has been asked (over its bus, with
+  `busctl`) and is, word for word, what setup wrote. What setup wrote is its own record in the settings
+  (`service_python`, `service_script`), never what the terminal that asks happens to have as its home or its Python.
+  If the manager holds something else: "NOT set up" (exit 1), and the census says NO. Where the reload that setup
+  asks of the manager after writing the files did not answer 0, setup says that too, and the step is to run setup
+  again. If the list cannot be asked (no `busctl`, or no answer in 10 seconds): "could not read" (setup: exit 3),
+  with one step by which you see it yourself. A setup made by an older version kept no record: after the update the
+  census says "could not be read" and that the step is to run setup again, except where the older service file's
+  line holds only plain words, which every reader takes alike.
+- **What is yours on a service is named as yours, and left as it is.** A drop-in file of your own on one of the two
+  services is never changed, and never a fault. Environment entries of your own are named by the variable's name
+  only, never a value (a value may be a password). A start line of your own beside the one setup wrote is counted,
+  never shown, and Tardigrade stays set up as long as the manager's list holds setup's own line once, as written
+  and first. If a drop-in of your own changes that (setup's line gone, changed, held twice or not first), setup says
+  "NOT set up" and that the file is yours; it does not send you to uninstall. It says what to do (change or remove
+  a drop-in that is not meant, then run setup again), and gives the service manager's own listing of that service
+  and its drop-in files (`systemctl --user cat` and the service's name) as the last thing on a line of its own;
+  the census does the same. The census says NO only where it read that setup's line is not held, or held changed.
+  That NO is more than it read: the list differs, and what the held line starts was not read. It errs to the
+  safe side (T136, due 0.1.11).
+  Where the line is held as written, only not once and first, it says "not known", neither yes nor no, and names
+  the place or the count: Tardigrade read the manager's list, not what the service then does. Recorded on stock
+  virtual machines with systemd 237, 239, 245, 249 and 255, with drop-in files of made-up values: each manager's
+  answers had the same form.
+- **On a Mac** the two launchd files hold each argument as a string of its own, and no path stands in a line a shell
+  reads. Where launchd answers and this version does not find a job's arguments in its answer, setup and the census
+  say so, and the step is to tell the maintainer that line and the macOS version, not to log in at the Mac's screen.
+- The line that says how to switch lingering on gives the account's name as one shell word, and takes it from the
+  account itself, not from the terminal's variables.
+- Where systemctl gives no answer, the step "log out and in" stood beside the words "this login has no systemd user
+  manager to ask". On a virtual machine one was running and the shell could not reach it, so the words now say
+  that: "this shell cannot reach the systemd user manager" (T133). The step itself has not been walked (T134,
+  due 0.1.11).
+
+## 0.1.10.3 (2026-11-27)
+
+- **A # in a name or a folder no longer changes what comes back.** tmux reads a # in a session's name, a pane's
+  title and a folder as the start of one of its own formats. Up to 0.1.10.2 Tardigrade handed these to tmux as they
+  stood on its record. A session that ran in a tmux session whose name holds a # before certain letters, or two # in
+  a row, was not brought back after a restart: the revive gave up and left a tmux session under a changed name
+  (laneork for lane#Work), while the other sessions came back. A session in a folder with a # came back in its own
+  folder, but tmux held a changed folder for its tmux session; and the waiting screen's title, made from the
+  session's own name, was changed the same way. Seen with 0.1.10.2 and tmux 3.4 in a test with stand-in sessions:
+  three of ten sessions not brought back. Now each of these is handed over so that tmux holds it letter for letter,
+  and such a session comes back as itself: under its own tmux name, in its folder, its own name in the title. The
+  folder goes over with each # doubled, which tmux gives back as one (every tmux tried reads a folder that way: 2.6,
+  2.7, 3.0a, 3.2a, 3.4, 3.7c and 3.8). For a name and a title it depends on the tmux: 2.6 leaves them as they stand,
+  2.7 and later read them. Tardigrade knows no versions; it asks the tmux it finds. Once in a run, and only when a
+  name or a title with a # is to be handed over, it makes one tmux session of its own under a made-up name (tmux
+  then shows it as tardigrade-asks-# or tardigrade-asks-##; it holds a sleep that ends by itself), reads back what
+  tmux holds, and ends that session. Like a waiting screen, it is a tmux session of Tardigrade's own making, in the
+  same run; it ends no other. If tmux cannot be asked (a tmux session of that made-up name is already there, which
+  is left alone; tmux made no session, with its own words if it said any, and else that it said nothing, gave no
+  answer in 30 seconds or could not be run; tmux held the name as something else), a session whose tmux name holds a
+  # is not started under a guessed name: its line says NOT STARTED and which of the three, the run asks again at
+  each try, and the other sessions come back. If the run gives up on it, its give-up line points to the README's
+  edge on starts that failed, which says how one such session is brought back by hand. A title never stops a start:
+  with no answer it goes over without its #. A run with no # in any name, title or folder asks nothing and does what
+  0.1.10.2 did. Seen with this version and stand-in sessions, in its six new tests: on tmux 3.4 in the whole suite
+  on a Linux workstation, and once each on stock virtual machines with tmux 2.6 (Ubuntu 18.04, with Python 3.8 added
+  from that release's own archive), tmux 2.7 (AlmaLinux 8.10, Python 3.9) and tmux 3.0a (Ubuntu 20.04, Python 3.8).
+  They also run on every push with the whole suite, on the tmux of the test image (package 3.6a-2ubuntu0.2 when this
+  was written, which answers "tmux 3.6" when asked for its version). The first push of this version's line ran the
+  suite there four times, and one of the eight runs of the two tests that walk every place was red: everything those
+  tests read of Tardigrade had held, and the test's own control, which comes after, waited 40 seconds for a sign
+  from tmux that did not come. The control was changed (in the test only: the client that asks tmux now stays until
+  the sign is there), and on the next push eight of eight were green. Three of the six tests hold what comes back
+  and what is said when tmux cannot be asked; a fourth walks each of the three causes, and a fifth a start that
+  fails for a cause of its own once tmux could be asked. And through a real restart of a stock Ubuntu 24.04 virtual
+  machine (tmux 3.4), with seven stand-in sessions, a # in a tmux name, a folder or their own name: the boot
+  service's own run of this version brought back seven of seven as they were, each once and in its own folder, where
+  0.1.10.2 in the same world brought back four of seven; and seven of seven again on a machine where 0.1.10.2 was
+  set up first, this version set up over it, 0.1.10.2 over that and this version once more, the seven sessions
+  running through all of it. When the session it asked with was the only one on that tmux server, tmux ends the
+  server with it, and a start that reaches the server just then fails (tmux 3.4 alone: in 2 of 300 tries in one
+  trial and in 1 of 300 in another; and once in this version's own test run): Tardigrade waits until that server is
+  gone, 3 seconds at most. A sixth test holds that with a stand-in whose server takes a second and a half to end.
+  Not seen: a real Claude Code session with such a name; a Mac; a tmux that answers no call at all. Found on the way
+  and not changed here: a revive in which a start failed still ends with exit code 0 in this version (T121, due
+  0.1.11). Nothing else changed. Still on 0.1.10.2 and met it? Give that tmux session a name without a # while it
+  runs, and from the next record on it comes back (the README of 0.1.10.2 has the line) (T119).
+
 ## 0.1.10.2 (2026-11-25)
 
 - **One folder with an odd name no longer stops every session from coming back.** Up to 0.1.10.1, when one recorded

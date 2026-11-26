@@ -38,9 +38,13 @@ If neither file exists, this skill was installed without its plugin. Get the scr
 1. Run `setup --dry-run` and tell the person what it will install: a boot service and a 5-minute timer for their own
    user. No administrator rights.
 2. Run `setup`. If tmux is missing it says so and stops: give the person the install line and wait. Setup says
-   "is set up" only after reading the boot service, the timer and the copy themselves. "NOT set up" (exit 1) names
-   what is missing; "Setup could not read whether it is set up" (exit 3) means systemctl or launchctl gave no
-   answer: it is neither set up nor not. Show its words and its one next step; never call it set up.
+   "is set up" only after reading the boot service, the timer and the copy themselves, and the start line the
+   service manager holds for each service, word for word. "NOT set up" (exit 1) names what is missing or what
+   differs; "Setup could not read whether it is set up" (exit 3) means systemctl, launchctl or the manager's own
+   list gave no answer: it is neither set up nor not. Show its words and its one next step; never call it set up.
+   A line that begins "Yours, not Tardigrade's" names a setting of the person's own on a service: show the line
+   and the tool's own step, change and remove nothing yourself, and never suggest removing a setting the tool only
+   named as theirs. Where the tool's own step says to look at a drop-in file, pass that step on as printed.
 3. Show the last lines it prints, word for word. They say who has to log in after a restart before sessions can
    come back (lingering on Linux, FileVault on a Mac).
 4. If lingering is off, give the person the one command it prints. **Do not run it yourself.** It needs `sudo`, and
@@ -71,6 +75,9 @@ If the census has a **Login differs** or **Login changed** line, show it as it i
 started that session again on another login, and the record followed. `Login differs` needs the user: a session that
 Tardigrade started came up on another login than its row has. Do not run `record --accept` yourself: which login is
 the right one is the user's to say. Ask them to look at the login the session shows, and run it only on their word.
+
+If the census says **not known** after "Comes back after a reboot", say exactly that, neither yes nor no; show the
+line and the step on the line after it as printed.
 
 Do not end, restart or change any session because of what the census shows. List them and ask. A hidden session may
 be doing exactly what its owner wants.
@@ -139,8 +146,9 @@ command for a boot service listed as failed is `systemctl --user reset-failed wi
 ## What it never does
 
 - It never starts a second copy of a running session.
-- It never ends a session and never answers a dialog, except the trust question after the person has said
-  `trust on`.
+- It never ends a session of the person's and never answers a dialog, except the trust question after the person
+  has said `trust on`. (The only tmux sessions it ends are ones it made itself in the same run: a waiting screen,
+  and the one that asks tmux how it takes a # in a name.)
 - It types nothing into a session except its own wake-up message, into a session it started, once that session
   is idle.
 - It never records a token or a key it finds in a session's environment: for a login token it keeps the variable's name and an 8-digit one-way fingerprint. What the person writes into `claude_command`, `account_command` or `start_command` themselves is copied as written into each session's start file (in Tardigrade's state folder, readable by them only); a key written there is in those files until the first revive after the session has left the record, and uninstall keeps that folder.

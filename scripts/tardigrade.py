@@ -68,7 +68,7 @@ import stat
 import subprocess
 import time
 
-VERSION = "0.1.10.2"
+VERSION = "0.1.10.4"
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 CFG_DIR = os.path.join(HOME, ".config", "windstorm-tardigrade")
@@ -131,6 +131,8 @@ CFG = {
     "wake_text": "",          # your own words for the note; {when} is the time it came back; "" = the default
     "notes_per_min": 6,       # at most this many notes typed in any one minute, so they do not all take a turn at once
     "auto_revive": False,     # set by setup: the boot service is installed
+    "service_python": "",     # set by setup: the Python and the copy's path as it wrote them into the service
+    "service_script": "",     # files (G5.31): the read back compares with these, never with this terminal's own
     "herdr_tabs": True,       # re-attach Herdr tabs after a revive
     "attach_wait_min": 30,    # wait this long for the Herdr server after boot
     "down_keep_days": 14,     # how long a session that went down stays on the "down" list
@@ -310,6 +312,21 @@ def save_cfg_key(key, value):
     d = d if isinstance(d, dict) else {}
     d[key] = value
     write_json(p, d)
+
+
+def drop_cfg_keys(keys):
+    """take keys the tool wrote for itself out of the settings file; the file is written only where one was there,
+    and never where it could not be read"""
+    p = os.path.join(CFG_DIR, "config.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return
+    if isinstance(d, dict) and any(k in d for k in keys):
+        write_json(p, {k: v for k, v in d.items() if k not in keys})
+    for k in keys:
+        CFG[k] = ""
 
 
 def write_private(path, text):
@@ -2212,16 +2229,158 @@ def login_carried(r, o, P, take=False):
 OURS_MARK = "@tardigrade_session"      # G5.19: a tmux option on a session the tool made: the id it was made for
 
 
-def new_session(sock, name, cwd, cmd, then=(), sid=""):
-    """a new tmux session running cmd. `then`: one more tmux command (a list) for the SAME call: tmux runs it
-    right after it made the session, so a stop of ours between the two cannot leave the session without it (G2.53)."""
+# ---------- a # in what tmux is handed (T119) ----------
+# tmux reads some of its arguments as a format: there a # before certain letters is replaced, two become one, and
+# one kind of # form is RUN as a command. Which arguments, by trial on 2.6, 3.0a, 3.2a, 3.4, 3.7c and 3.8: the
+# folder after -c on every one of them; a session's name after -s and a pane's title after -T from 3.0a on, not on
+# 2.6. Never: an exact target (=NAME), the command, the text the tool types, the socket's path. No versions known.
+# The folder goes over with each # doubled, always: tmux gives it back as one, and a tmux that did not would open
+# the pane elsewhere, where the start file's own cd still puts the session in its folder. For a name and a title
+# the tool asks the server itself, once in a run, and only when a value with a # is to be handed over.
+ASKS_AS = "tardigrade-asks-##"     # the made-up value: a tmux that reads the place as a format holds one # of the two
+ASKED = {}                         # tmux socket -> {"name": bool, "title": bool or None}
+ASK_WHY = {}                       # tmux socket -> why the last asking gave no answer
+ASK_WHYS = {                       # every cause there is for no answer, in this one place (a test reads each)
+    "taken": "the made-up name it asks with is taken by a tmux session that is there: one of Tardigrade's own "
+             "ends by itself within a minute, any other is a person's and is left alone",
+    "none_made": {                 # one cause, said by what tmux did: its own words only when it said any
+        "said": "tmux made no session to ask with, in its own words: {said}",
+        "nothing": "tmux made no session to ask with and said nothing",
+        "no_answer": "tmux made no session to ask with: it gave no answer in {s} seconds",
+        "not_run": "tmux made no session to ask with: it could not be run ({err})",
+    },
+    "other_name": "tmux held the made-up name as neither of the two forms it can have",
+}
+
+# tmux socket and session ids whose LAST try was not made because tmux could not be asked; and what their
+# give-up line says after "its tmux session is gone": the next step is by hand, and the README has it
+NOT_ASKED_NOW = set()
+NOT_ASKED_NEXT = ('. It was not started for the # in the name of its tmux session (its NOT STARTED line above). '
+                  'To bring it back by hand: the README, under "A # in a name or a folder (T119, cured in 0.1.10.3)"')
+
+
+def hashes_doubled(v):
+    return v.replace("#", "##")
+
+
+def tmux_said(words):
+    """tmux's own words for a line of the log: the first line, printable ASCII, no backtick, no dollar sign.
+    Empty when tmux said nothing."""
+    first = words.strip().split("\n")[0]
+    return re.sub(r"[^\x20-\x7e]|[`$]", "?", first)[:160]
+
+
+def tmux_first(sock):
+    """the start of a tmux call that may be the one that starts the server"""
     os.makedirs(os.path.dirname(sock), mode=0o700, exist_ok=True)
     ensure_server(sock)
     argv = tmux_own(sock)
     conf = os.path.expanduser(str(CFG.get("tmux_conf") or ""))
     if conf and os.path.isfile(conf):
         argv += ["-f", conf]         # read only when this call is the one that starts the server
-    argv += ["new-session", "-d", "-s", name, "-x", "200", "-y", "50", "-c", cwd, cmd]
+    return argv
+
+
+def server_ended(sock, pid):
+    """The session Tardigrade asked with may have been that tmux server's only one. tmux then ends the server, and
+    a start that reaches it while it ends fails (tmux says "server exited unexpectedly"; seen on tmux 3.4).
+    So when no session is left there, the next start waits until that server's process is gone, 3 s at most."""
+    if not pid.isdigit() or tmux(sock, "list-sessions", "-F", "#{session_id}")[1].strip():
+        return
+    end = time.time() + 3
+    while time.time() < end and alive(int(pid)):
+        time.sleep(0.02)
+
+
+def tmux_asked(sock):
+    """How does the tmux server on this socket take a # in a session's name and in a pane's title? Asked with one
+    session of the tool's own making under a made-up name: its command is a sleep that ends by itself, what tmux
+    then holds is read back, and the session is ended by its id. A session already there under that name is left
+    alone, and then there is no answer. None: it could not be asked (ASK_WHY says why); the next try asks again."""
+    if sock in ASKED:
+        return ASKED[sock]
+    one = ASKS_AS.replace("##", "#")
+    argv = tmux_first(sock)
+    if has_session(sock, ASKS_AS) or has_session(sock, one):
+        ASK_WHY[sock] = ASK_WHYS["taken"]
+        return None
+    how, wait_s = "", 3 if TESTING else 30
+    try:        # not run(): what tmux says when it makes none is on its error stream
+        made = subprocess.run(argv + ["new-session", "-d", "-P", "-F", "#{session_id}\t#{session_name}",
+                                      "-s", ASKS_AS, "-x", "200", "-y", "50", "-c", "/", "sleep 30"],
+                              capture_output=True, timeout=wait_s, env=server_env())
+        rc, out, err = made.returncode, as_text(made.stdout), as_text(made.stderr)
+    except subprocess.TimeoutExpired:
+        rc, out, err, how = 99, "", "", "no_answer"
+    except OSError as e:
+        rc, out, err, how = 99, "", type(e).__name__, "not_run"
+    sid, _, got = out.rstrip("\n").partition("\t")
+    if rc != 0 or not re.fullmatch(r"\$[0-9]+", sid):
+        said = "" if how else tmux_said(err or out)
+        ASK_WHY[sock] = ASK_WHYS["none_made"][how or ("said" if said else "nothing")].format(said=said, s=wait_s, err=err)
+        return None
+    ans = None
+    if got in (ASKS_AS, one):
+        tmux(sock, "select-pane", "-t", f"{sid}:", "-T", ASKS_AS)
+        title = tmux(sock, "display", "-p", "-t", f"{sid}:", "#{pane_title}")[1].rstrip("\n")
+        ans = {"name": got == one, "title": {one: True, ASKS_AS: False}.get(title)}
+    else:
+        ASK_WHY[sock] = ASK_WHYS["other_name"]
+    server = tmux(sock, "display", "-p", "-t", f"{sid}:", "#{pid}")[1].strip()
+    if tmux(sock, "kill-session", "-t", sid)[0] != 0 and tmux(sock, "has-session", "-t", sid)[0] == 0:
+        log(f"  tmux ({os.path.basename(sock)}): the session Tardigrade made to ask tmux one thing could not be "
+            f"ended ({got}); it holds a sleep and ends by itself within a minute")
+    server_ended(sock, server)
+    if ans:
+        ASKED[sock] = ans
+        says = {True: "is read as a format, so it goes over with each # doubled", False: "is left as it stands",
+                None: "gave no answer, so a title goes over without its #"}
+        log(f"  tmux ({os.path.basename(sock)}): asked once how it takes a #, with a session of Tardigrade's own "
+            f"that it made and ended: a session's name {says[ans['name']]}; a pane's title {says[ans['title']]}")
+    return ans
+
+
+def name_for_tmux(sock, name):
+    """what to hand tmux after -s so that it holds exactly this name. None: the name holds a # and this server
+    could not be asked. The name as it stands goes only to a server that showed, in this run, that it leaves it alone."""
+    if "#" not in name:
+        return name
+    a = tmux_asked(sock)
+    return None if a is None else hashes_doubled(name) if a["name"] else name
+
+
+def title_for_tmux(sock, text):
+    """the same for a pane's title, which never stops a start: without an answer it goes over without its #"""
+    if "#" not in text:
+        return text
+    a = tmux_asked(sock)
+    if a is None or a["title"] is None:
+        return text.replace("#", "")
+    return hashes_doubled(text) if a["title"] else text
+
+
+def not_asked(r):
+    """a session whose tmux name holds a # is not started under a guessed name: said once in a run, with the
+    cause. The line names no step by hand: the session is down then, and this run asks again by itself."""
+    NOT_ASKED_NOW.add(r["session_id"])
+    if r["session_id"] in SAID.setdefault("not_asked", set()):
+        return
+    SAID["not_asked"].add(r["session_id"])
+    log(f"  {display(r)}: NOT STARTED. The name of its tmux session holds a # and tmux could not be asked how it "
+        f"takes one ({ASK_WHY[r['tmux_socket']]}), so it is not started under a guessed name. "
+        "Nothing of it is lost. This run asks again at each try")
+
+
+def new_session(sock, name, cwd, cmd, then=(), sid=""):
+    """a new tmux session running cmd. `then`: one more tmux command (a list) for the SAME call: tmux runs it
+    right after it made the session, so a stop of ours between the two cannot leave the session without it (G2.53).
+    98: the name of the tmux session holds a # and tmux could not be asked how it takes one (T119); nothing was
+    made."""
+    argv = tmux_first(sock)
+    handed = name_for_tmux(sock, name)
+    if handed is None:
+        return 98
+    argv += ["new-session", "-d", "-s", handed, "-x", "200", "-y", "50", "-c", hashes_doubled(cwd), cmd]
     # G5.19 (T88): a session comes back with no window attached. Where the person's tmux settings end such a session
     # (destroy-unattached), this one session is asked to stay, in the call that makes it: a moment later it would be
     # gone. The server's own setting, and every session the person makes, stay as they are.
@@ -2253,14 +2412,18 @@ def start_lane(r, created):
             # environment, as new_session does, or at boot the pane gets the boot service's PATH (G2.49).
             # Claude takes the pane and the screen's mark comes off in one tmux call (G2.53): a run stopped right
             # after it leaves no session that runs Claude and still carries the mark of a waiting screen
-            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, ";",
+            rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", hashes_doubled(cwd), cmd, ";",
                       "set-option", "-u", "-t", f"={name}:", WAIT_MARK, env=server_env())[0]
             planted_stop("respawned")
             tmux(sock, "clear-history", "-t", f"={name}:")
             return rc == 0
-        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", cwd, cmd, env=server_env())[0]
+        rc = tmux(sock, "respawn-pane", "-k", "-t", f"={name}:", "-c", hashes_doubled(cwd), cmd, env=server_env())[0]
     else:
         rc = new_session(sock, name, cwd, cmd, sid=r["session_id"])
+        if rc == 98:
+            not_asked(r)
+            return False
+        NOT_ASKED_NOW.discard(r["session_id"])
         created.add((sock, name))
     return rc == 0
 
@@ -2389,7 +2552,7 @@ def show_waiting(todo, created):
                        sid=r["session_id"]) == 0:
             created.add((sock, name))
             planted_stop("screen_made")
-            tmux(sock, "select-pane", "-t", f"={name}:", "-T", f"{display(r)} (coming back)")
+            tmux(sock, "select-pane", "-t", f"={name}:", "-T", title_for_tmux(sock, f"{display(r)} (coming back)"))
 
 
 def pane_program(sock, name):
@@ -3449,11 +3612,14 @@ def _revive(boot):
         if not tries_done and (not pending or time.time() >= deadline):
             tries_done = True
             for sid, (r, n) in pending.items():
-                why = not_back_text(r)
+                # a session not started for the # in its tmux name (T119) was never started: the why of a start
+                # that failed (G5.19) is not its why, and its line ends with its own next step
+                why = "" if sid in NOT_ASKED_NOW else not_back_text(r)
                 prog["sessions"].setdefault(sid, {}).update(state="failed", why=why)
                 log(f"  {display(r)}: GAVE UP after {n} attempt(s); its tmux session {holds_text(r)}"
                     + (f": {why}" if why else "")
-                    + (f"{' ' if why else '. '}Not started at the last pass: {cannot_tell}" if cannot_tell else ""))
+                    + (f"{' ' if why else '. '}Not started at the last pass: {cannot_tell}" if cannot_tell else "")
+                    + (NOT_ASKED_NEXT if sid in NOT_ASKED_NOW else ""))
                 report["failed"].append(display(r))
                 if why:
                     report.setdefault("failed_why", {})[display(r)] = why
@@ -3949,6 +4115,8 @@ def census():
     d = census_data()
     d["comes_back"] = comes_back()      # read here, not in census_data: the report does not say it, so asks nothing
     d["stored_programs"] = stored_programs()
+    d["yours_on_the_services"] = list(YOURS)
+    d["next_step_line"] = STEP_LINE[0]
     folders = open_folder_lines()
     d["open_folders"] = folders[1:]
     places = setup_places()
@@ -3981,6 +4149,10 @@ def census():
         print(f"Waiting for you: {d['waiting']} (a question or a dialog is open in the session)")
     rec = f"{ago(now - d['recorded_at'])} ago, {d['on_record']} session(s)" if d["recorded_at"] else "never"
     print(f"Comes back after a reboot: {d['comes_back']}   Last record: {rec}")
+    if d["next_step_line"]:         # a step's command stands last on a line of its own
+        print(d["next_step_line"])
+    for line in d["yours_on_the_services"]:
+        print(line)
     for line in folders:
         print(line)
     if places[0] or places[1]:      # G3.26 (T73): what setup put here besides its copy and units
@@ -4244,6 +4416,91 @@ def open_windows():
 
 
 # ---------- setup ----------
+# G5.31 (T132), family rule 31 (v.5): each path in a service file is written as that file's own grammar takes ONE
+# word, or setup refuses before its first write; and setup and the census read back what the service manager holds
+# and say "set up" only when it is, word for word, what was meant.
+SERVICE_LINES = (("windstorm-tardigrade-revive.service", "boot service", ["revive", "--boot"]),
+                 ("windstorm-tardigrade-record.service", "record service", ["record"]))
+BOOT_LINE = 'sleep "$1"; shift; exec "$@"'      # a Mac's boot job: the wait, then the arguments as they are
+
+
+def unit_word(v, program=False):
+    """v as systemd's grammar for a start line takes ONE word (systemd.service(5) "Command lines", systemd.syntax(7)
+    "Quoting"), or None where that grammar cannot carry it. Always in double quotes; a percent sign is doubled (it
+    begins a specifier anywhere on the line). An argument: the backslash and the double quote go behind a backslash,
+    the dollar sign is doubled (it begins a variable). The program, the line's first word: systemd refuses a
+    program whose path holds a double quote, an apostrophe or a backslash however it is written (systemd 255's own
+    checker, 2026-11-25), and the dollar sign has no doubled form there, so this writer takes no dollar sign in a
+    program's path at all: one rule, no spelling to guess. Neither carries a control character, or a path that is
+    not text."""
+    try:
+        v.encode("utf-8")
+    except UnicodeEncodeError:
+        return None
+    if not v or any(ord(c) < 32 or ord(c) == 127 for c in v):
+        return None
+    if program:
+        if not v.startswith("/") or any(c in v for c in "\"'\\$"):
+            return None
+        return '"' + v.replace("%", "%%") + '"'
+    return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$") + '"'
+
+
+def exec_line(py, script, verb):
+    """the start line: the two paths each as one word, the tool's own words as they are"""
+    return " ".join([unit_word(py, True) or "", "-I", unit_word(script) or ""] + verb)
+
+
+def held_words(py, script, verb):
+    """the start line's words as systemd holds them once it has read the unit: the program and each argument, with
+    a dollar sign in an argument still doubled (systemd makes one of the two only when it starts the program)"""
+    return [py, "-I", script.replace("$", "$$")] + verb
+
+
+def shown(path):
+    """a path as a line shows it to a person, between square brackets: as it stands where a line can carry every
+    character of it; else CHANGED, and the line says so (family rule 31 (B)). A question mark stands for a backtick,
+    for a dollar sign before a parenthesis, and for every character a line breaks on or a terminal acts on, decided
+    by the character's class and not by a list: all that is not printable (the control characters, U+2028, U+2029,
+    what is not text)."""
+    out = "".join("?" if c == "`" or (c == "$" and path[i + 1:i + 2] == "(") or not c.isprintable() else c
+                  for i, c in enumerate(path))
+    n = sum(1 for a, b in zip(path, out) if a != b)
+    return f"[{out}]" + (f" (shown changed: {n} character(s) stand as a question mark)" if n else "")
+
+
+def cannot_carry(py, script):
+    """the one line for a path that this machine's service file cannot carry as one value, or '' (before any write)"""
+    tail = (" Nothing was installed and no file was written (only Tardigrade's own settings and state folders, "
+            "which every command makes, empty if they were not there).")
+
+    def text(v):
+        try:
+            v.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return bool(v) and not any(ord(c) < 32 or ord(c) == 127 for c in v)
+    kind = "launchd" if MAC else "systemd service"
+    if not text(script):
+        return (f"NOT set up: a {kind} file cannot carry the path of Tardigrade's installed copy, {shown(script)}: it "
+                "holds a control character (a line break or the like) or is not text. The copy lies under the home "
+                "folder, so Tardigrade can be set up only in an account whose home folder's path holds none." + tail)
+    if not text(py) or (not MAC and unit_word(py, True) is None):
+        found = [] if text(py) else ["a control character (a line break or the like) or is not text"]
+        if not MAC:
+            found += [name for c, name in (('"', "a double quote"), ("'", "an apostrophe"), ("\\", "a backslash"),
+                                           ("$", "a dollar sign")) if c in py]
+        holds = ("it holds " + " and ".join(found)) if found else "it is not a whole path"
+        here = os.path.abspath(__file__)
+        # a command is printed only where it carries this script's own path exactly and no line can be made of it
+        again = ("for example: /usr/bin/python3 -I " + shlex.quote(here) + " setup" if shown(here) == f"[{here}]" else
+                 "for example /usr/bin/python3; this script's own path cannot stand in a command on one line: "
+                 + shown(here))
+        return (f"NOT set up: a {kind} file cannot carry the path of the Python that ran setup, {shown(py)}: "
+                f"{holds}." + tail + " Run setup with a Python whose path holds none of these, " + again)
+    return ""
+
+
 def units(py, script):
     revive_unit = f"""[Unit]
 Description=Windstorm Tardigrade: bring Claude Code sessions back after boot, never a second copy
@@ -4256,7 +4513,7 @@ KillMode=process
 TimeoutStartSec=0
 Nice=5
 ExecStartPre=/bin/sleep {int(float(CFG["boot_wait_s"]))}
-ExecStart={py} -I {script} revive --boot
+ExecStart={exec_line(py, script, ["revive", "--boot"])}
 
 [Install]
 WantedBy=default.target
@@ -4267,7 +4524,7 @@ Description=Windstorm Tardigrade: write down the live Claude Code sessions (read
 [Service]
 Type=oneshot
 Nice=10
-ExecStart={py} -I {script} record
+ExecStart={exec_line(py, script, ["record"])}
 """
     timer = """[Unit]
 Description=Windstorm Tardigrade: record the live sessions every 5 minutes
@@ -4283,13 +4540,24 @@ WantedBy=timers.target
             "windstorm-tardigrade-record.timer": timer}
 
 
-def plist(label, py, script, verb, extra):
-    out = os.path.join(STATE, label + ".out")
+def job_words(label, py, script):
+    """a launchd job's arguments, one string each. The record job is the program and its arguments. The boot job waits
+    first: a shell is handed a FIXED line and, after it, the wait and the arguments; no path is part of the line."""
+    if "revive" in label:
+        return ["/bin/sh", "-c", BOOT_LINE, "tardigrade", str(int(float(CFG["boot_wait_s"]))),
+                py, "-I", script, "revive", "--boot"]
+    return [py, "-I", script, "record"]
+
+
+def plist(label, py, script, extra):
+    from xml.sax.saxutils import escape
+    out = escape(os.path.join(STATE, label + ".out"))
+    args = "".join(f"<string>{escape(a)}</string>" for a in job_words(label, py, script))
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>{label}</string>
-<key>ProgramArguments</key><array><string>/bin/sh</string><string>-c</string><string>{verb} {py} -I {script}</string></array>
+<key>ProgramArguments</key><array>{args}</array>
 {extra}
 <key>AbandonProcessGroup</key><true/>
 <key>StandardOutPath</key><string>{out}</string>
@@ -4425,6 +4693,26 @@ def program_state(path):
     return "there", ""
 
 
+def program_named(text, kind):
+    """the python a unit or a launchd file of ours names, read in each form a version of the tool has written; ""
+    where none is found. From 0.1.10.4 on a unit's start line holds it as one quoted word with each percent sign
+    doubled, and a launchd file holds each argument as a string of its own (T132); before that the path stood as it
+    was, on a Mac inside one shell line."""
+    if kind == "unit":
+        m = re.search(r'^ExecStart="([^"]*)" -I ', text, re.M)
+        if m:
+            return m.group(1).replace("%%", "%")
+        m = re.search(r"^ExecStart=(.+?) -I ", text, re.M)
+        return m.group(1) if m else ""
+    from xml.sax.saxutils import unescape
+    m = re.search(r"<key>ProgramArguments</key><array>(.*?)</array>", text, re.S)
+    words = [unescape(w) for w in re.findall(r"<string>(.*?)</string>", m.group(1), re.S)] if m else []
+    if "-I" in words[1:]:
+        return words[words.index("-I", 1) - 1]
+    m = re.search(r"<string>(?:sleep \d+; )?exec (.+?) -I ", text)
+    return m.group(1) if m else ""
+
+
 def stored_programs():
     """G5.26 (T101), family rule 29 (f) (ii): the python each unit or launchd file of ours names, read from the file
     itself, and whether it is still there. No path lasts for ever, and a job whose program is gone cannot say so."""
@@ -4442,13 +4730,12 @@ def stored_programs():
             row["why"] = e.strerror or type(e).__name__
             out.append(row)
             continue
-        m = re.search(r"^ExecStart=(.+?) -I ", text, re.M) if kind == "unit" else \
-            re.search(r"<string>(?:sleep \d+; )?exec (.+?) -I ", text)
-        if not m:
+        named = program_named(text, kind)
+        if not named:
             row["why"] = "its program line was not found"
         else:
-            row["program"] = m.group(1)
-            row["state"], row["why"] = program_state(m.group(1))
+            row["program"] = named
+            row["state"], row["why"] = program_state(named)
         out.append(row)
     return out
 
@@ -4458,6 +4745,11 @@ def setup():
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
     if sys.platform.startswith("win"):
         print("Windows is not supported yet. Under WSL, run setup inside the Linux system.")
+        return 1
+    # G5.26: where setup has no python to write (py_stop, said below at its place), there is no path of one to carry
+    cannot = "" if py_stop else cannot_carry(py, script)
+    if cannot:          # G5.31: a path the service file cannot carry stops setup before its first write
+        print(cannot)
         return 1
     if "--print-units" in ARGS:
         for name, text in units(py or ran, script).items():
@@ -4517,6 +4809,9 @@ def setup():
     os.makedirs(STATE, exist_ok=True)
     if os.path.abspath(__file__) != script:
         shutil.copyfile(os.path.abspath(__file__), script)
+    # the answer of the manager's reload after the unit files are written (Linux); said only where the read back
+    # then finds a start line not held as written
+    reload_rc = 0
     if MAC:
         os.makedirs(os.path.join(HOME, "Library", "LaunchAgents"), exist_ok=True)
     else:
@@ -4528,14 +4823,12 @@ def setup():
         os.makedirs(la, exist_ok=True)
         uid = str(os.getuid())
         wrote = [script]
-        for label, verb, extra in (
-                ("ai.thewindstorm.tardigrade-revive", f"sleep {int(float(CFG['boot_wait_s']))}; exec",
-                 "<key>RunAtLoad</key><true/>"),
-                ("ai.thewindstorm.tardigrade-record", "exec", "<key>StartInterval</key><integer>300</integer>")):
+        for label, extra in (
+                ("ai.thewindstorm.tardigrade-revive", "<key>RunAtLoad</key><true/>"),
+                ("ai.thewindstorm.tardigrade-record", "<key>StartInterval</key><integer>300</integer>")):
             p = os.path.join(la, label + ".plist")
-            arg = " revive --boot" if "revive" in label else " record"
             with open(p, "w", encoding="utf-8", errors="surrogateescape") as f:
-                f.write(plist(label, py, script + arg, verb, extra))
+                f.write(plist(label, py, script, extra))
             wrote.append(p)
             # G5.27 (T107), family rule 30: the job from before is told off and READ gone before this one is loaded
             state, why, _ = job_off(label)
@@ -4576,7 +4869,7 @@ def setup():
             with open(os.path.join(ud, name), "w", encoding="utf-8", errors="surrogateescape") as f:
                 f.write(text)
         env = user_env()
-        run(["systemctl", "--user", "daemon-reload"], env=env)
+        reload_rc = run(["systemctl", "--user", "daemon-reload"], env=env)[0]
         run(["systemctl", "--user", "enable", "windstorm-tardigrade-revive.service"], env=env)
         run(["systemctl", "--user", "enable", "--now", "windstorm-tardigrade-record.timer"], env=env)
         write_made(new, older, source)  # again: the two .wants folders are there only now, when systemd made them
@@ -4591,6 +4884,8 @@ def setup():
         except OSError:
             pass
     save_cfg_key("auto_revive", True)
+    save_cfg_key("service_python", py)      # G5.31: what setup wrote, for the read back: the meant side is this
+    save_cfg_key("service_script", script)  # record, never what a later terminal's environment says
     # this boot counts as revived: the sessions running now are the ones to remember
     write_marker("setup " + time.strftime("%Y-%m-%dT%H:%M:%S") + "\n")
     # T35: a plain record, not a forced one: sessions that vanished are held as the timer's record holds them,
@@ -4600,14 +4895,39 @@ def setup():
     # G3.33 (T93), family rule 8 (b): setup's last act is the read the census makes, from the things themselves
     missing, unread, seen = boot_read()
     print(seen)
+    for line in YOURS:
+        print(line)
     if missing:
-        print("NOT set up: " + "; ".join(missing) + "." + ("" if MAC else " The units are written in "
-              "~/.config/systemd/user/. Log out and in, then run setup again.") + " Nothing comes back by itself yet.")
+        other = [m for m in missing if m.startswith((NOT_AS_WRITTEN, HELD_BUT))]
+        theirs_only = bool(other) and all(HAS_DROPIN in m for m in other)
+        # a moment's failure is said as what it is: the reload setup asked for did not answer 0, the manager's list
+        # holds other lines than the files setup just wrote, and no drop-in file of the person's own is on the unit
+        moment = bool(other) and reload_rc != 0 and all(
+            m.startswith(NOT_AS_WRITTEN) and HAS_DROPIN not in m for m in other)
+        print("NOT set up: " + "; ".join(missing) + "." + (
+            " A drop-in file of your own changes the start lines of the service, and Tardigrade changes no file of "
+            "yours. It says set up only where the service manager's list holds the line setup wrote once, as "
+            "written and first; with your drop-in as it is, it does not say that sessions come back by themselves."
+            if theirs_only else
+            " Setup wrote the service files and the service manager does not hold them as written; the reload "
+            f"setup asked of it after writing them (daemon-reload) {reload_words(reload_rc)}. Run setup again; if "
+            "this line comes back, run uninstall, and tell the maintainer what this said." if moment else
+            " Setup wrote the service files and the service manager does not hold them as written: run uninstall, "
+            "and tell the maintainer what this said." if other else "" if MAC else " The units are written in "
+            "~/.config/systemd/user/. Log out and in, then run setup again.")
+            # where the manager's list holds another line, the tool read that it differs, not what that line
+            # starts: it says neither that sessions come back nor that nothing does
+            + ("" if other else " Nothing comes back by itself yet."))
+        if step_line(missing, []):      # the words first; the command last on a line of its own
+            print(OWN_AFTER[0].upper() + OWN_AFTER[1:] + ".")
+            print(step_line(missing, []))
         return 1
     if unread:
         step = unread_step(unread)
         print("Setup could not read whether it is set up: " + "; ".join(unread) + ". So it does not say it is. "
               + step[0].upper() + step[1:] + ".")
+        if step_line([], unread):
+            print(step_line([], unread))
         return 3
     print(f"Installed copy: version {VERSION} now; before this setup: {before}.")
     if py_note:
@@ -4618,6 +4938,11 @@ def setup():
     for line in open_folder_lines():
         print(line)
     return 0
+
+
+def reload_words(rc):
+    """how the manager's reload ended, for setup's line: its exit code, or that there was none (run() gives 99)"""
+    return "gave no answer within 30 s, or could not be started" if rc == 99 else f"ended with exit code {rc}"
 
 
 def mac_story(filevault, auto_user, me):
@@ -4639,11 +4964,22 @@ def mac_story(filevault, auto_user, me):
             ["After a restart, sessions come back when you log in at this Mac's screen.", agent])
 
 
+def account():
+    """this account as loginctl takes it: its name, read by its number (never from this terminal's USER, which a
+    changed login can leave behind); the number itself where the machine has no name for it"""
+    if TESTING and os.environ.get("TARDIGRADE_FAKE_ACCOUNT"):
+        return os.environ["TARDIGRADE_FAKE_ACCOUNT"]
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_name
+    except (ImportError, KeyError):
+        return str(os.getuid())
+
+
 def linger_on():
     if TESTING and os.environ.get("TARDIGRADE_FAKE_LINGER"):
         return os.environ["TARDIGRADE_FAKE_LINGER"] == "yes"
-    user = os.environ.get("USER") or os.path.basename(HOME)
-    return run(["loginctl", "show-user", user, "-p", "Linger", "--value"], timeout=10)[1].strip() == "yes"
+    return run(["loginctl", "show-user", account(), "-p", "Linger", "--value"], timeout=10)[1].strip() == "yes"
 
 
 def mac_facts():
@@ -4863,27 +5199,235 @@ def not_off(offs, boot_on=False):
     return 3
 
 
+BUS_ESC = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, '"': 34, "'": 39}
+NOT_AS_WRITTEN = "the service manager does not hold the start line of the "
+HELD_BUT = "the service manager holds the start line of the "       # ours, as written, only not once and first
+NO_WORD_LIST = "the service manager's word list could not be asked"
+OLDER_SETUP = "this setup was made by an older version of Tardigrade, which kept no record of the start lines it wrote"
+NO_ARGUMENTS = "launchd answered, and this version did not find the job's arguments in its answer: "
+HAS_DROPIN = "the unit has drop-in files of your own"
+YOURS = []          # what boot_read() found on the units that is the person's own: said, never changed, no value in it
+OVER = []           # the units whose start line differs while drop-in files of the person's own stand on them
+
+
+OWN_AFTER = "change or remove a drop-in that is not meant, then run setup again"
+START_RECORD = "Start the record service with: systemctl --user start windstorm-tardigrade-record.service"
+STEP_LINE = [""]    # the line of its own that carries the command of the step comes_back() named, or ""
+
+
+def listing(units):
+    """the service manager's own listing of the service(s) and their drop-in files, as a line that ENDS with the
+    command: a person who pastes from the command on hands a shell the command and nothing else. Made of the tool's
+    own unit names: no path and no value of theirs."""
+    return "See the service and its drop-in files with: systemctl --user cat " + " ".join(units)
+
+
+def step_line(missing, unread):
+    """the line of its own that carries a step's command, or "": where a drop-in file of the person's own stands
+    over the start line setup wrote, the listing (setup again is no step there: it would write the same file under
+    the same drop-in); where the word list could not be asked, the start of the record service"""
+    other = [m for m in missing if m.startswith((NOT_AS_WRITTEN, HELD_BUT))]
+    if other and all(HAS_DROPIN in m for m in other):
+        return listing(OVER)
+    if not missing and unread and all(u.startswith(NO_WORD_LIST) for u in unread):
+        return START_RECORD
+    return ""
+
+
+def bus_words(text):
+    """busctl's plain answer as a list of (kind, value): a string in double quotes, with the escapes busctl writes (a
+    letter, or three octal digits for a byte), is ("s", value); any other word is ("w", word). None when the text
+    is not of that form. One reader for every systemd on the floor: the JSON form is not there before 240."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in " \t\r\n":
+            i += 1
+        elif c == '"':
+            b, i = bytearray(), i + 1
+            while i < n and text[i] != '"':
+                if text[i] != "\\":
+                    b += text[i].encode("utf-8", "surrogateescape")
+                    i += 1
+                elif text[i + 1:i + 2] in BUS_ESC:
+                    b.append(BUS_ESC[text[i + 1]])
+                    i += 2
+                elif re.fullmatch(r"[0-3][0-7][0-7]", text[i + 1:i + 4]):
+                    b.append(int(text[i + 1:i + 4], 8))
+                    i += 4
+                elif re.fullmatch(r"x[0-9a-fA-F]{2}", text[i + 1:i + 4]):
+                    b.append(int(text[i + 2:i + 4], 16))
+                    i += 4
+                else:
+                    return None
+            if i >= n:
+                return None
+            out.append(("s", b.decode("utf-8", "surrogateescape")))
+            i += 1
+        else:
+            j = i
+            while j < n and text[j] not in " \t\r\n":
+                j += 1
+            out.append(("w", text[i:j]))
+            i = j
+    return out
+
+
+def bus_ask(env, *words):
+    """one question to the bus tool, with its own time limit: its plain answer as words, or None"""
+    rc, out = run(["busctl", "--user", *words], timeout=10, env=env)
+    return bus_words(out) if rc == 0 else None
+
+
+def start_lines(w):
+    """busctl's answer for a service's ExecStart as [(program, [words]), ...], one for each start line the manager
+    holds; None when the answer has another form"""
+    try:
+        if w[0] != ("w", "a(sasbttttuii)") or w[1][0] != "w":
+            return None
+        out, i = [], 2
+        for _ in range(int(w[1][1])):
+            n = int(w[i + 1][1])
+            words, rest = w[i + 2:i + 2 + n], w[i + 2 + n:i + 10 + n]
+            if w[i][0] != "s" or w[i + 1][0] != "w" or len(words) != n or len(rest) != 8 or \
+                    any(k != "s" for k, _ in words) or any(k != "w" for k, _ in rest):
+                return None
+            out.append((w[i][1], [v for _, v in words]))
+            i += 10 + n
+        return out if i == len(w) else None
+    except (TypeError, IndexError, ValueError):
+        return None
+
+
+def string_list(w):
+    """busctl's answer for a list of strings as a list; None when the answer has another form"""
+    try:
+        if w[0] != ("w", "as") or w[1][0] != "w" or len(w) != 2 + int(w[1][1]) or any(k != "s" for k, _ in w[2:]):
+            return None
+        return [v for _, v in w[2:]]
+    except (TypeError, IndexError, ValueError):
+        return None
+
+
+def unit_held(unit, env):
+    """what systemd HOLDS for a user service, asked over the manager's own bus: {"lines": every start line as
+    (program, [words]), "variables": the NAMES of the unit's Environment entries (never a value: an entry of the
+    person's own may hold a password), "dropins": how many drop-in files the unit carries}. None when a question
+    had no answer (no bus tool, no user bus, a time limit, another form). What "systemctl show" prints is not used:
+    it joins the words with spaces and reads the same for one word and for two."""
+    bus = "org.freedesktop.systemd1"
+    w = bus_ask(env, "call", bus, "/org/freedesktop/systemd1", bus + ".Manager", "LoadUnit", "s", unit)
+    if not w or len(w) != 2 or w[0] != ("w", "o") or w[1][0] != "s":
+        return None
+    out = {}
+    for key, face, prop, read in (("lines", "Service", "ExecStart", start_lines),
+                                  ("variables", "Service", "Environment", string_list),
+                                  ("dropins", "Unit", "DropInPaths", string_list)):
+        out[key] = read(bus_ask(env, "get-property", bus, w[1][1], f"{bus}.{face}", prop))
+        if out[key] is None:
+            return None
+    out["variables"] = [v.split("=", 1)[0] for v in out["variables"]]
+    out["dropins"] = len(out["dropins"])
+    return out
+
+
+def older_words(unit, verb):
+    """for a setup made by a version that kept no record of what it wrote: the unit file's own start line as its
+    words, where the line holds nothing but plain words (letters, digits and . _ / - + : , = @) with one space
+    between, which every reader takes alike, AND has the shape that version wrote: a Python by its whole path, -I,
+    the installed copy by its whole path, the tool's own words. A line of plain words in another count is a path
+    that was cut, not a record. None for any other line."""
+    try:
+        with open(os.path.join(HOME, ".config", "systemd", "user", unit), encoding="utf-8") as f:
+            lines = [x[len("ExecStart="):] for x in f.read().split("\n") if x.startswith("ExecStart=")]
+    except (OSError, UnicodeDecodeError):
+        return None
+    if len(lines) != 1 or not re.fullmatch(r"/[A-Za-z0-9._/+:,=@-]*( [A-Za-z0-9._/+:,=@-]+)*", lines[0]):
+        return None
+    words = lines[0].split(" ")
+    if len(words) != 3 + len(verb) or words[1] != "-I" or words[3:] != verb or \
+            not words[2].endswith("/.local/share/windstorm-tardigrade/tardigrade.py"):
+        return None
+    return words
+
+
+def job_held(text):
+    """a loaded launchd job's own arguments, one for each line of the "arguments = {" block that "launchctl print"
+    gives, or None when the answer has no such block"""
+    m = re.search(r"^([ \t]*)arguments = \{\n(.*?)^\1\}[ \t]*$", text, re.S | re.M)
+    if not m:
+        return None
+    lines = m.group(2).split("\n")[:-1]
+    lead = m.group(1) + "\t"
+    if any(not x.startswith(lead) for x in lines):
+        return None
+    return [x[len(lead):] for x in lines]
+
+
+def older_job(got, label):
+    """for a Mac setup made by a version that kept no record of what it wrote: that version handed a shell ONE line
+    with the paths in it. Its job counts as that version wrote it only where the line holds nothing but plain words
+    (letters, digits and . _ / - + : , = @) in that version's own shape; any other job is not a record."""
+    plain = r"/[A-Za-z0-9._/+:,=@-]*"
+    lead, tail = (r"sleep [0-9]+; exec", "revive --boot") if "revive" in label else ("exec", "record")
+    return len(got) == 3 and got[:2] == ["/bin/sh", "-c"] and bool(re.fullmatch(
+        lead + " " + plain + " -I " + plain + r"/\.local/share/windstorm-tardigrade/tardigrade\.py " + tail, got[2]))
+
+
+def files_as_written(py, script):
+    """a comparison of TEXT, no belief about the manager: is each unit file's own start line, letter for letter,
+    the line this version writes for this home?"""
+    if not py:
+        return False
+    ud = os.path.join(HOME, ".config", "systemd", "user")
+    try:
+        for unit, _, verb in SERVICE_LINES:
+            with open(os.path.join(ud, unit), encoding="utf-8") as f:
+                if [x for x in f.read().split("\n") if x.startswith("ExecStart=")] != [
+                        "ExecStart=" + exec_line(py, script, verb)]:
+                    return False
+    except (OSError, UnicodeDecodeError):
+        return False
+    return True
+
+
 def boot_read():
     """G3.33 (T93), family rules 6 and 24: what a boot revive needs, read from the things themselves now, never from
     the auto_revive setting or the record: the installed copy, and the boot service enabled and the record timer
     active (on a Mac: both launchd jobs loaded). Returns (missing, unread, seen): what is not there, what could not be
     read (the program gave no answer), and one line of what was read."""
     missing, unread, seen = [], [], []
+    del YOURS[:]
+    del OVER[:]
     script = os.path.join(INSTALL_DIR, "tardigrade.py")
     if not is_ours(script, "copy"):
         missing.append(f"the installed copy {script} is not there")
     if MAC:
         uid = str(os.getuid())
+        py, wrote, older = CFG.get("service_python") or "", CFG.get("service_script") or "", False
         for label in BOOT_JOBS:
-            rc, _ = run(["launchctl", "print", f"gui/{uid}/{label}"], timeout=10)
+            rc, out = run(["launchctl", "print", f"gui/{uid}/{label}"], timeout=10)
             if rc == 0:
                 seen.append(f"{label}: loaded")
+                got = job_held(out)
+                if got is None:
+                    unread.append(NO_ARGUMENTS + label)
+                elif not (py and wrote):        # a setup with no record: only that version's own shape counts
+                    older = older or not older_job(got, label)
+                else:                           # G5.31: the meant side is what setup wrote, its own record
+                    meant = job_words(label, py, wrote)
+                    wait = 4 if "revive" in label else -1       # the wait is a setting; any number of seconds is meant
+                    if len(got) != len(meant) or any(g != m and not (i == wait and g.isdigit())
+                                                     for i, (g, m) in enumerate(zip(got, meant))):
+                        missing.append(NOT_AS_WRITTEN + label + " as setup wrote it")
             elif rc == 113:             # launchctl's own answer for a service it does not have
                 seen.append(f"{label}: not loaded")
                 missing.append(f"launchd has not loaded {label}")
             else:
                 seen.append(f"{label}: no answer (exit {rc})")
                 unread.append(f"launchctl gave no answer about {label} (exit {rc})")
+        if older and not missing and not unread:
+            unread.append(OLDER_SETUP)
     else:
         env = user_env()
         for unit, verb, good, what in ((BOOT_UNITS[0], "is-enabled", "enabled", "boot service"),
@@ -4897,6 +5441,55 @@ def boot_read():
                 missing.append(f"the {what} is {word}")
             else:
                 unread.append(f"systemctl gave no answer about the {what} (exit {rc})")
+        if not missing and not unread:      # G5.31: enabled and active say nothing of WHAT would be started
+            py, wrote = CFG.get("service_python") or "", CFG.get("service_script") or ""
+            asked, older, other = True, False, []
+            for unit, what, verb in SERVICE_LINES:
+                got = unit_held(unit, env)
+                if got is None:
+                    asked = False
+                    break
+                meant = held_words(py, wrote, verb) if py and wrote else older_words(unit, verb)
+                if meant is None:
+                    older = True
+                    continue
+                # "set up" is said where the manager's list holds our line once, as written, and FIRST. Both
+                # services are one-shot. That a one-shot unit's start lines run in the order of its list, and
+                # that a later one does not run where an earlier one fails, was recorded 2026-11-25 for a trial
+                # unit of two lines on systemd 237, 239, 245, 249 and 255, not for these services: a line of the
+                # tool says what it READ (the list), never a run
+                ours, times = (meant[0], meant), got["lines"].count((meant[0], meant))
+                if times != 1 or got["lines"][0] != ours:
+                    # ours not there (or there changed) is one thing; ours there as written, only not once and
+                    # first, is another: the census says NO on the first alone, where it READ that ours is not held
+                    other.append((NOT_AS_WRITTEN + what + " as setup wrote it" if times == 0 else
+                                  HELD_BUT + what + f" as setup wrote it {times} times, not once" if times > 1 else
+                                  HELD_BUT + what + " as setup wrote it, but not first: "
+                                  f"{got['lines'].index(ours)} start line(s) stand before it")
+                                 + (f" ({HAS_DROPIN}: {got['dropins']})" if got["dropins"] else ""))
+                    if got["dropins"]:
+                        OVER.append(unit)
+                elif len(got["lines"]) > 1:
+                    YOURS.append(f"Yours, not Tardigrade's, and left as it is: the {what} has {len(got['lines']) - 1} "
+                                 "start line(s) of your own beside the one setup wrote. " + listing([unit]))
+                if got["variables"]:        # the tool's service files set none: every entry is the person's own
+                    names = sorted({v for v in got["variables"] if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v)})
+                    more = len(set(got["variables"])) - len(names)
+                    YOURS.append(f"Yours, not Tardigrade's, and left as it is: the {what} has entries of your own "
+                                 "for the variable(s) " + ", ".join(names + ([f"{more} more"] if more else []))
+                                 + " (names only; setup's own service files set none).")
+            if not asked:
+                same = "yes" if files_as_written(py, wrote) else "no"
+                seen.append("start lines: not asked")
+                unread.append(f"{NO_WORD_LIST} (the bus tool busctl gave no answer); as text, the two service "
+                              f"files' start lines are the lines this version writes for this home: {same}")
+            elif older and not other:
+                seen.append("start lines: from an older version")
+                unread.append(OLDER_SETUP)
+            else:
+                seen.append("start lines: " + ("as written" if not other else "not as written" if any(
+                    m.startswith(NOT_AS_WRITTEN) for m in other) else "as written, but not once and first"))
+                missing += other
     # G5.26 (T101): the python each unit or launchd file names, read from the file: still there?
     by = {}
     for row in stored_programs():
@@ -4916,17 +5509,37 @@ def unread_step(unread=()):
     """the one next step when boot_read() got no answer; setup and the census both say it"""
     if unread and all(u.startswith("the python ") for u in unread):
         return "run setup again: it writes the python it is run with"
+    if unread and all(u == OLDER_SETUP for u in unread):
+        return "run setup again"
+    if unread and all(u.startswith(NO_WORD_LIST) for u in unread):
+        # the manager answers, only its word list cannot be asked: a step by which the person sees it themselves.
+        # The record service only reads and writes the record; the boot service is never named as a step.
+        return ("see it yourself: wait a minute, start the record service (its command is on the next line), then "
+                "run the census: where the service starts Tardigrade, \"Last record\" reads a few seconds; where it "
+                "reads a minute or more, it does not, and uninstall is the step")
+    if unread and all(u.startswith(NO_ARGUMENTS) for u in unread):
+        # launchd is there and answered: logging in is no step for it. The form of its answer is what this version
+        # could not read, and that is the maintainer's to hear, with the macOS it was met on
+        return "tell the maintainer this line and this Mac's macOS version"
     return ("log in at this Mac's screen as this user, then run setup again" if MAC else
-            "log out and in (this login has no systemd user manager to ask), then run setup again")
+            "log out and in (this shell cannot reach the systemd user manager), then run setup again")
 
 
 def comes_back():
     """the census's short answer to: after a reboot, do the sessions come back?"""
+    STEP_LINE[0] = ""
     if not CFG["auto_revive"]:
         return "NO (run setup)"
     missing, unread, _ = boot_read()
+    STEP_LINE[0] = step_line(missing, unread)
     if missing:
-        return "NO: " + "; ".join(missing) + " (run setup)"
+        # NO is said only on what was read. Where every reason is that our line IS held as written, only not once
+        # and first, the tool has not read that nothing comes back: a third answer, neither yes nor no
+        word = "not known: " if all(m.startswith(HELD_BUT) for m in missing) else "NO: "
+        if STEP_LINE[0]:        # a drop-in file of the person's own: setup cures nothing there
+            return (word + "; ".join(missing) + ". Next: " + OWN_AFTER + " (the next line lists the service and "
+                    "its drop-in files)")
+        return word + "; ".join(missing) + " (run setup)"
     if unread:
         return "could not be read: " + "; ".join(unread) + ". Next: " + unread_step(unread)
     if MAC:
@@ -4940,13 +5553,14 @@ def who_logs_in():
     if MAC:
         out += mac_story(*mac_facts())[1]
     else:
-        user = os.environ.get("USER") or os.path.basename(HOME)
+        user = account()
         linger = "yes" if linger_on() else "no"
         if linger == "yes":
             out.append("Lingering is on: sessions come back about a minute after boot, with nobody logged in.")
         else:
             out.append("Lingering is OFF: sessions come back only after you log in to this machine.")
-            out.append(f"To bring them back with nobody logged in, a person runs once: sudo loginctl enable-linger {user}")
+            out.append("To bring them back with nobody logged in, a person runs once: sudo loginctl enable-linger "
+                       + shlex.quote(user))
     return out
 
 
@@ -5538,6 +6152,11 @@ def uninstall():
     if CFG.get("auto_revive"):
         save_cfg_key("auto_revive", False)
     on, unread = still_on()
+    if not (on or unread):
+        # setup's own record of the two paths it wrote into the service files (G5.31) goes with those files: a key
+        # the tool wrote for itself is not left in the person's settings (G3.31). While a service is still on, or
+        # could not be read, the record stays: the read back compares with it
+        drop_cfg_keys(("service_python", "service_script"))
     cfgf = os.path.join(CFG_DIR, "config.json")
     if not (was_here or gone or went or failed or on or unread or kept):
         print("Tardigrade is already off this computer: its boot service, its record timer and its installed copy "
