@@ -109,6 +109,10 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 In Claude Code you can say these in plain words. In a terminal, each is
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py <command>`.
 
+Type each option exactly as it stands here: until 0.1.11 the tool passes over a word it does not read and runs
+the command without it, so a mistyped `--dry-run` acts for real, `trust on --dry-run` switches it on (trust has
+no dry run), and `revive --only` wants the name as its next word.
+
 ### The census
 
 An example, with made-up names:
@@ -248,6 +252,16 @@ sessions come back by themselves. If you set 0.1.10.3 or older up in such a home
 (when: see Install). From 0.1.10.4 on setup writes each path into its service files so that it is held as one
 whole value, refuses before its first write a path no service file can carry, and says "is set up" only after it
 has read the start lines back from the service manager itself.
+
+The census reads the boot service as the service manager holds it. A service file damaged after that (seen once: one
+cut short inside its start line) still reads as yes until the service manager reads its files again, at the latest
+at the next restart; that restart brought nothing back, and the census then said no. Run setup again after anything
+has touched those files. A setup that ends in an error while it writes its copy (seen: a setup stopped by a
+file-size limit) can leave a cut copy that the census still reads as yes, before and after a restart that brings
+nothing back; after any setup that did not end with its set-up line, run setup again. A disk that is full at a
+restart (seen: the disk that holds the state folder, with no block free) lets the boot run end before it brings
+anything back, and the census still reads yes; free space there, then run `tardigrade revive`. All three were seen
+on 2026-11-26 on a stock Linux virtual machine with stand-in sessions.
 
 A # in a name or a folder (T119, cured in 0.1.10.3): tmux reads a # in a session's name, a pane's title and a folder
 as the start of one of its own formats. Up to 0.1.10.2 a session that ran in a tmux session whose name holds a #
@@ -526,6 +540,7 @@ check that its line in `tardigrade revive --dry-run --all` ends in `[account NAM
 | `tsv_path` | | Also write the record as a tab-separated table with eight columns at this path, for tools that read one. `tsv_socket` limits it to one tmux socket name. |
 | `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
 | `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. `{herdr_tabs_not_attached}` (and `TARDIGRADE_HERDR_TABS_NOT_ATTACHED`) is how many tabs were left because Herdr was not running. For a machine where someone or something should be told. |
+| `service_python` / `service_script` | | Not for you to set. Setup writes them: the Python and the path of the copy as it wrote them into the service files, kept for its own read back of those files. Uninstall leaves them in the file. |
 
 Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is exactly what will run.
 

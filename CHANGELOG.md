@@ -41,6 +41,13 @@
   in that gap with one session of yours already running lets the others go, and neither the boot run nor
   revive brings them back: seen once on 2026-11-26 on that virtual machine, lingering off, stand-in sessions.
   Not seen: setup typed there with no session running.
+- **Type each option exactly as the skill's table shows it (T156, #166).** This version passes over a word
+  after the command that it does not read, and runs the command without it. So a mistyped `--dry-run` with
+  `revive` starts the sessions for real (with `record`, `open`, `setup` and `uninstall` the same is read in the
+  code), `trust on --dry-run` switches trust answering on (`trust` has no dry run), and `revive --only` with no
+  name after it, or `revive --only=NAME`, starts every session that is down, not one. Seen on 2026-11-26 with
+  stand-in sessions, not on a machine. Row T156 is due in 0.1.11: there the command names the word, does nothing
+  and ends with exit 2.
 - **A home folder whose path holds a space, and every other path a service file reads in its own way (T132).** Up
   to 0.1.10.3 setup wrote two paths into its two service files as they stood: the Python that ran setup, and its
   installed copy, which lies under the home folder. A service file reads some characters in its own way, so a path
@@ -70,6 +77,15 @@
   with one step by which you see it yourself. A setup made by an older version kept no record: after the update the
   census says "could not be read" and that the step is to run setup again, except where the older service file's
   line holds only plain words, which every reader takes alike.
+  The census reads the boot service as the service manager holds it. A service file damaged after that (seen once:
+  one cut short inside its start line) still reads as yes until the service manager reads its files again, at the
+  latest at the next restart; that restart brought nothing back, and the census then said no. Run setup again after
+  anything has touched those files. A setup that ends in an error while it writes its copy (seen: a setup stopped by
+  a file-size limit) can leave a cut copy that the census still reads as yes, before and after a restart that brings
+  nothing back; after any setup that did not end with its set-up line, run setup again. A disk that is full at a
+  restart (seen: the disk that holds the state folder, with no block free) lets the boot run end before it brings
+  anything back, and the census still reads yes; free space there, then run `tardigrade revive`. All three were seen
+  on 2026-11-26 on a stock Linux virtual machine with stand-in sessions.
 - **What is yours on a service is named as yours, and left as it is.** A drop-in file of your own on one of the two
   services is never changed, and never a fault. Environment entries of your own are named by the variable's name
   only, never a value (a value may be a password). A start line of your own beside the one setup wrote is counted,
