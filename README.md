@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.10.3, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.10.4, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
 > that version found faults, which is what they were for; after the fixes every session came back every time, all
 > 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
@@ -19,8 +19,10 @@ with no window open.
 
 ## Install
 
-You need Linux or macOS, Python 3, and [tmux](https://github.com/tmux/tmux/wiki) (`apt install tmux`,
+You need Linux or macOS, Python 3.9 or newer, and [tmux](https://github.com/tmux/tmux/wiki) (`apt install tmux`,
 `dnf install tmux` or `brew install tmux`).
+Python 3.9 is the lowest the tool runs on (the `python3` that comes with Apple's developer tools on macOS 13 is 3.9.6).
+On an older one every command stops at once, says which version it found, and makes nothing.
 
 ```bash
 claude plugin marketplace add TheWindstorm/windstorm-tardigrade
@@ -31,19 +33,27 @@ Then start Claude Code and say: **set up tardigrade**.
 
 Installed as a plugin before? Run `claude plugin marketplace update windstorm-tardigrade`, then `claude plugin update
 windstorm-tardigrade@windstorm-tardigrade` (seen to bring the new script once the plugin's version label had
-changed, as it has in 0.1.9), then set up again: setup is what refreshes the copy the boot service and the timer run.
+changed, as it has in 0.1.9), then set up again while your sessions are running (never between a restart and
+their return, see below): setup is what refreshes the copy the boot service and the timer run.
 
 Without the plugin system, it is one file:
 
 ```bash
-git clone --depth 1 --branch v0.1.10.3 https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.10.4 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
+
+Some versions of git print `warning: refs/tags/<the tag> ... is not a commit!` for that clone line (seen with git
+2.55, not with git 2.43). It is only a warning, and the clone is still right: it ends with exit 0 and the script is there.
 
 Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute timer for
 your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs no
 administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
-copy: run it again after you update the plugin. Setup leaves no group or other write permission on anything it makes,
+copy: run it again after you update the plugin, while your sessions are running or after `tardigrade revive`,
+never between a restart and their return. Until 0.1.11, setup typed in that gap with one session of yours
+already running lets the others go, and neither the boot run nor revive brings them back (seen once, 2026-11-26,
+on a stock Ubuntu 24.04 virtual machine with lingering off and stand-in sessions; not seen: setup typed there
+with no session running). Setup leaves no group or other write permission on anything it makes,
 whatever umask it was started with (it reads and sets the mode bits; it does not read access lists). If you ran setup
 with a wide-open umask (umask 000, as some job runners start every job), run setup again with 0.1.10 or later: it
 closes its own copy, units and install folder, and it names each folder above them, or above its settings and state
@@ -55,6 +65,42 @@ Taking the plugin off with Claude Code's own `claude plugin uninstall` does not 
 boot service still brings your sessions back after a restart, and the 5-minute record timer still runs, both from
 the copy in `~/.local/share/windstorm-tardigrade/`. To take them off, run
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py uninstall`. Your settings, record and log stay.
+When the copy was set up from the plugin's folder and Claude Code's own list of plugins no longer has the plugin,
+census, `report` and the log at each boot say so in one line, with that command; sessions are brought back as before.
+If Claude Code's list cannot be read, that is said instead, and nothing changes.
+
+Setup never moves a computer back by itself. Run from a script older than the installed copy (an old clone, a plugin
+that was not updated), it stops, names both versions and has changed nothing; `setup --downgrade` is the word that
+moves it back, and it is yours to give: an agent does not give it for you unasked. From the same or a newer script,
+setup says which version was installed before and which is now. Census says when the Claude Code plugin's version
+differs from the copy that runs at boot, with both versions, or that it could not be read. When Claude Code holds the
+plugin more than once (installed from two catalogs that both list it, or for two scopes), census names every one with
+its id and version, says "the same" only when all of them are, and for two catalogs gives the line that takes one off;
+which one is yours to say.
+
+What setup puts where: the copy, and its own list `folders-made.json`, in `~/.local/share/windstorm-tardigrade/`. On
+Linux three unit files in `~/.config/systemd/user/`, and `systemctl --user enable` makes two links for them in that
+folder, `default.target.wants/windstorm-tardigrade-revive.service` and
+`timers.target.wants/windstorm-tardigrade-record.timer`. On a Mac two plists in `~/Library/LaunchAgents/`. Your
+settings and the record are in `~/.config/windstorm-tardigrade/`, the log and Tardigrade's notes of past boots in
+`~/.local/state/windstorm-tardigrade/`. A folder on that way that was not there is made by setup and written on its
+list. `setup --dry-run` names the links and those folders before anything is written, and census names them after.
+`uninstall` takes away the units, the links, the copy and the list, then each folder on the list that is empty now,
+deepest first. It keeps your settings, record and log, says what a setup after it does with each, and says that
+`auto_revive` now reads false in your settings and why that line stays. The two paths setup wrote into your settings
+for its own read back go out of them with the service files. A copy set up by a version before 0.1.11 has no list:
+uninstall then removes no folder above its own, and says so. A census, a report, a dry run and a setup that stops
+before its first write make no file and no folder; a dry run's lines go to the screen only, not to the log.
+
+The boot service and the record timer run with the python that ran setup, by the path you ran it with. Where that
+path lies in a folder that goes when something else is updated or removed, setup writes another and says so:
+Apple's python (inside Xcode or the command line tools) is written as `/usr/bin/python3`; a Homebrew python is
+written by its `opt` or `bin` folder, never by its Cellar; for a python in a pyenv, mise or asdf version folder or
+a conda package folder, `/usr/bin/python3` is written where that is Python 3.9 or newer, and where it is not, setup
+stops before its first write and names the `python` setting. No path lasts for ever, so the census reads from each
+unit the python it names: when that is gone, "Comes back after a reboot" says NO, names the path and the step (run
+setup). Not seen by us on a real machine with pyenv, mise, asdf or conda, nor on a Mac with a Homebrew python:
+those are read by the shape of the path, with stand-ins.
 
 Do not stop or restart the boot service by hand (`systemctl --user stop windstorm-tardigrade-revive.service`), ever.
 Where a restart brought your sessions back and Tardigrade had to start the tmux server, that server runs in the boot
@@ -64,19 +110,35 @@ systemd runs (with lingering on, until a restart); it does nothing more, and it 
 on an Arch Linux machine (systemd 262) with a throwaway service of the same shape. With its unit file removed, a
 stop ended the tmux server twice of two, and so did the service ending by itself after a restart into its wait.
 With the file in place a stop left the server running in the first two tries and ended it in the next six. Left
-alone, with the file removed, the server ran on. Not tried with Tardigrade's own service.
+alone, with the file removed, the server ran on: seen once, the server read alive four times over some 6 seconds,
+the last after a `reset-failed` and a second reload. Not tried with Tardigrade's own service.
 
-Known edge until 0.1.11 (T107), on Linux: an uninstall run while the boot service is in its wait (`boot_wait_s`, 45
-seconds, between the start of the boot service and its revive) says "Tardigrade is off this computer" while systemd
-still holds that service as activating. When the wait ends, systemd finds the unit gone, starts nothing and lists
-`windstorm-tardigrade-revive.service` as failed. Nothing is started and no session is touched.
-`systemctl --user reset-failed windstorm-tardigrade-revive.service` takes it off that list. Use only that command
-on it: see the warning under the uninstall line. A setup run before
-that says "is set up" while the service is still listed as failed from before; the same command clears it then
-too. How it was seen: with 0.1.10.1 on a stock Ubuntu 24.04 virtual machine (systemd 255) and on an Arch Linux
-machine (systemd 262), with the boot service's wait started by hand (`systemctl --user restart --no-block`; do not
-repeat this on a machine with sessions: see the warning under the uninstall line). That stands for the wait after a
-boot or a first login, which was not itself the sighting. The clearing was seen on the Arch machine only.
+Uninstall reads everything of its own off before it removes anything. On Linux it stops the record timer and the
+record service and reads them stopped. It never stops the boot service: while that service is on its way (its wait
+of `boot_wait_s`, 45 seconds, then that boot's revive) uninstall waits and says so once a minute; Ctrl-C leaves the
+wait with nothing removed, and when the service has ended uninstall goes on by itself. On a Mac it tells both
+launchd jobs off and reads both gone. Where one is not read off (it still runs, or systemd or launchd gave no
+answer), uninstall removes nothing, says what it read of each, which was off already and which this run stopped,
+and prints its own whole command line as the next step, with the python that is running it. Its first line says
+"NOT off this computer" only where something was read still on; where the only trouble is a read with no answer it
+says it could not read whether everything of Tardigrade's is off. Where that run had already stopped the record
+timer (on a Mac: taken the record job off), it says so: no record is taken until the next boot or login, or until
+setup is run again, and it prints that line. From a shell that cannot reach your account's own systemd (no user bus, as after
+`su` from another account) the step says to run it from a login of your own, such as ssh or a terminal at the
+screen. An account for which no systemd user manager runs, and a Mac account that is not logged in at the screen,
+have nothing running to turn off: uninstall says that and goes to its end. A boot service that an uninstall of
+0.1.10.1 or older left on systemd's list as failed is taken off that list by the next uninstall, which reads
+systemd again after it and says "cleared" only on that read; by hand,
+`systemctl --user reset-failed windstorm-tardigrade-revive.service` does the same, and that is the only hand
+command for it. On a Mac, a setup run again while its own job is running reads the job from before gone before it
+loads it again; a job that does not go stops setup with what was read.
+How it was seen: with 0.1.10.1, an uninstall run inside the boot service's wait said "off" while systemd still held
+the service (a stock Ubuntu 24.04 virtual machine, systemd 255, and an Arch Linux machine, systemd 262; the wait
+was started by hand). On a Mac (macOS 27), setup three times in a row with its job running held with 0.1.10.1,
+whose job ends at once; with another tool, whose job takes time to end, the second setup failed. What this version
+does about each is held by tests with stand-ins that answer as launchd and systemd were seen to. Not seen on a real
+machine: a launchd job that never goes, and an account with no systemd user manager (that read is taken from the
+process list).
 
 What a fresh Linux machine needs (seen on a fresh Ubuntu 24.04): nothing more, as long as `claude` is in `~/.local/bin` (where Claude Code's own installer
 puts it), `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`. Sessions are started with those folders
@@ -97,12 +159,17 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 | `tardigrade open` | Opens a terminal window for each hidden session, with the terminal named in `TERMINAL` when that is set (it says so), else the first it finds. |
 | `tardigrade revive` | Brings back, now, every recorded session that is not running. `--dry-run` shows the list first. |
 | `tardigrade revive --only "Name"` | Brings back just that one. |
-| `tardigrade revive --dry-run --all` | Before a planned reboot: shows the exact line that would start each recorded session, and starts nothing. |
+| `tardigrade record --accept "Name"` | For one running session: its row takes the login it runs on now. For when census says `Login differs` and the login it shows is the right one. |
+| `tardigrade revive --dry-run --all` | Before a planned reboot: shows the line that would start each recorded session, and starts nothing. A `VAR=value` word of your own start command is shown as `VAR=(set)`. |
 | `tardigrade trust on` | Opt-in: after a restart, answer Claude Code's "trust this folder?" for a session's own folder. `trust off` undoes it. Off unless you switch it on. |
-| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. The last line says Tardigrade is off this computer. |
+| `tardigrade uninstall` | Switches it off: removes the boot service, the record timer and the installed copy. Running sessions are not touched. Your settings, your record and the log stay, and it says where they are. A file in one of Tardigrade's folders that Tardigrade did not write stays as it is, and it is named, with why its folder stayed. What stayed is yours, to keep or delete after you look inside. It reads back what went: something of its own that could not be removed, or a timer that still runs, is named with the one command to use, and then it does not say off (exit 1; exit 3 when systemd or launchd gave no answer). While a restore is starting sessions it waits for it. When all is off, the last line says Tardigrade is off this computer; run again, it says it is already off. |
 
 In Claude Code you can say these in plain words. In a terminal, each is
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py <command>`.
+
+Type each option exactly as it stands here: until 0.1.11 the tool passes over a word it does not read and runs
+the command without it, so a mistyped `--dry-run` acts for real, `trust on --dry-run` switches it on (trust has
+no dry run), and `revive --only` wants the name as its next word.
 
 ### The census
 
@@ -125,14 +192,16 @@ DOWN: on the record, not running now
   Data Import                        last seen 2 h ago   /home/you/import
 ```
 
-"Comes back after a reboot" is read at that moment from the things themselves: the installed copy, and the boot service enabled and the record timer active (on a Mac, both launchd jobs loaded). When one is not there it says NO and names it; when systemctl or launchctl gives no answer it says "could not be read", never yes, and names the step: log out and in (on a Mac, log in at its screen as this user), then run setup again. Up to 0.1.10 it was read from the setting alone, and could say yes with the boot service off.
+"Comes back after a reboot" is read at that moment from the things themselves: the installed copy, and the boot service enabled and the record timer active (on a Mac, both launchd jobs loaded). When one is not there it says NO and names it; when systemctl or launchctl gives no answer it says "could not be read", never yes, and names the step: log out and in (on a Mac, log in at its screen as this user), then run setup again. Up to 0.1.10 it was read from the setting alone, and could say yes with the boot service off. From 0.1.10.4 on it is also read from the service manager's own list of each service's start line: NO where setup's line is not held as written, and "not known", neither yes nor no, where it is held as written but not once and first (a start line of your own before it, in a drop-in file of yours); the line then names the place or the count and gives the step.
 
 "Quiet" is the time since the session last did anything. A hidden session that has been quiet for nine days is
 usually one you forgot.
 
 A session that is running but will not come back after a reboot is listed under RUNNING, BUT WILL NOT COME BACK,
 with the reason: it was started after the last record (the next record takes it), a setting leaves it out, or it is
-some program's own session.
+some program's own session. Where the record is waiting for this boot's revive (the boot service came too late
+to act, see "Who has to log in after a restart"), the next record takes nothing: the census says that the record
+waits, and the step, `tardigrade revive`.
 
 ## What comes back, and what does not
 
@@ -162,28 +231,15 @@ its limit. Keep those words out of your status line.
 
 **A session you ended with `/exit` stays ended**, also when the machine restarts minutes later. Tardigrade
 reads it from Claude Code's prompt history (`~/.claude/history.jsonl`), for the sessions on its record only: of
-those lines it keeps the time and whether it is exactly `/exit` or `/quit`, and nothing else. To bring such a
-session back anyway: `revive --only <its id>`. One known edge: a session being moved to another login at the very
-moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down; `revive --only
-<its name>` brings it back.
+those lines it keeps the time and whether it is exactly `/exit` or `/quit`, and nothing else. Of another session's
+line only its shape is looked at (is it one whole line), and nothing of it is kept, logged or shown. To bring such
+a session back anyway: `revive --only <its id>`. One known edge: a session being moved to another login at the
+very moment of a restart (ended with `/exit` and resumed on the other login seconds later) may stay down;
+`revive --only <its name>` brings it back.
 
-Known edge until 0.1.11 (T103, T104): a session whose start fails after a restart is tried again for 25 minutes
-(`retry_min`) and then given up. If other sessions are running, the next record, at most 5 minutes later, takes it
-off the list that `revive` reads: the census shows it under DOWN as "ended (its pane holds the shell it left)",
-`tardigrade revive` no longer starts it, and `revive --only <its name>` answers that no session on the record has
-that name. To bring it back today: cure what stopped its start, then start it yourself in its folder with Claude
-Code's own `claude --resume` (its help, at 2.1.331: "Resume a conversation by session ID or name, or pick from a
-list"). Once it runs, the next record puts it back on the list. A session that was not started for a # in the name
-of its tmux session (T119 below; its lines in the log say NOT STARTED and GAVE UP) is brought back the same way, in
-a tmux session whose name has no #: it is on the list under that name from the next record on (not walked by us).
-What was seen, on a stock machine with 0.1.10.1 and a stand-in for Claude Code: the fault as written here, and that
-a session started by hand with `claude --resume <its id>` is on the list again at the next record. Resuming by name
-or from the list was not walked by us.
-
-Known edge until 0.1.11 (T114): a session whose recorded name holds half of an emoji (a lone surrogate, which a
-title cut in the middle of an emoji would leave) still ends a revive in an error, and no session comes back. Seen
-in a test with stand-in sessions on 0.1.10.1 and on 0.1.10.2, not on a real machine. A folder whose name is not
-UTF-8 did the same up to 0.1.10.1 and does not from 0.1.10.2 on (T115).
+**A session on the down list** (it ended by itself, or you let it go with `record --force`) is not started by a
+plain `tardigrade revive`; the census says so under its table. `tardigrade revive --only <its name>` finds it there,
+puts it back on the list a revive reads and starts it. For one you ended with `/exit` it asks for its id.
 
 About such a folder (T115): that was seen with stand-in sessions (none of three came back on 0.1.10.1, three
 of three on 0.1.10.2, through a real restart). Claude Code 2.1.332 itself, not signed in, refused to start in a
@@ -212,28 +268,60 @@ non-Latin letter) comes back in the home folder, not its own, and no line says s
 sessions and a made Latin-1 locale, not on a real machine; under a UTF-8 setting every session came back in its
 own folder. Up to 0.1.10.1 the revive there ended in an error and no session came back.
 
-Known edge until 0.1.11 (T118): Tardigrade cuts the lines of a conversation file and of the prompt history where
-Python's `splitlines()` cuts, which is at the line feed and also at the character U+2028. Claude Code writes that
-character as it is into a conversation file, for instance when a tool's output holds one (counted in two real
-conversation files: 7 of about 61,000 lines, and 51 of 64,757). If a session was ended with /exit and then resumed,
-and every line written after that holds such a character when the computer restarts, the revive says "skip NAME: its
-owner ended it with /exit", does not bring that session back, and census lists it as ended by its owner. The same
-for an /exit in the prompt history followed by a prompt that holds the character as it is: that line was planted by
-us, in the shape Claude Code writes. Seen with 0.1.10.1 (0.1.10.2 changes nothing there) and stand-in sessions with
-planted lines on a stock Ubuntu 24.04 virtual machine: 3 of 5 came back, the two skipped were the two planted this
-way, and nothing was started twice; one ordinary line after the /exit and the read is right. Not seen: a real
-session that ended this way; and whether Claude Code writes the character as it is into the prompt history (one real
-history file was counted, about 26,000 lines: no line held it, as it is or in its backslash form, so no prompt there
-held one). What helps, tried there: ask for the session by name, and the line Tardigrade prints names the step with
-the conversation's id; that step brought the session back:
+**A line that holds the character U+2028** (since 0.1.11, T118): Tardigrade cuts what another program wrote (a
+conversation file, the prompt history, what tmux and the system list) at the line feed alone. Up to 0.1.10.2 it cut
+where Python's `splitlines()` cuts, which is at the line feed and also at U+2028. Claude Code writes that character
+as it is into a conversation file, for instance when a tool's output holds one (counted in two real conversation
+files: 7 of about 61,000 lines, and 51 of 64,757). Why it matters: if a session was ended with /exit and then
+resumed, and every line written after that held such a character when the computer restarted, the revive said "skip
+NAME: its owner ended it with /exit", did not bring that session back, and census listed it as ended by its owner.
+The same for an /exit in the prompt history followed by a prompt that holds the character as it is: that line was
+planted by us, in the shape Claude Code writes. Seen with 0.1.10.1 (0.1.10.2 changed nothing there) and stand-in
+sessions with planted lines on a stock Ubuntu 24.04 virtual machine: 3 of 5 came back, the two skipped were the two
+planted this way, and nothing was started twice. With 0.1.11, in a test with stand-in sessions and lines planted the
+same way: every session came back, each once. Not seen: 0.1.11 on that machine; a real session that ended this way;
+and whether Claude Code writes the character as it is into the prompt history (one real history file was counted,
+about 26,000 lines: no line held it, as it is or in its backslash form, so no prompt there held one). On a version
+before 0.1.11, what helps, tried on that machine: ask for the session by name, and the line Tardigrade prints names
+the step with the conversation's id; that step brought the session back:
 
 ```
 tardigrade revive --only "NAME"
 ```
 
-By the same cut, a tmux session whose name holds U+2028 or NEL (U+0085) is recorded under the part of its name
-before that character and comes back in a tmux session of that shorter name: once, under another name (seen on
-the same machine).
+A line written after an /exit that cannot be read at all (torn in the middle, as a power cut can leave the last line
+of a file) is counted, and Tardigrade does not decide past it: that session is not taken as ended by its owner, it
+comes back, and one line says how many such pieces there were (since 0.1.11; seen in the same test). The prompt
+history is one file for every session; in the one prompt history counted (2026-11-25, on a machine with Claude Code
+2.1.332: 26,674 lines) the session's id was the last key on every line; and the next prompt of any session is
+written right after a torn piece. So there no /exit that stands before such a piece is taken from the history as a
+session's last prompt, whichever session the piece names; an /exit typed after it counts as before, and each
+session's conversation still decides for itself (seen in two more tests, with planted lines; a real prompt history
+torn by a power cut: not seen). The price: a session ended with /exit before such a piece, whose conversation holds
+no /exit, comes back once more. It is narrow: a session that a record had already taken as ended by its owner
+before the piece appeared stays ended (held by one of those tests).
+
+A tmux session whose name holds U+2028 or NEL (U+0085) is recorded under its whole name and comes back in a tmux
+session of that name (since 0.1.11; seen in the same test). Up to 0.1.10.2 it was recorded under the part of its
+name before that character and came back in a tmux session of that shorter name: once, under another name (seen on
+that machine).
+
+A space in the home folder's path (T132, cured in 0.1.10.4): up to 0.1.10.3, in a home folder whose path holds a
+space, the boot service and the timer did not start Tardigrade, while setup said it was set up and the census said
+sessions come back by themselves. If you set 0.1.10.3 or older up in such a home, update and run setup again
+(when: see Install). From 0.1.10.4 on setup writes each path into its service files so that it is held as one
+whole value, refuses before its first write a path no service file can carry, and says "is set up" only after it
+has read the start lines back from the service manager itself.
+
+The census reads the boot service as the service manager holds it. A service file damaged after that (seen once: one
+cut short inside its start line) still reads as yes until the service manager reads its files again, at the latest
+at the next restart; that restart brought nothing back, and the census then said no. Run setup again after anything
+has touched those files. A setup that ends in an error while it writes its copy (seen: a setup stopped by a
+file-size limit) can leave a cut copy that the census still reads as yes, before and after a restart that brings
+nothing back; after any setup that did not end with its set-up line, run setup again. A disk that is full at a
+restart (seen: the disk that holds the state folder, with no block free) lets the boot run end before it brings
+anything back, and the census still reads yes; free space there, then run `tardigrade revive`. All three were seen
+on 2026-11-26 on a stock Linux virtual machine with stand-in sessions.
 
 A # in a name or a folder (T119, cured in 0.1.10.3): tmux reads a # in a session's name, a pane's title and a folder
 as the start of one of its own formats. Up to 0.1.10.2 a session that ran in a tmux session whose name holds a #
@@ -253,18 +341,23 @@ already there (one of Tardigrade's own, left by a run that was cut off, ends by 
 yours and is left alone); tmux made no session (the line carries tmux's own words if it said any; else it says that
 tmux said nothing, gave no answer in 30 seconds, or could not be run); tmux held the made-up name as something else.
 The run asks again at each try, once a minute for 25 minutes (`retry_min`). If it gives up, that is a start that
-failed like any other (T103, T104 above). Seen with stand-in sessions: in this version's six tests on tmux 2.6, 2.7,
-3.0a and 3.4 (the first three on stock virtual machines) and, on every push, on the test image's tmux (package
-3.6a-2ubuntu0.2 when this was written: on the first push of this version's line one of eight runs of the two tests
-that walk every place was red, by the test's own control and after everything it reads of Tardigrade had held; the
-control was changed, and on the next push eight of eight were green), and through a real restart of a stock Ubuntu
-24.04 virtual machine (tmux 3.4) with seven sessions, a # in a tmux name, a folder or their own name: the boot
+failed like any other (T103, T104): the session stays on the list a revive reads, the census shows it with that
+reason, and the next revive asks tmux again.
+To bring such a session back by hand (its lines in the log say NOT STARTED and
+GAVE UP): start it yourself in its folder with Claude Code's own `claude --resume` (its help, at 2.1.331: "Resume a
+conversation by session ID or name, or pick from a list"), in a tmux session whose name has no #: it is on the list
+under that name from the next record on (not walked by us). Seen with stand-in sessions: in this version's six tests
+on tmux 2.6, 2.7, 3.0a and 3.4 (the first three on stock virtual machines) and, on every push, on the test image's
+tmux (package 3.6a-2ubuntu0.2 when this was written: on the first push of this version's line one of eight runs of the
+two tests that walk every place was red, by the test's own control and after everything it reads of Tardigrade had
+held; the control was changed, and on the next push eight of eight were green), and through a real restart of a stock
+Ubuntu 24.04 virtual machine (tmux 3.4) with seven sessions, a # in a tmux name, a folder or their own name: the boot
 service's own run brought back seven of seven as they were, each once and in its own folder, where 0.1.10.2 brought
 back four of seven; and seven of seven again with 0.1.10.2 set up first and this version set up over it while the
 sessions ran. Not seen: a real Claude Code session with such a name; a Mac; a tmux that answers no call at all. The
-way to be rid of all of this, on any version: a tmux session name without a #. Give the tmux session such a name
-while it runs, and from the next record on it comes back under that name (tried once on 0.1.10.2, with tmux 3.4).
-The old name stands after the equals sign, in single quotes:
+way to be rid of all of this, on any version: a tmux session name without a #. Give the tmux session such a name while
+it runs, and from the next record on it comes back under that name (tried once on 0.1.10.2, with tmux 3.4). The old
+name stands after the equals sign, in single quotes:
 
 ```
 tmux rename-session -t '=lane#Work' lane-work
@@ -274,20 +367,26 @@ Typed outside tmux while no window was attached to that tmux server, tmux 2.7 an
 line, with exit code 1, and gave the session the new name all the same; with a window attached there it gave the new
 name and said nothing (each seen once on a stock AlmaLinux 8.10 virtual machine).
 
-Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
-tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
-"no terminal at all" for every session that runs in tmux, `open` says there is nothing to open, and a `record` or a
-`setup` typed there writes every session down on Tardigrade's own tmux socket under a made name, until the record
-timer's next run, about 5 minutes later, puts the true places back. No running session is called down, none is
-touched, and no second copy is started: whether a session runs is read from the process list by its conversation,
-not from tmux. If the computer restarts before the timer has put them back, each conversation still comes back, in a
-tmux session on Tardigrade's own socket, and the census names where. The way round: run it with `LC_ALL` unset. The
-record timer and the boot service are touched only if your account's systemd itself carries `LC_ALL=C`; on a stock
-Ubuntu 24.04 it does not. How it was seen: with 0.1.10.1 and stand-in sessions on a stock Ubuntu 24.04 virtual
-machine (tmux 3.4, Python 3.12.3) and on an Arch Linux machine (tmux 3.8, Python 3.14.8), under `LC_ALL=C`; no
-second copy on one real revive with two running sessions on the virtual machine and on dry runs on both machines;
-the return on Tardigrade's own socket with the tmux server ended and a revive typed by hand, not through a restart;
-not seen on a Mac.
+**Typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`**, Tardigrade reads tmux as it does anywhere else
+(since 0.1.11, T109): every tmux call of its own carries `-u`. The attach line it prints for you carries no `-u`, and
+nothing in your tmux server changes. Why it matters: to a client with no UTF-8 language setting tmux prints "_" for a
+non-ASCII letter and for the tab between two fields, so 0.1.10.1, started from such a shell, could read no
+pane at all: the census said "no terminal at all" for every session, and a `record` or a `setup` typed there wrote
+every session down on Tardigrade's own tmux socket under a made name. If that happened to you: a session that is
+still running takes its true place at the next record (setup takes one at once), and the log says so in one line for
+each; a session that was already down by then keeps the place it was given, so it comes back in a tmux session on
+Tardigrade's own socket under that made name, and the census names where. And if tmux ever answers with a list of
+panes of which not one line can be read, the census says it cannot tell and the record is kept as it was. How it was
+seen: with this version and stand-in sessions on a stock Ubuntu 24.04 virtual machine (tmux 3.4, Python 3.12.3), with
+`LC_ALL=C` on Tardigrade's call: census, `open`, a dry run and a real revive read both sessions in their places, one
+of them in a tmux session named "tést"; a `record` and a `setup` typed that way kept the true places; after a real
+restart the boot service brought both back under their names; two rows that 0.1.10.1 had moved took their true
+places at this version's setup, one log line each; and with the tmux server ended first, the two came back on
+Tardigrade's own socket under their made names, each with its conversation. With `LC_ALL=POSIX` on the call
+instead: setup, census, `open --dry-run`, a revive's dry run and a `record` read both sessions in their places. With
+tmux 3.2a, built on that machine from its release tarball, and `LC_ALL=C`: the same reads, and with that server ended
+a real revive brought both back under their names. Not seen: on a Mac; an older tmux as a distribution packages it; a
+list of panes that cannot be read, from a real tmux (the tests make that answer themselves).
 
 **A session started outside your usual way** (say, from a script that skips your shell's setup, so a login
 wrapper did not run) comes back your usual way, through your shell. If that gives it another login, it is listed as
@@ -350,6 +449,39 @@ replaces it when its turn comes. `census` says that a restore is running, and `r
 to the same tmux session name. A session that ran in a plain terminal window returns in Tardigrade's own tmux
 (socket `tardigrade`) with no window, and `tardigrade open` shows it.
 
+### Your own tmux and shell settings
+
+A session comes back through your own shell start files, on purpose: that is where your `PATH` and your tools come
+from. Your tmux settings stay yours too. Three things follow.
+
+A session Tardigrade brings back has no window attached at first. If your tmux settings end such sessions
+(`destroy-unattached`), Tardigrade asks tmux to keep that one session. Your setting and your own sessions are not
+changed. A session it brought back therefore also stays when you close its window later.
+
+If a start file keeps a session from starting, revive does not count it as brought back. Its line, and the census
+under the session's row, say which case it was and the one next step: the shell ended before it reached the
+session's start (an `exit`, an `exec tmux`); the start files started another program in the pane that has not
+ended, or handed the pane to another shell (an `exec zsh`), or wait for an answer; or the command that starts
+Claude Code ended, with its exit code (127: not found on the `PATH` your start files leave), or has not started
+Claude Code yet. When revive gives up it touches nothing. The session stays on the list revive reads, also after
+the next record, until it runs again or you let it go with `tardigrade record --force` (which moves every session
+that is not running to the down list). The census reads the session's place again each time, so the step under
+its row is the one that is true at that moment.
+
+After the step, `tardigrade revive` starts the session in the same tmux session where that is the one Tardigrade
+made for this session and it holds only a shell or an ended pane. Tardigrade knows that place by a mark it sets
+when it makes the tmux session (a tmux option, `@tardigrade_session`, holding the session's id); the mark stays
+for as long as that tmux session lives (uninstall touches no session, so it does not take the mark off; it says how many tmux sessions carry it). So a session Tardigrade brought back whose Claude Code ended later without
+`/exit` and left its shell (a crash) is started in its place again by the revive that brings it back. A program
+running there is never ended for you, and nothing is started beside a Claude Code that runs there. A tmux session
+of the same name that carries no such mark for this session (yours, one made for another conversation, or one a
+version before 0.1.11 made) is never touched: the session is counted as "not started", never as
+running, and the line prints the whole command that gives that tmux session another name. A run that starts a
+session the last one did not bring back says so first ("trying again NAME: last time ..."); a start that fails
+for good is tried again at every restart and every `tardigrade revive`, for `retry_min` each time.
+
+The settings this is tested with are listed in `tests/lived-in-list.md`; all of it is seen on tmux 3.4 so far.
+
 ## Who has to log in after a restart
 
 Setup tells you this for your machine. It never changes it for you.
@@ -357,10 +489,51 @@ Setup tells you this for your machine. It never changes it for you.
 - **Linux.** With *lingering* on for your user, sessions come back about a minute after boot with nobody logged in.
   With it off, they come back when you log in. To switch it on, a person runs once:
   `sudo loginctl enable-linger $USER`.
+  Lingering off has two limits until 0.1.11. The boot service acts only on a machine up for less than
+  `boot_window_min` (40) minutes, and that is counted from the machine's start, not from your login: after a
+  first login later than that, nothing comes back by itself, and the step is `tardigrade revive`. Until you
+  have run that revive nothing new is recorded; after it the record goes on. And the sessions that came back
+  by themselves end soon after your last login on the machine ends (a closed ssh connection is one), unless
+  something you started in a login is still running; your next login brings nothing back. Run
+  `tardigrade revive` first at that login, before you start another session: once one is running, Tardigrade
+  can take the ended ones as closed by you within a few minutes, and revive then no longer brings them back.
+  After that no command of this version brings them back (read in the code; three were typed, below); the
+  census still lists them under DOWN with their folders. When sessions end this way, the system lists your
+  account's service manager as failed until your next login. With lingering on they stay.
+  What was seen of these limits, on 2026-11-26 on a stock Ubuntu 24.04 virtual machine (systemd 255) with
+  lingering off and stand-in sessions throughout. The first limit, two trials: with nothing changed, a first
+  login 42 minutes after the machine's start brought nothing back (the boot run said the machine had been up
+  too long to be a boot), and the step, typed 12 minutes later, brought both sessions back; with
+  `boot_window_min` set to 2 for the second trial, a first login 152 s after the start brought nothing back
+  either, and there the step brought both back with a third session already running (the record job skips
+  its runs in that state; seen once, steered). So "first, before another session" is the second limit's
+  condition, not the first's. What ended, and when: in an account with nothing else running, the account's
+  service manager and both sessions the boot service had brought back were gone 15 s after the last login
+  ended (16 s in a second start); where a login had left a command running, they ran on for two minutes,
+  until that command ended, and were gone within 15 s after it. How they ended (three accounts, read in the
+  system's journal): what was still running of them when the service manager's stop time ended, 5 s on that
+  machine, was killed, and the system listed the account's service manager as failed until the next login;
+  an account with nothing of Tardigrade's ended clean. What kept them: that command, for as long as it ran;
+  and, in another account, a session started by hand from a login in a tmux server of its own (the service
+  manager stayed, nothing ended; watched for four minutes with no login). The step typed before another
+  session was started: it brought back both sessions the logout had ended, in three accounts. In the third
+  they then stayed over the next logout: watched for three minutes after it, still on the record nearly
+  eight minutes after, with one login of six seconds between; seen once. (Read from that trial's process
+  lines, not a thing the tool promises: the tmux server the typed step starts is a child of that login,
+  and the system kept the login's session while it ran.) The step typed after a record run with one
+  session of the person's own running: it brought nothing
+  back, in two trials; `revive --only` with the name and with the session id brought nothing back either
+  (seen once, one account). Where three sessions, all of the record, had ended at one logout, the step
+  brought all three back after another session had been started and a record run had passed (seen once).
+  Not seen: three or more ended sessions that are half of the record or less; how long sessions brought
+  back by the typed step stay beyond those minutes; a real Claude Code session in any of this.
 - **macOS.** Sessions come back when you are logged in at the Mac's own screen. A login over ssh does not count,
   and neither does another user's login, even if the Mac logs that user in by itself. With FileVault on, a
   restarted Mac waits at its unlock screen and nothing runs until someone types the password there. The census
-  says which of these your Mac is.
+  says which of these your Mac is. The 40 minutes of `boot_window_min` hold on a Mac too, counted from the
+  Mac's start: after a login later than that, the step is `tardigrade revive`. On a Mac the gate's line was
+  seen at a direct run of the boot gate on a Mac up 100 hours (2026-11-26, macOS 27, no restart made); the
+  boot job's own run at a late login was not seen, and the step after it was not typed on a Mac in that state.
 
 ## Safety
 
@@ -373,9 +546,13 @@ Setup tells you this for your machine. It never changes it for you.
   sessions, and the record is kept exactly as it was. Only the tmux servers the record depends on count (each
   recorded session's, tmux's default, `loose_socket`, `tsv_socket`). Census names a record that has not been written
   for an hour, and why. A restore that cannot read the process list for all of `retry_min` starts nothing, and
-  `report` and `on_done` say so. Known edge until 0.1.11 (T54): if the session file Claude Code
-  keeps for one running session (in its `sessions` folder) cannot be read, and that session was not started with
-  `--resume` of a recorded id, the record counts it as ended and the next restart does not bring it back.
+  `report` and `on_done` say so. The same holds for one session: if the session file Claude Code keeps for a
+  running session (in its `sessions` folder) is there and cannot be read, that session's row on the record is kept
+  as it was, marked with the time, and the rest of the record is written; census names the session and why, and a
+  revive does not start a second copy of it. Tardigrade finds the row by the id the session was resumed with, or by
+  the tmux session it runs in. A session outside tmux that was started without `--resume` cannot be matched that
+  way: census then lists the recorded sessions last seen outside tmux under CANNOT TELL, they are not counted as
+  down, and a revive does not start them beside it (`revive --only <its id>` if you know it is down).
   Known edge until 0.1.12 (T56): with Claude Code installed through npm at 2.1.112 or older (`readlink -f $(command
   -v claude)` ends in `cli.js`), a session started by hand cannot be seen as running until it has loaded: Claude Code
   runs under node's name at first, then renames itself and drops its start arguments. A restore can start a second
@@ -421,7 +598,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `stagger_s` | `3` | Seconds between two session starts. |
 | `retry_gap_s` | `60` | Seconds between retry rounds for a start that did not come up. A start that is only a little late is looked at in every pass meanwhile. |
 | `starts_at_once` | `4` | At most this many sessions started and not yet seen up. The wait after each start overlaps with the next starts; the decision to start is still made one session at a time. Lower it on a small machine. |
-| `boot_window_min` | `40` | The boot service acts only on a machine up for less than this. |
+| `boot_window_min` | `40` | The boot service acts only on a machine up for less than this, counted from the machine's start and not from your login (see "Who has to log in after a restart"). |
 | `boot_wait_s` | `45` | Seconds the boot service waits before its run. Run setup again after changing it. |
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
@@ -448,10 +625,26 @@ Check this before the first reboot on a machine. A session started with a login 
 label your start can read, comes back on whatever login the plain `claude` finds, which may be another account.
 If every session on the machine should run on one login, put the wrapper that fetches it into `claude_command`.
 `tardigrade revive --dry-run --all` shows each session's start line, so you can see this before you need it.
-Known edge until 0.1.11 (T57): the record follows the session that runs. If you end a session that is pinned to an
-account and start it again another way (a plain `claude --resume`), its row loses the account and no line says so:
-the next restart starts it as you last did, on the machine's own login. After starting a session again by hand,
-check that its line in `tardigrade revive --dry-run --all` ends in `[account NAME]` if it should.
+
+What the record keeps of a session's login (its account label, a fingerprint of its login token, its Claude Code
+folder) is a fact of the session's start, and no later pass changes or empties it without a line in the log:
+
+- **You end a session and start it again yourself on another login** (a plain `claude --resume` where it was pinned
+  to an account, for example). The record follows what you did: its row takes the new login, the log says what it
+  was and what it is now, census says `Login changed` until the next restart, and a revive starts it your way.
+- **A revive starts a session from its row and it comes up on another login** (the account command gave another
+  token, or none; or its row has a login token and no account label, which a revive cannot give back). The row
+  keeps what it had. Nothing is typed into the session; it is listed under "needs you" and
+  census says `Login differs` for as long as it runs so. Look at the login it shows. If that one is right (a renewed
+  token, say): `tardigrade record --accept <its id>` makes its row follow it. If not, close it and start it your
+  usual way. The next revive starts it from its row again and checks again.
+- **A session's environment could not be read** in some pass: its row keeps its login as recorded, and the log says
+  so once. A new session that has no row yet is not written down until its environment can be read.
+
+Tardigrade tells the first two apart by who started the running session: a session a revive started runs under the
+shell of its own start file; one you started does not. Where that cannot be read, the row keeps what it had and the
+line says that it cannot tell. Not seen by us: a read of a session's environment that failed (looked for on a Mac:
+1,300 reads, none failed).
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -462,6 +655,7 @@ check that its line in `tardigrade revive --dry-run --all` ends in `[account NAM
 | `start_command` | | Your own whole start line, in place of the three above. Placeholders: `{session_id}` `{cwd}` `{name}` `{model}` `{effort}` `{mode}` `{account}` `{tmux_session}` and `{flags}` (the session's exact flags). Each is quoted for the shell. |
 | `env_file` | | A file of `NAME=value` lines (or NUL-separated, as `env -0` writes) added to each revived session's environment. For a desktop's display and session bus, which a boot service does not have. Names that look like a secret's are left out, and so are the variables that belong to the starting shell (its folder, user id, terminal). |
 | `tmux_conf` | | A tmux config file for a tmux server that Tardigrade has to start. |
+| `python` | | The whole path of the python (3.9 or newer) the boot service and the record timer run with. Empty: setup chooses, see "Install". Run setup again after changing it. |
 | `server_command` | | Your own command that starts the tmux server, run once when none is up, for a machine that starts its server a special way. `{socket}` is the socket path. `server_socket` names the one socket it is for. |
 | `carry_env` | `["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]` | Settings variables a session keeps: the value it had is recorded and set again. |
 | `loose_socket` | `"tardigrade"` | The tmux socket name where sessions that were not in tmux come back. |
@@ -471,8 +665,9 @@ check that its line in `tardigrade revive --dry-run --all` ends in `[account NAM
 | `tsv_path` | | Also write the record as a tab-separated table with eight columns at this path, for tools that read one. `tsv_socket` limits it to one tmux socket name. |
 | `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
 | `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. `{herdr_tabs_not_attached}` (and `TARDIGRADE_HERDR_TABS_NOT_ATTACHED`) is how many tabs were left because Herdr was not running. For a machine where someone or something should be told. |
+| `service_python` / `service_script` | | Not for you to set. Setup writes them: the Python and the path of the copy as it wrote them into the service files, kept for its own read back of those files. Uninstall leaves them in the file. |
 
-Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is exactly what will run.
+Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is what will run, with one thing left out: where your `claude_command`, `account_command` or `start_command` holds a word of the form `VAR=value` (before the program, after `env` or `export`, at the start of a quoted command), the line shows `VAR=(set)`, because a printed line lands in whatever reads it. A value written any other way, such as a flag's (`--token VALUE`, `--token=VALUE`), is shown as it is. The value itself is in your config.json and in the session's start file, nowhere else of Tardigrade's; `revive --dry-run --start-file` prints the start file whole, values included, and says so.
 
 ## Tested
 
@@ -530,7 +725,9 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 139 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 247 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+  on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
+  names.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 

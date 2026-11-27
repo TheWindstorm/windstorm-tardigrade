@@ -1,0 +1,155 @@
+# The service manager's own answers about this version's start lines, as recorded; read by the suite's
+# G5.31 tests. Each written, loadunit and held line is the recording's own line behind its key and unit name.
+# where: a stock virtual machine, Ubuntu 24.04.5 LTS, systemd 255 (255.4-1ubuntu8.17), Python 3.12.3
+# when: 2026-11-25
+# how: setup run by the tool itself in each account's own home (seven accounts, one home each); asked before the services' first start
+# A flaw of the recorder's probe, not a finding: some of the recordings these lines were cut from also say, for an
+# account, that its bus socket was missing. The probe looked into another account's runtime folder without the
+# right to; every answer below was given over that bus.
+
+case tgplain
+python /usr/bin/python3
+home /home/tgplain
+written windstorm-tardigrade-record.service ExecStart="/usr/bin/python3" -I "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" record
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+written windstorm-tardigrade-revive.service ExecStart="/usr/bin/python3" -I "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" revive --boot
+loadunit windstorm-tardigrade-revive.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drevive_2eservice"
+held windstorm-tardigrade-revive.service a(sasbttttuii) 1 "/usr/bin/python3" 5 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "revive" "--boot" false 0 0 0 0 0 0 0
+
+case tgspace
+python /usr/bin/python3
+home /home/tg space
+written windstorm-tardigrade-record.service ExecStart="/usr/bin/python3" -I "/home/tg space/.local/share/windstorm-tardigrade/tardigrade.py" record
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tg space/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+written windstorm-tardigrade-revive.service ExecStart="/usr/bin/python3" -I "/home/tg space/.local/share/windstorm-tardigrade/tardigrade.py" revive --boot
+loadunit windstorm-tardigrade-revive.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drevive_2eservice"
+held windstorm-tardigrade-revive.service a(sasbttttuii) 1 "/usr/bin/python3" 5 "/usr/bin/python3" "-I" "/home/tg space/.local/share/windstorm-tardigrade/tardigrade.py" "revive" "--boot" false 0 0 0 0 0 0 0
+
+case tgpct
+python /usr/bin/python3
+home /home/tg%pct
+written windstorm-tardigrade-record.service ExecStart="/usr/bin/python3" -I "/home/tg%%pct/.local/share/windstorm-tardigrade/tardigrade.py" record
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tg%pct/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+written windstorm-tardigrade-revive.service ExecStart="/usr/bin/python3" -I "/home/tg%%pct/.local/share/windstorm-tardigrade/tardigrade.py" revive --boot
+loadunit windstorm-tardigrade-revive.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drevive_2eservice"
+held windstorm-tardigrade-revive.service a(sasbttttuii) 1 "/usr/bin/python3" 5 "/usr/bin/python3" "-I" "/home/tg%pct/.local/share/windstorm-tardigrade/tardigrade.py" "revive" "--boot" false 0 0 0 0 0 0 0
+
+case tgdol
+python /usr/bin/python3
+home /home/tg$dol
+written windstorm-tardigrade-record.service ExecStart="/usr/bin/python3" -I "/home/tg$$dol/.local/share/windstorm-tardigrade/tardigrade.py" record
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tg$$dol/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+written windstorm-tardigrade-revive.service ExecStart="/usr/bin/python3" -I "/home/tg$$dol/.local/share/windstorm-tardigrade/tardigrade.py" revive --boot
+loadunit windstorm-tardigrade-revive.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drevive_2eservice"
+held windstorm-tardigrade-revive.service a(sasbttttuii) 1 "/usr/bin/python3" 5 "/usr/bin/python3" "-I" "/home/tg$$dol/.local/share/windstorm-tardigrade/tardigrade.py" "revive" "--boot" false 0 0 0 0 0 0 0
+
+case tgquo
+python /usr/bin/python3
+home /home/tg"quo
+written windstorm-tardigrade-record.service ExecStart="/usr/bin/python3" -I "/home/tg\"quo/.local/share/windstorm-tardigrade/tardigrade.py" record
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tg\"quo/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+written windstorm-tardigrade-revive.service ExecStart="/usr/bin/python3" -I "/home/tg\"quo/.local/share/windstorm-tardigrade/tardigrade.py" revive --boot
+loadunit windstorm-tardigrade-revive.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drevive_2eservice"
+held windstorm-tardigrade-revive.service a(sasbttttuii) 1 "/usr/bin/python3" 5 "/usr/bin/python3" "-I" "/home/tg\"quo/.local/share/windstorm-tardigrade/tardigrade.py" "revive" "--boot" false 0 0 0 0 0 0 0
+
+case tgbsl
+python /usr/bin/python3
+home /home/tg\bsl
+written windstorm-tardigrade-record.service ExecStart="/usr/bin/python3" -I "/home/tg\\bsl/.local/share/windstorm-tardigrade/tardigrade.py" record
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tg\\bsl/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+written windstorm-tardigrade-revive.service ExecStart="/usr/bin/python3" -I "/home/tg\\bsl/.local/share/windstorm-tardigrade/tardigrade.py" revive --boot
+loadunit windstorm-tardigrade-revive.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drevive_2eservice"
+held windstorm-tardigrade-revive.service a(sasbttttuii) 1 "/usr/bin/python3" 5 "/usr/bin/python3" "-I" "/home/tg\\bsl/.local/share/windstorm-tardigrade/tardigrade.py" "revive" "--boot" false 0 0 0 0 0 0 0
+
+# The case below (a Python whose path holds a space and a percent sign) was recorded later the same day, on the
+# same system: unit lines placed by hand, composed by the tool on another machine; asked before the first start;
+# then the record unit was started once against a stand-in script that kept the words it was started with.
+case tgpy
+python /var/tmp/py s%p/python3
+home /home/tgpy
+written windstorm-tardigrade-record.service ExecStart="/var/tmp/py s%%p/python3" -I "/home/tgpy/.local/share/windstorm-tardigrade/tardigrade.py" record
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/var/tmp/py s%p/python3" 4 "/var/tmp/py s%p/python3" "-I" "/home/tgpy/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+started windstorm-tardigrade-record.service {"program": "/var/tmp/py s%p/python3", "argv": ["/home/tgpy/.local/share/windstorm-tardigrade/tardigrade.py", "record"], "this file": "/home/tgpy/.local/share/windstorm-tardigrade/tardigrade.py"}
+written windstorm-tardigrade-revive.service ExecStart="/var/tmp/py s%%p/python3" -I "/home/tgpy/.local/share/windstorm-tardigrade/tardigrade.py" revive --boot
+loadunit windstorm-tardigrade-revive.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drevive_2eservice"
+held windstorm-tardigrade-revive.service a(sasbttttuii) 1 "/var/tmp/py s%p/python3" 5 "/var/tmp/py s%p/python3" "-I" "/home/tgpy/.local/share/windstorm-tardigrade/tardigrade.py" "revive" "--boot" false 0 0 0 0 0 0 0
+
+# The same unit with drop-in files of the recorder's own on it, one more in each state (every value in them made
+# up), recorded 2026-11-25 on the same system: mine.conf sets three Environment entries on two lines; own-start.conf
+# adds a start line; over.conf clears the start lines and sets one. In state 0 and state 4 there is no drop-in.
+
+state state-0-no-drop-in
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 0
+dropins windstorm-tardigrade-record.service as 0
+
+state state-1-own-entries
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 3 "TG_MADE_UP=made-up-value" "TG_TWO=a b" "TG_THREE=c"
+dropins windstorm-tardigrade-record.service as 1 "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/mine.conf"
+
+state state-2-a-start-line-beside
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 2 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0 "/bin/true" 2 "/bin/true" "made-up" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 3 "TG_MADE_UP=made-up-value" "TG_TWO=a b" "TG_THREE=c"
+dropins windstorm-tardigrade-record.service as 2 "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/mine.conf" "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/own-start.conf"
+
+state state-3-a-start-line-over
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 2 "/bin/true" 2 "/bin/true" "over" false 0 0 0 0 0 0 0 "/bin/true" 2 "/bin/true" "made-up" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 3 "TG_MADE_UP=made-up-value" "TG_TWO=a b" "TG_THREE=c"
+dropins windstorm-tardigrade-record.service as 3 "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/mine.conf" "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/over.conf" "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/own-start.conf"
+
+state state-4-as-before
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 0
+dropins windstorm-tardigrade-record.service as 0
+
+# The same unit with ONE VARIABLE SET MORE THAN ONCE in drop-in files of the recorder's own (every value made up),
+# recorded 2026-11-25 on the same system. State 6: twice.conf sets TG_SAME on two lines (first, then second).
+# State 7: twice-more.conf, read before it, sets TG_SAME twice on one line (third, then fourth). State 10:
+# one-line.conf, the only drop-in, sets TG_SAME twice on one line (third, then fourth).
+
+state state-6-one-variable-on-two-lines
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 1 "TG_SAME=second"
+dropins windstorm-tardigrade-record.service as 1 "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/twice.conf"
+
+state state-7-the-same-variable-in-a-second-file
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 1 "TG_SAME=second"
+dropins windstorm-tardigrade-record.service as 2 "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/twice-more.conf" "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/twice.conf"
+
+state state-10-one-variable-twice-on-one-line
+python /usr/bin/python3
+home /home/tgplain
+loadunit windstorm-tardigrade-record.service o "/org/freedesktop/systemd1/unit/windstorm_2dtardigrade_2drecord_2eservice"
+held windstorm-tardigrade-record.service a(sasbttttuii) 1 "/usr/bin/python3" 4 "/usr/bin/python3" "-I" "/home/tgplain/.local/share/windstorm-tardigrade/tardigrade.py" "record" false 0 0 0 0 0 0 0
+environment windstorm-tardigrade-record.service as 1 "TG_SAME=fourth"
+dropins windstorm-tardigrade-record.service as 1 "/home/tgplain/.config/systemd/user/windstorm-tardigrade-record.service.d/one-line.conf"

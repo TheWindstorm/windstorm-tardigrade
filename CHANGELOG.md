@@ -1,5 +1,118 @@
 # Changelog
 
+## 0.1.10.4 (2026-11-30)
+
+- **After a boot run that came too late, your own revive lets the record go on (T138).** Where the boot service
+  ran on a machine that had been up for longer than `boot_window_min` (40 minutes), it did nothing, and from then
+  on the record job was skipped for the rest of that start, also after a revive by hand: a session started in
+  that time was not recorded, while the census said "the next record takes it". Seen on 2026-11-26 on a stock
+  Ubuntu 24.04 virtual machine (systemd 255) with this version's work before the change: 5 record runs skipped in
+  24 minutes, 2 of them after a revive by hand. Now a revive by hand that is no dry run, has no `--only` and
+  reaches its report outside that window counts as this boot's revive, and the next record writes. It does not
+  count inside the window, where the boot run is still to come, and never over a record file that is not whole:
+  then the run says in one line that it is not counted as this boot's revive, the record job stays skipped and
+  that file is left as it is. While the record waits, the census says that it waits, and the step,
+  `tardigrade revive`: of a session that is not on the record, and over sessions started new under a new id.
+- **Two limits of lingering off, said where setup and the README say who has to log in.** Until 0.1.11 the boot
+  window is counted from the machine's start and not from your login: after a first login later than 40 minutes,
+  nothing comes back by itself, and the step is `tardigrade revive`. On a Mac the gate's line was seen at a
+  direct run of the boot gate on a Mac up 100 hours (2026-11-26, macOS 27, no restart made); the boot job's own
+  run at a late login was not seen, and the step after it was not typed on a Mac in that state. And with
+  lingering off the sessions that came back by themselves end soon after your last login on the machine ends,
+  unless something you started in a login is still running, and the next login brings nothing back. The step
+  is `tardigrade revive`, first at that login, before you start another session: once one is running,
+  Tardigrade can take the ended ones as closed by you within a few minutes, and revive then no longer brings
+  them back. After that no command of this version brings them back (read in the code; `revive` and
+  `revive --only` with the name and with the session id were typed, and none did); the census still lists
+  them under DOWN with their folders. When sessions end this way, the system lists your account's service
+  manager as failed until your next login. Lingering on keeps the sessions. Seen on 2026-11-26 on that
+  virtual machine, lingering off, stand-in sessions throughout: with nothing else of the account running,
+  the sessions were gone 15 s after the last login ended, and what was still running of them at the end of
+  the service manager's stop time was killed; a command a login had left running kept them until it ended,
+  and a session started by hand in a tmux server of its own kept them too; the step typed before another
+  session was started brought back what the logout had ended (three accounts), and in one of them they then
+  stayed over the next logout (watched for three minutes, seen once); typed after a record run with one
+  session of the person's own running, it brought nothing back (two trials); where three sessions, all of
+  the record, had ended at one logout, it brought all three back even then (seen once). Not seen: three or
+  more ended sessions that are half of the record or less; how long sessions brought back by the typed step
+  stay; a real Claude Code session in any of this.
+- **When to run setup again after an update, said in the README and in the skill.** While your sessions are
+  running, or after `tardigrade revive`; never between a restart and their return. Until 0.1.11, setup typed
+  in that gap with one session of yours already running lets the others go, and neither the boot run nor
+  revive brings them back: seen once on 2026-11-26 on that virtual machine, lingering off, stand-in sessions.
+  Not seen: setup typed there with no session running.
+- **Type each option exactly as the skill's table shows it (T156, #166).** This version passes over a word
+  after the command that it does not read, and runs the command without it. So a mistyped `--dry-run` with
+  `revive` starts the sessions for real (with `record`, `open`, `setup` and `uninstall` the same is read in the
+  code), `trust on --dry-run` switches trust answering on (`trust` has no dry run), and `revive --only` with no
+  name after it, or `revive --only=NAME`, starts every session that is down, not one. Seen on 2026-11-26 with
+  stand-in sessions, not on a machine. Row T156 is due in 0.1.11: there the command names the word, does nothing
+  and ends with exit 2.
+- **A home folder whose path holds a space, and every other path a service file reads in its own way (T132).** Up
+  to 0.1.10.3 setup wrote two paths into its two service files as they stood: the Python that ran setup, and its
+  installed copy, which lies under the home folder. A service file reads some characters in its own way, so a path
+  that holds one of them was not read as one whole value. In a home folder whose path holds a space, the boot
+  service and the timer did not start Tardigrade, while setup said it was set up and the census said sessions come
+  back by themselves. Seen with 0.1.10.3 on a stock Ubuntu 24.04 virtual machine (systemd 255). Now setup writes
+  each of the two paths so that the service manager holds it as one whole value. The same start lines, placed by
+  hand in unit files on stock virtual machines with systemd 237, 239, 245 and 249 (Ubuntu 18.04, AlmaLinux 8.10,
+  Ubuntu 20.04 and 22.04), were held by each manager as on 255, and the record service started there with each
+  path whole; setup itself was not run on those four.
+- **A path the service file cannot carry is refused before the first write.** On Linux that is a Python whose
+  path holds a double quote, an apostrophe, a backslash or a dollar sign: the service manager's start line has no
+  way to hold one of these in a program's own path. On Linux and on a Mac it is a Python or a home folder whose
+  path holds a control character (a line break or the like). Setup says so in one line that names what it found,
+  gives the command that runs it with another Python, and installs nothing: no file is written. Where the path
+  holds a backtick, a dollar sign before a parenthesis, or a character a line breaks on or a terminal acts on, the
+  line shows the path changed (a question mark for each) and says so. The tool's older lines that show a path
+  show it as it stands (T135, due 0.1.11).
+- **Setup and the census read back what the service manager holds.** "Enabled" and "active" say that a service is
+  there, not what it would start. From this version on, "is set up" and "Comes back after a reboot: yes" are said
+  only after the service manager's own list of each service's start line has been asked (over its bus, with
+  `busctl`) and is, word for word, what setup wrote. What setup wrote is its own record in the settings
+  (`service_python`, `service_script`), never what the terminal that asks happens to have as its home or its Python.
+  If the manager holds something else: "NOT set up" (exit 1), and the census says NO. Where the reload that setup
+  asks of the manager after writing the files did not answer 0, setup says that too, and the step is to run setup
+  again. If the list cannot be asked (no `busctl`, or no answer in 10 seconds): "could not read" (setup: exit 3),
+  with one step by which you see it yourself. A setup made by an older version kept no record: after the update the
+  census says "could not be read" and that the step is to run setup again, except where the older service file's
+  line holds only plain words, which every reader takes alike.
+  The census reads the boot service as the service manager holds it. A service file damaged after that (seen once:
+  one cut short inside its start line) still reads as yes until the service manager reads its files again, at the
+  latest at the next restart; that restart brought nothing back, and the census then said no. Run setup again after
+  anything has touched those files. A setup that ends in an error while it writes its copy (seen: a setup stopped by
+  a file-size limit) can leave a cut copy that the census still reads as yes, before and after a restart that brings
+  nothing back; after any setup that did not end with its set-up line, run setup again. A disk that is full at a
+  restart (seen: the disk that holds the state folder, with no block free) lets the boot run end before it brings
+  anything back, and the census still reads yes; free space there, then run `tardigrade revive`. All three were seen
+  on 2026-11-26 on a stock Linux virtual machine with stand-in sessions.
+- **What is yours on a service is named as yours, and left as it is.** A drop-in file of your own on one of the two
+  services is never changed, and never a fault. Environment entries of your own are named by the variable's name
+  only, never a value (a value may be a password). A start line of your own beside the one setup wrote is counted,
+  never shown, and Tardigrade stays set up as long as the manager's list holds setup's own line once, as written
+  and first. If a drop-in of your own changes that (setup's line gone, changed, held twice or not first), setup says
+  "NOT set up" and that the file is yours; it does not send you to uninstall. It says what to do (change or remove
+  a drop-in that is not meant, then run setup again), and gives the service manager's own listing of that service
+  and its drop-in files (`systemctl --user cat` and the service's name) as the last thing on a line of its own;
+  the census does the same. The census says NO only where it read that setup's line is not held, or held changed.
+  That NO is more than it read: the list differs, and what the held line starts was not read. It errs to the
+  safe side (T136, due 0.1.11).
+  Where the line is held as written, only not once and first, it says "not known", neither yes nor no, and names
+  the place or the count: Tardigrade read the manager's list, not what the service then does. Recorded on stock
+  virtual machines with systemd 237, 239, 245, 249 and 255, with drop-in files of made-up values: each manager's
+  answers had the same form.
+- **On a Mac** the two launchd files hold each argument as a string of its own, and no path stands in a line a shell
+  reads. Where launchd answers and this version does not find a job's arguments in its answer, setup and the census
+  say so, and the step is to tell the maintainer that line and the macOS version, not to log in at the Mac's screen.
+- The line that says how to switch lingering on gives the account's name as one shell word, and takes it from the
+  account itself, not from the terminal's variables.
+- Where systemctl gives no answer, the step "log out and in" stood beside the words "this login has no systemd user
+  manager to ask". On a virtual machine one was running and the shell could not reach it, so the words now say
+  that: "this shell cannot reach the systemd user manager" (T133). The step itself has not been walked (T134,
+  due 0.1.11).
+- The README's count of tests was behind in 0.1.10, 0.1.10.1 and 0.1.10.2 (119 written; 130, 132 and 133 ran), and
+  on this version's branch until this change (139 written). It is the number of tests again, and a test holds it.
+
 ## 0.1.10.3 (2026-11-27)
 
 - **A # in a name or a folder no longer changes what comes back.** tmux reads a # in a session's name, a pane's
