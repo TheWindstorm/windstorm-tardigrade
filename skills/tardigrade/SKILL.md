@@ -113,8 +113,9 @@ command for a boot service listed as failed is `systemctl --user reset-failed wi
 ## What it never does
 
 - It never starts a second copy of a running session.
-- It never ends a session and never answers a dialog, except the trust question after the person has said
-  `trust on`.
+- It never ends a session of the person's and never answers a dialog, except the trust question after the person
+  has said `trust on`. (The only tmux sessions it ends are ones it made itself in the same run: a waiting screen,
+  and the one that asks tmux how it takes a # in a name.)
 - It types nothing into a session except its own wake-up message, into a session it started, once that session
   is idle.
 - It never records a token or a key it finds in a session's environment: for a login token it keeps the variable's name and an 8-digit one-way fingerprint. What the person writes into `claude_command`, `account_command` or `start_command` themselves is copied as written into each session's start file (in Tardigrade's state folder, readable by them only); a key written there is in those files until the first revive after the session has left the record, and uninstall keeps that folder.

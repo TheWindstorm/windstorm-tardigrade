@@ -11,7 +11,7 @@ It also answers a question that gets harder the more sessions you run: *what is 
 window and the session inside it can keep going for weeks. `census` lists every session, and marks the ones that run
 with no window open.
 
-> **Status: 0.1.10.2, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
+> **Status: 0.1.10.3, a pilot.** On 0.1.7 it went through ten real reboots on two machines (a Linux laptop and a Mac),
 > two of them with no clean shutdown, and then a real reboot of a machine with 98 sessions. The first reboots on
 > that version found faults, which is what they were for; after the fixes every session came back every time, all
 > 98 included. That last reboot also showed what was wrong: it took 25 minutes and told nobody what it was doing.
@@ -36,7 +36,7 @@ changed, as it has in 0.1.9), then set up again: setup is what refreshes the cop
 Without the plugin system, it is one file:
 
 ```bash
-git clone --depth 1 --branch v0.1.10.2 https://github.com/TheWindstorm/windstorm-tardigrade
+git clone --depth 1 --branch v0.1.10.3 https://github.com/TheWindstorm/windstorm-tardigrade
 python3 -I windstorm-tardigrade/scripts/tardigrade.py setup
 ```
 
@@ -173,10 +173,12 @@ off the list that `revive` reads: the census shows it under DOWN as "ended (its 
 `tardigrade revive` no longer starts it, and `revive --only <its name>` answers that no session on the record has
 that name. To bring it back today: cure what stopped its start, then start it yourself in its folder with Claude
 Code's own `claude --resume` (its help, at 2.1.331: "Resume a conversation by session ID or name, or pick from a
-list"). Once it runs, the next record puts it back on the list. What was seen, on a stock machine with 0.1.10.1 and
-a stand-in for Claude Code: the fault as written here, and that a session started by hand with
-`claude --resume <its id>` is on the list again at the next record. Resuming by name or from the list was not
-walked by us.
+list"). Once it runs, the next record puts it back on the list. A session that was not started for a # in the name
+of its tmux session (T119 below; its lines in the log say NOT STARTED and GAVE UP) is brought back the same way, in
+a tmux session whose name has no #: it is on the list under that name from the next record on (not walked by us).
+What was seen, on a stock machine with 0.1.10.1 and a stand-in for Claude Code: the fault as written here, and that
+a session started by hand with `claude --resume <its id>` is on the list again at the next record. Resuming by name
+or from the list was not walked by us.
 
 Known edge until 0.1.11 (T114): a session whose recorded name holds half of an emoji (a lone surrogate, which a
 title cut in the middle of an emoji would leave) still ends a revive in an error, and no session comes back. Seen
@@ -233,24 +235,44 @@ By the same cut, a tmux session whose name holds U+2028 or NEL (U+0085) is recor
 before that character and comes back in a tmux session of that shorter name: once, under another name (seen on
 the same machine).
 
-Known edge until 0.1.10.3 (T119): tmux reads a # in a session name, a pane title or a folder name as the start of
-one of its own formats, and Tardigrade gives a waiting screen its title from the session's own name (read in its
-code; the title's reading seen with plain tmux 3.4, not with the tool). A session that runs in a tmux session whose
-name holds a # followed by certain letters, or two # in a row, is not brought back after a restart: the revive
-tries, says it gave up and leaves a tmux session under the changed name (laneork for lane#Work), and the other
-sessions come back. Seen with 0.1.10.2 and tmux 3.4 in a test with stand-in sessions (earlier versions hand the name
-to tmux the same way: read in the code of every version, not tried): three such sessions of ten were not brought
-back; one in a tmux session named bug#7 came back, and so did sessions in folders named C#Sharp and issue#12, each
-in its own folder. Not seen: a real restart; the tool on another version of tmux. What helps, tried once there: give
-that tmux session a name without # while it runs, and from the next record on it comes back. The old name stands
-after the equals sign, in single quotes:
+A # in a name or a folder (T119, cured in 0.1.10.3): tmux reads a # in a session's name, a pane's title and a folder
+as the start of one of its own formats. Up to 0.1.10.2 a session that ran in a tmux session whose name holds a #
+followed by certain letters, or two # in a row, was not brought back after a restart: the revive gave up and left a
+tmux session under a changed name (laneork for lane#Work), and the other sessions came back. From 0.1.10.3 on
+Tardigrade hands tmux each of these so that tmux holds it letter for letter, and such a session comes back as
+itself: under its own tmux name, in its folder, with its own name in the waiting screen's title. How tmux takes a #
+in a name differs between its versions (2.6 leaves it as it stands, 2.7 and later read it), so Tardigrade asks the
+tmux it finds: once in a run, and only when a name or a title with a # is to be handed over, it makes one tmux
+session of its own, which tmux shows as tardigrade-asks-# or tardigrade-asks-## and which holds a sleep, reads back
+what tmux holds, and ends it. When that was the only session on that tmux server, tmux ends the server too, and a
+start that reaches it just then fails (seen with tmux 3.4 alone, in 2 of 300 tries in one trial and in 1 of 300 in
+another): Tardigrade waits until that server is gone, 3 seconds at most, before it starts anything. If tmux cannot
+be asked, a session whose tmux name holds a # is not started under a guessed name: its line in the log says NOT
+STARTED and why, and the other sessions come back. The causes it can name: a tmux session of that made-up name is
+already there (one of Tardigrade's own, left by a run that was cut off, ends by itself within a minute; any other is
+yours and is left alone); tmux made no session (the line carries tmux's own words if it said any; else it says that
+tmux said nothing, gave no answer in 30 seconds, or could not be run); tmux held the made-up name as something else.
+The run asks again at each try, once a minute for 25 minutes (`retry_min`). If it gives up, that is a start that
+failed like any other (T103, T104 above). Seen with stand-in sessions: in this version's six tests on tmux 2.6, 2.7,
+3.0a and 3.4 (the first three on stock virtual machines) and, on every push, on the test image's tmux (package
+3.6a-2ubuntu0.2 when this was written: on the first push of this version's line one of eight runs of the two tests
+that walk every place was red, by the test's own control and after everything it reads of Tardigrade had held; the
+control was changed, and on the next push eight of eight were green), and through a real restart of a stock Ubuntu
+24.04 virtual machine (tmux 3.4) with seven sessions, a # in a tmux name, a folder or their own name: the boot
+service's own run brought back seven of seven as they were, each once and in its own folder, where 0.1.10.2 brought
+back four of seven; and seven of seven again with 0.1.10.2 set up first and this version set up over it while the
+sessions ran. Not seen: a real Claude Code session with such a name; a Mac; a tmux that answers no call at all. The
+way to be rid of all of this, on any version: a tmux session name without a #. Give the tmux session such a name
+while it runs, and from the next record on it comes back under that name (tried once on 0.1.10.2, with tmux 3.4).
+The old name stands after the equals sign, in single quotes:
 
 ```
 tmux rename-session -t '=lane#Work' lane-work
 ```
 
-Until 0.1.10.3, keep # out of the names of sessions, of tmux sessions and of folders that Claude Code sessions run
-in.
+Typed outside tmux while no window was attached to that tmux server, tmux 2.7 answered "no current client" to this
+line, with exit code 1, and gave the session the new name all the same; with a window attached there it gave the new
+name and said nothing (each seen once on a stock AlmaLinux 8.10 virtual machine).
 
 Known edge until 0.1.11 (T109): typed in a shell that carries `LC_ALL=C` or `LC_ALL=POSIX`, Tardigrade cannot read
 tmux's list of panes, because to such a client tmux prints "_" for the tab between two fields. There the census says
@@ -363,8 +385,9 @@ Setup tells you this for your machine. It never changes it for you.
   back that way, with nobody watching, and the opening message gives it one turn. You chose that mode when you
   started it; Tardigrade does not widen it. If you do not want sessions to act by themselves after a restart, use
   `"wake": "idle"`.
-- It never ends a session and never answers a dialog for you. If a revived session stops at a question, it waits
-  there for you. The one exception is yours to switch on: `trust on` (above). It is two keys, sent only when the
+- It never ends a session of yours and never answers a dialog for you. The only tmux sessions it ends are ones it
+  made itself in the same run: a waiting screen, and the one it makes to ask tmux one thing (T119 above). If a
+  revived session stops at a question, it waits there for you. The one exception is yours to switch on: `trust on` (above). It is two keys, sent only when the
   screen shows the cursor on "Yes, I trust".
 - It types one thing of its own, the wake-up message, and only into a session it started itself that is loaded,
   idle and shows no question. `"wake": "idle"` switches that off.
@@ -507,7 +530,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 119 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
+- 139 tests on Linux with stand-ins for `claude` and `herdr`, run on every push with Python 3.10 and 3.13.
 
 Proven on earlier versions only (0.1.1 to 0.1.6): opening windows for hidden sessions on a Linux desktop.
 
