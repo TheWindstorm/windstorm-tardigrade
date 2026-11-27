@@ -110,6 +110,8 @@
   manager to ask". On a virtual machine one was running and the shell could not reach it, so the words now say
   that: "this shell cannot reach the systemd user manager" (T133). The step itself has not been walked (T134,
   due 0.1.11).
+- The README's count of tests was behind in 0.1.10, 0.1.10.1 and 0.1.10.2 (119 written; 130, 132 and 133 ran), and
+  on this version's branch until this change (139 written). It is the number of tests again, and a test holds it.
 
 ## 0.1.10.3 (2026-11-27)
 

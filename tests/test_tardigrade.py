@@ -5548,6 +5548,13 @@ class Strand(unittest.TestCase):
         for i, tag in enumerate(clone_tags(fread(os.path.join(ROOT, "README.md"))), 1):
             said[f"README.md clone line {i}"] = tag[1:] if tag.startswith("v") else tag
         self.assertEqual({k: x for k, x in said.items() if x != v}, {}, f"the script says {v}")
+        # the README's count of tests: it said 119 while 130, 132 and 133 ran (0.1.10 to 0.1.10.2), and 139 on this
+        # branch while this file held 156. What is counted here is DEFINITIONS: a name defined twice in one class
+        # is one test to the runner and two here, and the gate (G7.3) fails on that only for a test the plan or a
+        # row names
+        m = re.search(r"^- (\d+) tests on Linux", fread(os.path.join(ROOT, "README.md")), re.M)
+        self.assertEqual(int(m.group(1)) if m else None, len(re.findall(r"^    def test_", fread(__file__), re.M)),
+                         "the README's count of tests is the number of test definitions in this file")
         # the clone line check itself: a bare clone, a branch and an older tag are each caught
         self.assertEqual(clone_tags("git clone https://example/x\n  git clone --branch main https://example/x\n"
                                     "git clone --depth 1 --branch v0.1.8 https://example/x\n"),
