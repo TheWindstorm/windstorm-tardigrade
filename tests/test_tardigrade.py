@@ -217,7 +217,7 @@ def _signal_hook(event, args):
         return
     test = WATCH["test"] or GUARD["test"] or "no test"
     why = ("a whole process group" if event == "os.killpg" or pid <= 1 else
-           f"{cmdline_of(pid)!r}: not shown to be the test's own")
+           f"{cmdline_of(pid)[:200]!r}: not shown to be the test's own")
     NOT_SHOWN.append((test, pid, why))
     raise GuardRefused(f"signal: {test} asked to signal pid {pid} ({why}); not sent")
 
@@ -228,7 +228,7 @@ sys.addaudithook(_signal_hook)
 def cmdline_of(pid):
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
-            return f.read().replace(b"\0", b" ").decode(errors="replace").strip()[:200]
+            return f.read().replace(b"\0", b" ").decode(errors="replace").strip()
     except OSError:
         return "(gone while being read)"
 
@@ -679,7 +679,7 @@ class Base(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
         if left:        # the bound was reached: the test fails and names what stayed; nothing wider than exact pids
             raise AssertionError("the cleanup's bound was reached and these processes of the test are still there:\n"
-                                 + "\n".join(f"pid {p}: {cmdline_of(p)}" for p in left))
+                                 + "\n".join(f"pid {p}: {cmdline_of(p)[:200]}" for p in left))
 
     cleanup_bound = 10.0
 
