@@ -33,7 +33,8 @@ Then start Claude Code and say: **set up tardigrade**.
 
 Installed as a plugin before? Run `claude plugin marketplace update windstorm-tardigrade`, then `claude plugin update
 windstorm-tardigrade@windstorm-tardigrade` (seen to bring the new script once the plugin's version label had
-changed, as it has in 0.1.9), then set up again: setup is what refreshes the copy the boot service and the timer run.
+changed, as it has in 0.1.9), then set up again while your sessions are running (never between a restart and
+their return, see below): setup is what refreshes the copy the boot service and the timer run.
 
 Without the plugin system, it is one file:
 
@@ -48,7 +49,11 @@ Some versions of git print `warning: refs/tags/<the tag> ... is not a commit!` f
 Setup copies that one file to `~/.local/share/windstorm-tardigrade/`, installs a boot service and a 5-minute timer for
 your user (systemd on Linux, launchd on macOS), and writes down the sessions that are running now. It needs no
 administrator rights and it tells you who has to log in after a restart (see below). Setup is what refreshes that
-copy: run it again after you update the plugin. Setup leaves no group or other write permission on anything it makes,
+copy: run it again after you update the plugin, while your sessions are running or after `tardigrade revive`,
+never between a restart and their return. Until 0.1.11, setup typed in that gap with one session of yours
+already running lets the others go, and neither the boot run nor revive brings them back (seen once, 2026-11-26,
+on a stock Ubuntu 24.04 virtual machine with lingering off and stand-in sessions; not seen: setup typed there
+with no session running). Setup leaves no group or other write permission on anything it makes,
 whatever umask it was started with (it reads and sets the mode bits; it does not read access lists). If you ran setup
 with a wide-open umask (umask 000, as some job runners start every job), run setup again with 0.1.10 or later: it
 closes its own copy, units and install folder, and it names each folder above them, or above its settings and state
@@ -162,6 +167,10 @@ working with Claude Code 2.1.330; that is what was seen, not a lowest version.
 In Claude Code you can say these in plain words. In a terminal, each is
 `python3 -I ~/.local/share/windstorm-tardigrade/tardigrade.py <command>`.
 
+Type each option exactly as it stands here: until 0.1.11 the tool passes over a word it does not read and runs
+the command without it, so a mistyped `--dry-run` acts for real, `trust on --dry-run` switches it on (trust has
+no dry run), and `revive --only` wants the name as its next word.
+
 ### The census
 
 An example, with made-up names:
@@ -190,7 +199,9 @@ usually one you forgot.
 
 A session that is running but will not come back after a reboot is listed under RUNNING, BUT WILL NOT COME BACK,
 with the reason: it was started after the last record (the next record takes it), a setting leaves it out, or it is
-some program's own session.
+some program's own session. Where the record is waiting for this boot's revive (the boot service came too late
+to act, see "Who has to log in after a restart"), the next record takes nothing: the census says that the record
+waits, and the step, `tardigrade revive`.
 
 ## What comes back, and what does not
 
@@ -297,10 +308,20 @@ that machine).
 
 A space in the home folder's path (T132, cured in 0.1.10.4): up to 0.1.10.3, in a home folder whose path holds a
 space, the boot service and the timer did not start Tardigrade, while setup said it was set up and the census said
-sessions come back by themselves. If you set 0.1.10.3 or older up in such a home, update and run setup again. From
-0.1.10.4 on setup writes each path into its service files so that it is held as one whole value, refuses before its
-first write a path no service file can carry, and says "is set up" only after it has read the start lines back
-from the service manager itself.
+sessions come back by themselves. If you set 0.1.10.3 or older up in such a home, update and run setup again
+(when: see Install). From 0.1.10.4 on setup writes each path into its service files so that it is held as one
+whole value, refuses before its first write a path no service file can carry, and says "is set up" only after it
+has read the start lines back from the service manager itself.
+
+The census reads the boot service as the service manager holds it. A service file damaged after that (seen once: one
+cut short inside its start line) still reads as yes until the service manager reads its files again, at the latest
+at the next restart; that restart brought nothing back, and the census then said no. Run setup again after anything
+has touched those files. A setup that ends in an error while it writes its copy (seen: a setup stopped by a
+file-size limit) can leave a cut copy that the census still reads as yes, before and after a restart that brings
+nothing back; after any setup that did not end with its set-up line, run setup again. A disk that is full at a
+restart (seen: the disk that holds the state folder, with no block free) lets the boot run end before it brings
+anything back, and the census still reads yes; free space there, then run `tardigrade revive`. All three were seen
+on 2026-11-26 on a stock Linux virtual machine with stand-in sessions.
 
 A # in a name or a folder (T119, cured in 0.1.10.3): tmux reads a # in a session's name, a pane's title and a folder
 as the start of one of its own formats. Up to 0.1.10.2 a session that ran in a tmux session whose name holds a #
@@ -468,10 +489,51 @@ Setup tells you this for your machine. It never changes it for you.
 - **Linux.** With *lingering* on for your user, sessions come back about a minute after boot with nobody logged in.
   With it off, they come back when you log in. To switch it on, a person runs once:
   `sudo loginctl enable-linger $USER`.
+  Lingering off has two limits until 0.1.11. The boot service acts only on a machine up for less than
+  `boot_window_min` (40) minutes, and that is counted from the machine's start, not from your login: after a
+  first login later than that, nothing comes back by itself, and the step is `tardigrade revive`. Until you
+  have run that revive nothing new is recorded; after it the record goes on. And the sessions that came back
+  by themselves end soon after your last login on the machine ends (a closed ssh connection is one), unless
+  something you started in a login is still running; your next login brings nothing back. Run
+  `tardigrade revive` first at that login, before you start another session: once one is running, Tardigrade
+  can take the ended ones as closed by you within a few minutes, and revive then no longer brings them back.
+  After that no command of this version brings them back (read in the code; three were typed, below); the
+  census still lists them under DOWN with their folders. When sessions end this way, the system lists your
+  account's service manager as failed until your next login. With lingering on they stay.
+  What was seen of these limits, on 2026-11-26 on a stock Ubuntu 24.04 virtual machine (systemd 255) with
+  lingering off and stand-in sessions throughout. The first limit, two trials: with nothing changed, a first
+  login 42 minutes after the machine's start brought nothing back (the boot run said the machine had been up
+  too long to be a boot), and the step, typed 12 minutes later, brought both sessions back; with
+  `boot_window_min` set to 2 for the second trial, a first login 152 s after the start brought nothing back
+  either, and there the step brought both back with a third session already running (the record job skips
+  its runs in that state; seen once, steered). So "first, before another session" is the second limit's
+  condition, not the first's. What ended, and when: in an account with nothing else running, the account's
+  service manager and both sessions the boot service had brought back were gone 15 s after the last login
+  ended (16 s in a second start); where a login had left a command running, they ran on for two minutes,
+  until that command ended, and were gone within 15 s after it. How they ended (three accounts, read in the
+  system's journal): what was still running of them when the service manager's stop time ended, 5 s on that
+  machine, was killed, and the system listed the account's service manager as failed until the next login;
+  an account with nothing of Tardigrade's ended clean. What kept them: that command, for as long as it ran;
+  and, in another account, a session started by hand from a login in a tmux server of its own (the service
+  manager stayed, nothing ended; watched for four minutes with no login). The step typed before another
+  session was started: it brought back both sessions the logout had ended, in three accounts. In the third
+  they then stayed over the next logout: watched for three minutes after it, still on the record nearly
+  eight minutes after, with one login of six seconds between; seen once. (Read from that trial's process
+  lines, not a thing the tool promises: the tmux server the typed step starts is a child of that login,
+  and the system kept the login's session while it ran.) The step typed after a record run with one
+  session of the person's own running: it brought nothing
+  back, in two trials; `revive --only` with the name and with the session id brought nothing back either
+  (seen once, one account). Where three sessions, all of the record, had ended at one logout, the step
+  brought all three back after another session had been started and a record run had passed (seen once).
+  Not seen: three or more ended sessions that are half of the record or less; how long sessions brought
+  back by the typed step stay beyond those minutes; a real Claude Code session in any of this.
 - **macOS.** Sessions come back when you are logged in at the Mac's own screen. A login over ssh does not count,
   and neither does another user's login, even if the Mac logs that user in by itself. With FileVault on, a
   restarted Mac waits at its unlock screen and nothing runs until someone types the password there. The census
-  says which of these your Mac is.
+  says which of these your Mac is. The 40 minutes of `boot_window_min` hold on a Mac too, counted from the
+  Mac's start: after a login later than that, the step is `tardigrade revive`. On a Mac the gate's line was
+  seen at a direct run of the boot gate on a Mac up 100 hours (2026-11-26, macOS 27, no restart made); the
+  boot job's own run at a late login was not seen, and the step after it was not typed on a Mac in that state.
 
 ## Safety
 
@@ -536,7 +598,7 @@ Setup tells you this for your machine. It never changes it for you.
 | `stagger_s` | `3` | Seconds between two session starts. |
 | `retry_gap_s` | `60` | Seconds between retry rounds for a start that did not come up. A start that is only a little late is looked at in every pass meanwhile. |
 | `starts_at_once` | `4` | At most this many sessions started and not yet seen up. The wait after each start overlaps with the next starts; the decision to start is still made one session at a time. Lower it on a small machine. |
-| `boot_window_min` | `40` | The boot service acts only on a machine up for less than this. |
+| `boot_window_min` | `40` | The boot service acts only on a machine up for less than this, counted from the machine's start and not from your login (see "Who has to log in after a restart"). |
 | `boot_wait_s` | `45` | Seconds the boot service waits before its run. Run setup again after changing it. |
 | `retry_min` | `25` | How long failed starts are retried. The network can lag at boot. |
 | `shell` | your login shell | `bash` or `zsh`. Sessions start through it, so your own `claude` setup loads. |
@@ -603,6 +665,7 @@ line says that it cannot tell. Not seen by us: a read of a session's environment
 | `tsv_path` | | Also write the record as a tab-separated table with eight columns at this path, for tools that read one. `tsv_socket` limits it to one tmux socket name. |
 | `lost_keep_h` | `12` | How long sessions that vanished together stay on the record as sessions to bring back. |
 | `on_done` | | A command run once when a restore ends. `{started}` `{loaded}` `{not_loaded}` `{down}` `{failed}` `{needs_you}` are put in (a session that came back on another login is `needs_you`, not `failed`), and the same counts are in `TARDIGRADE_STARTED` and so on. `{herdr_tabs_not_attached}` (and `TARDIGRADE_HERDR_TABS_NOT_ATTACHED`) is how many tabs were left because Herdr was not running. For a machine where someone or something should be told. |
+| `service_python` / `service_script` | | Not for you to set. Setup writes them: the Python and the path of the copy as it wrote them into the service files, kept for its own read back of those files. Uninstall leaves them in the file. |
 
 Before a planned reboot, run `tardigrade revive --dry-run --all` and read the lines. That is what will run, with one thing left out: where your `claude_command`, `account_command` or `start_command` holds a word of the form `VAR=value` (before the program, after `env` or `export`, at the start of a quoted command), the line shows `VAR=(set)`, because a printed line lands in whatever reads it. A value written any other way, such as a flag's (`--token VALUE`, `--token=VALUE`), is shown as it is. The value itself is in your config.json and in the session's start file, nowhere else of Tardigrade's; `revive --dry-run --start-file` prints the start file whole, values included, and says so.
 
@@ -662,7 +725,7 @@ Proven on 0.1.7, on real machines, 2026-11-21:
 - **About 100 sessions, read only**: on a shared Linux machine with 98 sessions, `revive --dry-run --all` was
   compared line by line with the restore tool that machine uses today: the same 98 sessions, each with the same
   tmux name, folder, model, effort and recorded permission mode. Nothing was started.
-- 241 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
+- 247 tests on Linux with stand-ins for `claude` and `herdr`, run on every push to a branch of this repository and
   on every pull request from another one, with Python 3.9 (the floor) and 3.13, on a runner image the workflow
   names.
 

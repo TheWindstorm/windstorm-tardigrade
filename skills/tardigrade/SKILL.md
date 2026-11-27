@@ -33,6 +33,10 @@ If neither file exists, this skill was installed without its plugin. Get the scr
 | Have the trust question answered after a restart | `trust on` (see below) |
 | Switch it off | `uninstall` |
 
+Type each option exactly as it stands here: until 0.1.11 the tool passes over a word it does not read and runs
+the command without it, so a mistyped `--dry-run` acts for real, `trust on --dry-run` switches it on (trust has
+no dry run), and `revive --only` wants the name as its next word.
+
 ## Setup
 
 1. Run `setup --dry-run` and tell the person what it will install: a boot service and a 5-minute timer for their own
@@ -51,7 +55,11 @@ If neither file exists, this skill was installed without its plugin. Get the scr
    it decides that their processes keep running when they are logged out. That is their call.
 5. Run `census` and show it.
 
-After the plugin is updated, run `setup` again so the installed copy matches.
+After the plugin is updated, run `setup` again so the installed copy matches: while the person's sessions are
+running, or after `revive`. Never run it between a restart and the sessions' return: until 0.1.11, setup typed in
+that gap with one session already running lets the others go, and neither the boot run nor `revive` brings them
+back. If the machine has just restarted, run `census` first, and run `setup` only once the sessions are back: by
+themselves, or by `revive` as below.
 
 If setup says the installed copy is a newer version than this script, it has stopped and changed nothing. Show its
 words. **Never add `--downgrade` yourself**: moving a machine back is the person's choice, in their own words. Census
@@ -120,7 +128,7 @@ restart such a session waits at that question, and the census marks it `trust?`.
 `trust on` makes Tardigrade answer Yes for a session it brings back, in the folder that session was already running
 in. Run `trust on` only when the person asks for it in their own words. Before you run it, tell them what it does in
 one sentence, as above. Never switch it on because it would be convenient. `trust off` undoes it, and `trust` alone
-says which it is.
+says which it is. There is no dry run of `trust`: `trust` alone says which it is and changes nothing.
 
 ## Switch it off
 

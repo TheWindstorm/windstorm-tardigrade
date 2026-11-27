@@ -2737,6 +2737,187 @@ class Revive(Base):
         self.assertIn("already ran", out)
         self.assertEqual(len(self.launches()), n + 1)
 
+    def standstill(self):
+        """T138: two sessions on the record, auto revive on, a restart, and a boot run that came after the boot window:
+        no marker of this boot, and the record job is skipped. Gives the two session ids and the new boot's settings
+        (the suite's own uptime, far outside the window)."""
+        a = self.start_lane("alpha", "Alpha Lane")
+        b = self.start_lane("beta", "Beta Lane")
+        self.cfg({"auto_revive": True})
+        self.tg("record", "--force")
+        self.reboot()
+        new = {"TARDIGRADE_FAKE_BOOT_ID": "boot-b"}
+        rc, out = self.tg("revive", "--boot", **new)
+        self.assertIn("up too long", out)
+        self.assertFalse(os.path.exists(self.state("revived-boot-b")))
+        rc, out = self.tg("record", **new)
+        self.assertIn("record: skipped (this boot's revive has not run", out)
+        return a, b, new
+
+    def record_names(self):
+        return sorted(r["name"] for r in self.table()["lanes"])
+
+    def test_G1_25_a_whole_revive_by_hand_ends_the_standstill_and_the_record_goes_on(self):
+        # T138, seen 2026-11-26 on a virtual machine: after a boot run that came too late the record job was skipped
+        # for the whole of that boot, also after a revive by hand, and the census said "the next record takes it"
+        a, b, new = self.standstill()
+        n = len(self.launches())
+        self.start_lane("gamma", "Gamma Lane")              # a third session, started by hand in the standstill
+        rc, out = self.tg("census", **new)
+        line = [x for x in out.splitlines() if "Gamma Lane" in x and "record" in x]
+        self.assertEqual(len(line), 1, out)
+        self.assertNotIn("the next record takes it", out)   # it would not: the record job is being skipped
+        self.assertNotIn("run `tardigrade record`", out)    # nor would that one
+        self.assertTrue(line[0].endswith("started after the last record, and the record waits for this boot's revive: "
+                                         "run tardigrade revive"), line[0])
+        self.assertNotIn("`", line[0])                      # a command's name in a printed sentence is plain words
+        rc, out = self.tg("record", **new)                  # the fail: as before, nothing is written
+        self.assertIn("record: skipped (this boot's revive has not run", out)
+        self.assertEqual(self.record_names(), ["Alpha Lane", "Beta Lane"])
+        step = re.search(r": run tardigrade ([a-z -]+)$", line[0]).group(1).split()
+        self.assertEqual(step, ["revive"])
+        rc, out = self.tg(*step, **new)                     # the step, as the census printed it
+        self.assertEqual(rc, 0, out)
+        self.assertIn("revive: 2 started, 0 already running, 0 failed, 0 need you", out)
+        self.wait_launches(n + 3)
+        self.assertTrue(os.path.exists(self.state("revived-boot-b")), out)
+        self.assertNotIn("could not be read as a record", out)
+        rc, out = self.tg("record", **new)                  # a plain record run: it writes
+        self.assertIn("record: 3 session(s), 0 down", out)
+        self.assertEqual(self.record_names(), ["Alpha Lane", "Beta Lane", "Gamma Lane"])
+        self.start_lane("delta", "Delta Lane")              # and one started after the revive
+        rc, out = self.tg("census", **new)
+        self.assertIn("started after the last record: the next record takes it", out)      # true again
+        rc, out = self.tg("record", **new)
+        self.assertIn("record: 4 session(s), 0 down", out)
+        self.assertEqual(self.record_names(), ["Alpha Lane", "Beta Lane", "Delta Lane", "Gamma Lane"])
+
+    def test_G1_25_a_revive_of_one_session_or_one_inside_the_window_is_not_this_boots_revive(self):
+        a, b, new = self.standstill()
+        n = len(self.launches())
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        before = fread(table)
+        rc, out = self.tg("revive", "--only", "Alpha Lane", **new)
+        self.assertEqual(rc, 0, out)
+        self.wait_launches(n + 1)
+        self.assertFalse(os.path.exists(self.state("revived-boot-b")), out)     # one session is not the whole record
+        rc, out = self.tg("record", **new)
+        self.assertIn("record: skipped (this boot's revive has not run", out)
+        self.assertEqual(fread(table), before)
+        rc, out = self.tg("revive", "--dry-run", **new)                         # a dry run is none either
+        self.assertFalse(os.path.exists(self.state("revived-boot-b")), out)
+        rc, out = self.tg("revive", **new)                  # the other one still comes back by a later whole revive
+        self.assertIn("revive: 1 started, 1 already running, 0 failed, 0 need you", out)
+        self.wait_launches(n + 2)
+        self.assertTrue(os.path.exists(self.state("revived-boot-b")), out)
+        # inside the window the boot run is still to come: a whole revive by hand does not take its place
+        self.reboot()
+        win = {"TARDIGRADE_FAKE_BOOT_ID": "boot-c", "TARDIGRADE_FAKE_UPTIME_S": 100}
+        rc, out = self.tg("revive", **win)
+        self.assertIn("revive: 2 started, 0 already running, 0 failed, 0 need you", out)
+        self.wait_launches(n + 4)
+        self.assertFalse(os.path.exists(self.state("revived-boot-c")), out)
+        rc, out = self.tg("revive", "--boot", **win)
+        self.assertNotIn("already ran", out)
+        self.assertIn("revive: 0 started, 2 already running, 0 failed, 0 need you", out)
+        self.assertTrue(os.path.exists(self.state("revived-boot-c")), out)
+
+    def test_G1_25_a_whole_revive_by_hand_in_which_one_start_fails_is_this_boots_revive_too(self):
+        a, b, new = self.standstill()
+        self.cfg({"retry_min": 0.05})
+        with open(os.path.join(self.home, "failsid"), "w") as f:
+            f.write(b)
+        rc, out = self.tg("revive", **new)
+        self.assertIn("Beta Lane: GAVE UP after", out)
+        self.assertIn("revive: 1 started, 0 already running, 1 failed, 0 need you", out)
+        self.assertTrue(os.path.exists(self.state("revived-boot-b")), out)
+        # the next record writes (it is not skipped), and the session that came up is on it. Where the one that
+        # failed goes is NOT held here: that is T103's fault (G1.20, due 0.1.11: a row a revive was starting, not
+        # seen running since, should stay on the list a revive reads), on both roads, the boot run's and this one
+        rc, out = self.tg("record", **new)
+        self.assertNotIn("skipped", out)
+        self.assertRegex(out, r"record: \d+ session\(s\), \d+ down")
+        self.assertIn("Alpha Lane", self.record_names())
+
+    def test_G1_25_the_census_does_not_say_the_next_record_takes_a_new_id_while_the_record_waits(self):
+        # a third place of the same false sentence (the maintainer's read of 2026-11-26): the header over sessions
+        # started new under a new id. Made with the stand-ins, not seen on a machine.
+        self.cfg({"wake": "idle", "auto_revive": True})
+        self.start_lane("alpha", "Alpha Lane")
+        empty = self.start_lane("beta", "Beta Lane")
+        with open(os.path.join(self.home, "noconv"), "w") as f:
+            f.write(empty)
+        self.tg("record", "--force")
+        self.reboot()
+        new = {"TARDIGRADE_FAKE_BOOT_ID": "boot-b"}
+        n = len(self.launches())
+        rc, out = self.tg("revive", "--boot", **new)
+        self.assertIn("up too long", out)
+        rc, out = self.tg("revive", "--only", "Beta Lane", **new)          # one session: not this boot's revive
+        self.assertIn("Beta Lane: Claude Code has no conversation for it", out)
+        self.wait_launches(n + 2)
+        now = [x["sid"] for x in self.launches()[n:] if x["sid"] != empty and "--resume" not in x["argv"]]
+        self.assertEqual(len(now), 1, out)
+        self.assertFalse(os.path.exists(self.state("revived-boot-b")), out)
+        rc, text = self.tg("census", **new)
+        head = [x for x in text.splitlines() if x.startswith("STARTED NEW under a new id")]
+        self.assertEqual(len(head), 1, text)
+        self.assertNotIn("the next record takes", text)     # it would take nothing: the record job is being skipped
+        self.assertEqual(head[0], "STARTED NEW under a new id, in their own place (up, not down; the record waits for "
+                         "this boot's revive and takes the new id after it: run tardigrade revive): 1")
+        rc, out = self.tg("record", **new)
+        self.assertIn("record: skipped (this boot's revive has not run", out)
+        rc, out = self.tg("revive", **new)                  # the step
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(os.path.exists(self.state("revived-boot-b")), out)
+        # one start more, the first session's; the one that was started new under a new id is not started again
+        self.assertIn("revive: 1 started, 0 already running, 0 failed, 0 need you, 1 not started: a tmux session of "
+                      "that name is in the way\n", out)
+        self.wait_launches(n + 3)
+        time.sleep(3)
+        after = self.launches()[n:]
+        self.assertEqual(len(after), 3, out)
+        self.assertEqual(len([x for x in after if x["sid"] == now[0]]), 1, after)
+        rc, text = self.tg("census", **new)
+        self.assertIn("(up, not down; the next record takes the new id): 1", text)          # true again
+        rc, out = self.tg("record", **new)
+        self.assertNotIn("skipped", out)
+        self.assertIn(now[0], [r["session_id"] for r in self.table()["lanes"]])
+
+    def test_G1_25_a_revive_by_hand_writes_no_marker_over_a_record_file_that_is_not_whole(self):
+        a, b, new = self.standstill()
+        n = len(self.launches())
+        table = os.path.join(self.home, ".config", "windstorm-tardigrade", "lanes.json")
+        whole = fread(table)
+        older = fread(table + ".prev") if os.path.exists(table + ".prev") else None
+        said = (f"revive: the record file ({table}) could not be read as a record, so this run is not counted as "
+                "this boot's revive: the record job stays skipped and that file is left as it is.")
+        mode = os.stat(table).st_mode & 0o777
+        forms = [whole[:len(whole) // 2], "", "[]", "{}"]               # cut short, empty, a list, no list of sessions
+        if os.geteuid() != 0:
+            forms.append(None)              # the whole record in a file that cannot be opened (root opens any file)
+        for damaged in forms:
+            with open(table, "w") as f:
+                f.write(whole if damaged is None else damaged)
+            if damaged is None:
+                os.chmod(table, 0)
+            what = "cannot be opened" if damaged is None else damaged[:20]
+            rc, out = self.tg("revive", **new)
+            self.assertFalse(os.path.exists(self.state("revived-boot-b")), (what, out))
+            self.assertEqual(out.strip().splitlines()[-1].split(" ", 1)[1], said, (what, out))
+            rc, out = self.tg("record", **new)
+            self.assertIn("record: skipped (this boot's revive has not run", out)
+            if damaged is None:
+                self.assertEqual(os.stat(table).st_mode & 0o777, 0, out)
+                os.chmod(table, mode)
+            self.assertEqual(fread(table), whole if damaged is None else damaged)     # nothing wrote over it
+            self.assertEqual(fread(table + ".prev") if os.path.exists(table + ".prev") else None, older)
+        self.assertEqual(len(self.launches()), n)
+        os.remove(table)                # no record file at all is nothing recorded yet: that is whole
+        rc, out = self.tg("revive", **new)
+        self.assertNotIn("could not be read as a record", out)
+        self.assertTrue(os.path.exists(self.state("revived-boot-b")), out)
+
     def test_G2_6_dry_run_starts_nothing(self):
         self.recorded_then_rebooted()
         n = len(self.launches())
@@ -8240,6 +8421,43 @@ end(0)
                 if re.search(r"systemctl --user[^.]*\b(stop|restart|kill)\b", flat) and "revive" in flat:
                     self.assertRegex(flat, r"\b[Nn]ever\b", f"{text}: {flat[:200]}")
 
+    def test_G5_3_the_lines_on_who_has_to_log_in_say_the_limits_and_the_step(self):
+        # T137, T149 and T152, the limits as they are until 0.1.11 (seen 2026-11-26 on a virtual machine; on a Mac
+        # the gate's line only, at a direct run): the boot window counts from the machine's start, and with lingering
+        # off the sessions that came back by themselves end soon after the last login ends. Each line names the step;
+        # the second with its condition (first at that login, before another session), because a record run with
+        # one session running lets the ended ones go and revive then brings nothing back.
+        from unittest import mock
+        tg = self.load_tool()
+        late = ("minutes after this machine started, nothing comes back by itself: run tardigrade revive to bring the "
+                "sessions back.")
+        with mock.patch.dict(os.environ, TARDIGRADE_FAKE_LINGER="no", TARDIGRADE_FAKE_ACCOUNT="you"):
+            lines = tg.who_logs_in()
+            self.assertEqual(lines[0], "Lingering is OFF: sessions come back only after you log in to this machine.")
+            self.assertEqual(lines[1], "If that login comes more than 40 " + late)
+            self.assertEqual(lines[2], "Sessions that came back by themselves end soon after your last login on this "
+                             "machine ends (a closed ssh connection is one), unless something you started in a login "
+                             "is still running, and your next login brings nothing back. Run tardigrade revive first "
+                             "at that login, before you start another session: once one is running, Tardigrade can "
+                             "take the ended ones as closed by you within a few minutes, and revive then no longer "
+                             "brings them back. With lingering on they stay.")
+            self.assertNotIn("`", lines[1] + lines[2])      # a command's name in a printed sentence is plain words
+            self.assertEqual(lines[3], "To bring them back with nobody logged in, a person runs once: "
+                             "sudo loginctl enable-linger you")
+            self.assertEqual(len(lines), 4)
+            tg.CFG["boot_window_min"] = 2.5             # the number is the setting's, never a word of the tool's
+            self.assertEqual(tg.who_logs_in()[1], "If that login comes more than 2.5 " + late)
+            tg.CFG["boot_window_min"] = 40
+        with mock.patch.dict(os.environ, TARDIGRADE_FAKE_LINGER="yes", TARDIGRADE_FAKE_ACCOUNT="you"):
+            self.assertEqual(tg.who_logs_in(), ["Lingering is on: sessions come back about a minute after boot, with "
+                                                "nobody logged in."])
+        for fv, auto in (("FileVault is On.", "me"), ("FileVault is Off.", "me"), ("FileVault is Off.", "tester"),
+                         ("FileVault is Off.", "")):
+            lines = tg.mac_story(fv, auto, "me")[1]
+            self.assertTrue(lines[-1].endswith("If that login comes more than 40 minutes after this Mac started, nothing "
+                                               "comes back by itself: run tardigrade revive to bring the sessions "
+                                               "back."), lines)
+
     def test_G5_6_the_record_keeps_labels_from_herdr_then_the_record_before_then_the_table(self):
         herdr = self.script("herdr", fread(FAKE_HERDR))
         for n in ("alpha", "beta", "gamma"):
@@ -10286,9 +10504,13 @@ class Strand(unittest.TestCase):
         m = re.search(r"^> \*\*Status: ([0-9.]+),", readme, re.M)
         said["README.md status line"] = m.group(1) if m else "(no status line)"
         self.assertEqual({k: x for k, x in said.items() if x != v}, {}, f"the script says {v}")
-        m = re.search(r"^- (\d+) tests on Linux", readme, re.M)
+        # the README's count of tests: it said 119 while 130, 132 and 133 ran (0.1.10 to 0.1.10.2), and 139 on this
+        # branch while this file held 156. What is counted here is DEFINITIONS: a name defined twice in one class
+        # is one test to the runner and two here, and the gate (G7.3) fails on that only for a test the plan or a
+        # row names
+        m = re.search(r"^- (\d+) tests on Linux", fread(os.path.join(ROOT, "README.md")), re.M)
         self.assertEqual(int(m.group(1)) if m else None, len(re.findall(r"^    def test_", fread(__file__), re.M)),
-                         "the README's count of tests is the number of tests in this file")
+                         "the README's count of tests is the number of test definitions in this file")
         # the clone line check itself: a bare clone, a branch and an older tag are each caught
         self.assertEqual(clone_tags("git clone https://example/x\n  git clone --branch main https://example/x\n"
                                     "git clone --depth 1 --branch v0.1.8 https://example/x\n"),
